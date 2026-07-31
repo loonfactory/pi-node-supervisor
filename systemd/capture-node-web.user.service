@@ -1,0 +1,14 @@
+[Unit]
+Description=CaptureNode Web USB camera collector
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/capture-node
+ExecStart=%h/capture-node/.venv/bin/capture-node-web --config %h/capture-node/config.usb.json --host 0.0.0.0 --port 8000
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=10
+
+[Install]
+WantedBy=default.target
