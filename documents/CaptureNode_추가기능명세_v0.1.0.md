@@ -478,6 +478,17 @@ Camera 1 Web port: 8001
   `--camera-count 2`를 지정하면 Camera 0/1을 함께 배포한다. 로컬 테스트와 Web
   build 후 소스를 배포하고 systemd linger 활성화, 선택한 template service
   재시작과 health 확인을 수행한다.
+- `--camera picamera2[:N]` 또는 `--camera v4l2:/absolute/path`를 1~2회
+  지정해 초기 instance 설정을 생성할 수 있다. 이 값은 해당 설정 파일이
+  없을 때만 사용하며 기존 설정은 검증 후 보존한다.
+- 최초 접속에서 `--bootstrap-ssh`는 알 수 없던 host key를 기록하고 로컬
+  public key를 설치한 뒤 key 인증을 다시 확인한다. 변경된 host key는
+  자동 승인하지 않는다.
+- `--cache-wheels`는 온라인 provisioning 시 대상 Pi에 호환 wheel을 보관한다.
+  `--offline`은 기존 runtime 또는 `.wheelhouse`만 사용하고 package index에
+  접근하지 않는다. 호환 wheel은 `--wheelhouse`로 외부에서 전송할 수 있다.
+- health probe 실패를 매 시도마다 출력하지 않고, 최종 실패 시 설정 경로·port,
+  systemd 상태와 종료 코드, 최근 journal을 한번에 출력한다.
 - 1대 배포 시 Camera 1 service는 중지·비활성화하되 기존 설정과 촬영 파일은
   보존한다.
 - 기존 단일 Web service는 중지·비활성화하고 설치된 user unit을 제거한다.

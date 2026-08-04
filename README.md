@@ -72,16 +72,13 @@ eng/deploy.sh huintech@capture-node.local
 ```
 
 The target is provided at execution time because its hostname or IP address can
-change. The default deployment creates the `camera0` configuration, capture
-directory, and systemd template instance on port 8000. Pass `--camera-count 2`
-to also deploy `camera1` on port 8001. Deploying one camera stops and disables
-the second service without deleting its configuration or captures. The script
-runs the local tests and frontend build, enables systemd linger, restarts the
-selected services, and verifies their `/api/health` endpoints. The first
-deployment may request the remote sudo password while enabling linger. Use
-`--dry-run` to perform only the local checks. The Raspberry Pi deployment
-virtual environment includes system site packages so the OS-provided
-Picamera2 and libcamera bindings remain available.
+change. The script creates missing remote directories and initial configuration,
+preserves operating data on later deployments, enables systemd linger, and verifies
+each instance. Use `--bootstrap-ssh` for a new target, repeat `--camera` for explicit
+Picamera2 or V4L2 instance setup, and use `--cache-wheels` followed by `--offline` for
+an isolated deployment. See the
+[deployment guide](documents/deployment.md) for the complete workflow and failure
+diagnostics.
 
 ```bash
 eng/deploy.sh --camera-count 2 huintech@capture-node.local

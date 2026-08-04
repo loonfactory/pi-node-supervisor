@@ -6,10 +6,17 @@ ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 REMOTE_APP_DIR="capture-node"
 SUPPORTED_INSTANCE_NAMES=("camera0" "camera1")
 SUPPORTED_INSTANCE_PORTS=(8000 8001)
-CAMERA_COUNT=1
+CAMERA_COUNT=""
+CAMERA_COUNT_EXPLICIT=0
+CAMERA_SPECS=()
 SKIP_TESTS=0
 SKIP_LINGER=0
 DRY_RUN=0
+BOOTSTRAP_SSH=0
+SSH_PUBLIC_KEY="${HOME}/.ssh/id_ed25519.pub"
+OFFLINE=0
+CACHE_WHEELS=0
+WHEELHOUSE=""
 TARGET=""
 
 usage() {
@@ -17,20 +24,31 @@ usage() {
 Usage: eng/deploy.sh [options] <user@host>
 
 Build and deploy CaptureNode Web camera instances to ~/capture-node.
-One camera on port 8000 is deployed by default. Use --camera-count 2 to also
-deploy Camera 1 on port 8001. Existing configurations, captures/, and .venv/
-are preserved. systemd linger enables startup without an interactive login.
+One Picamera2 instance on port 8000 is deployed by default. Repeat --camera to
+describe one or two cameras. Existing configurations, captures/, and .venv/ are
+preserved. Camera options apply only when an instance configuration is missing.
 
 Options:
-  --camera-count N  Deploy 1 (default) or 2 camera instances.
-  --skip-tests      Skip the local pytest run.
-  --skip-linger     Skip systemd linger setup when it is provisioned separately.
-  --dry-run         Build locally and print the target without connecting.
-  -h, --help        Show this help.
+  --camera SPEC       Initial camera: picamera2[:N] or v4l2:/dev/path.
+                      Repeat to deploy two instances.
+  --camera-count N    Compatibility option: deploy N Picamera2 instances.
+  --bootstrap-ssh     Accept a new host key and install the local public key.
+  --public-key FILE   Public key for --bootstrap-ssh
+                      (default: ~/.ssh/id_ed25519.pub).
+  --offline           Never use a remote package index. Reuse the installed
+                      runtime or install only from a remote/uploaded wheelhouse.
+  --wheelhouse DIR    Upload a compatible Python wheelhouse before activation.
+  --cache-wheels      Cache runtime wheels remotely during an online deployment.
+  --skip-tests        Skip the local pytest run.
+  --skip-linger       Skip systemd linger setup when provisioned separately.
+  --dry-run           Build locally and print the deployment plan only.
+  -h, --help          Show this help.
 
 Example:
   eng/deploy.sh huintech@capture-node.local
-  eng/deploy.sh --camera-count 2 huintech@capture-node.local
+  eng/deploy.sh --bootstrap-ssh --camera v4l2:/dev/video0 user@host
+  eng/deploy.sh --camera picamera2:0 --camera picamera2:1 user@host
+  eng/deploy.sh --offline --camera-count 2 user@host
 EOF
 }
 
@@ -44,10 +62,45 @@ while (($#)); do
         --camera-count)
             (($# >= 2)) || fail "--camera-count requires a value"
             CAMERA_COUNT="$2"
+            CAMERA_COUNT_EXPLICIT=1
             shift
             ;;
         --camera-count=*)
             CAMERA_COUNT="${1#*=}"
+            CAMERA_COUNT_EXPLICIT=1
+            ;;
+        --camera)
+            (($# >= 2)) || fail "--camera requires a value"
+            CAMERA_SPECS+=("$2")
+            shift
+            ;;
+        --camera=*)
+            CAMERA_SPECS+=("${1#*=}")
+            ;;
+        --bootstrap-ssh)
+            BOOTSTRAP_SSH=1
+            ;;
+        --public-key)
+            (($# >= 2)) || fail "--public-key requires a value"
+            SSH_PUBLIC_KEY="$2"
+            shift
+            ;;
+        --public-key=*)
+            SSH_PUBLIC_KEY="${1#*=}"
+            ;;
+        --offline)
+            OFFLINE=1
+            ;;
+        --wheelhouse)
+            (($# >= 2)) || fail "--wheelhouse requires a value"
+            WHEELHOUSE="$2"
+            shift
+            ;;
+        --wheelhouse=*)
+            WHEELHOUSE="${1#*=}"
+            ;;
+        --cache-wheels)
+            CACHE_WHEELS=1
             ;;
         --skip-tests)
             SKIP_TESTS=1
@@ -73,8 +126,26 @@ while (($#)); do
     shift
 done
 
-[[ "$CAMERA_COUNT" =~ ^[12]$ ]] \
-    || fail "--camera-count must be 1 or 2"
+if ((${#CAMERA_SPECS[@]} > 0)); then
+    ((CAMERA_COUNT_EXPLICIT == 0)) \
+        || fail "--camera and --camera-count cannot be used together"
+    CAMERA_COUNT="${#CAMERA_SPECS[@]}"
+else
+    CAMERA_COUNT="${CAMERA_COUNT:-1}"
+    [[ "$CAMERA_COUNT" =~ ^[12]$ ]] || fail "one or two cameras are supported"
+    for ((index = 0; index < CAMERA_COUNT; index++)); do
+        CAMERA_SPECS+=("picamera2:${index}")
+    done
+fi
+[[ "$CAMERA_COUNT" =~ ^[12]$ ]] || fail "one or two cameras are supported"
+for camera_spec in "${CAMERA_SPECS[@]}"; do
+    if [[ "$camera_spec" == "picamera2" \
+        || "$camera_spec" =~ ^picamera2:[0-9]+$ \
+        || "$camera_spec" =~ ^v4l2:/.+$ ]]; then
+        continue
+    fi
+    fail "invalid --camera value: $camera_spec"
+done
 INSTANCE_NAMES=("${SUPPORTED_INSTANCE_NAMES[@]:0:CAMERA_COUNT}")
 INSTANCE_PORTS=("${SUPPORTED_INSTANCE_PORTS[@]:0:CAMERA_COUNT}")
 
@@ -86,6 +157,20 @@ INSTANCE_PORTS=("${SUPPORTED_INSTANCE_PORTS[@]:0:CAMERA_COUNT}")
 for command in npm rsync ssh; do
     command -v "$command" >/dev/null || fail "required command is missing: $command"
 done
+if ((BOOTSTRAP_SSH == 1)); then
+    command -v ssh-copy-id >/dev/null \
+        || fail "--bootstrap-ssh requires ssh-copy-id"
+    [[ -f "$SSH_PUBLIC_KEY" ]] \
+        || fail "public key does not exist: $SSH_PUBLIC_KEY"
+fi
+if [[ -n "$WHEELHOUSE" ]]; then
+    [[ -d "$WHEELHOUSE" ]] || fail "wheelhouse does not exist: $WHEELHOUSE"
+    compgen -G "$WHEELHOUSE/*.whl" >/dev/null \
+        || fail "wheelhouse contains no .whl files: $WHEELHOUSE"
+    WHEELHOUSE="$(cd -- "$WHEELHOUSE" && pwd)"
+fi
+((OFFLINE == 0 || CACHE_WHEELS == 0)) \
+    || fail "--cache-wheels requires an online deployment"
 
 cd "$ROOT_DIR"
 
@@ -107,18 +192,43 @@ if ((DRY_RUN == 1)); then
     printf '==> Dry run complete\n'
     printf 'Target: %s:~/%s\n' "$TARGET" "$REMOTE_APP_DIR"
     for index in "${!INSTANCE_NAMES[@]}"; do
-        printf 'Instance: %s · port %s\n' \
+        printf 'Instance: %s | port %s | initial camera %s\n' \
             "${INSTANCE_NAMES[$index]}" \
-            "${INSTANCE_PORTS[$index]}"
+            "${INSTANCE_PORTS[$index]}" \
+            "${CAMERA_SPECS[$index]}"
     done
+    if ((OFFLINE == 1)); then
+        printf 'Packages: offline (installed runtime or wheelhouse only)\n'
+    elif ((CACHE_WHEELS == 1)); then
+        printf 'Packages: online and cache remote wheelhouse\n'
+    else
+        printf 'Packages: online fallback allowed\n'
+    fi
     exit 0
 fi
 
 SSH_OPTIONS=(
     -o BatchMode=yes
     -o ConnectTimeout=10
+    -o StrictHostKeyChecking=accept-new
 )
-RSYNC_SSH="ssh -o BatchMode=yes -o ConnectTimeout=10"
+RSYNC_SSH="ssh -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new"
+
+printf '==> Checking SSH access\n'
+if ! ssh "${SSH_OPTIONS[@]}" "$TARGET" true; then
+    if ((BOOTSTRAP_SSH == 0)); then
+        fail "SSH key authentication failed; rerun with --bootstrap-ssh for first setup"
+    fi
+    [[ -t 0 ]] \
+        || fail "--bootstrap-ssh requires an interactive terminal for the remote password"
+    printf '==> Installing SSH public key (the remote password may be requested)\n'
+    ssh-copy-id \
+        -o StrictHostKeyChecking=accept-new \
+        -i "$SSH_PUBLIC_KEY" \
+        "$TARGET"
+    ssh "${SSH_OPTIONS[@]}" "$TARGET" true \
+        || fail "SSH key authentication still fails after bootstrap"
+fi
 
 printf '==> Checking remote deployment\n'
 ssh "${SSH_OPTIONS[@]}" "$TARGET" \
@@ -128,7 +238,7 @@ set -u
 
 missing=0
 
-for command_name in curl loginctl python3 rsync systemctl; do
+for command_name in curl journalctl loginctl python3 rsync systemctl; do
     if ! command -v "$command_name" >/dev/null; then
         printf 'Missing remote command: %s\n' "$command_name" >&2
         missing=1
@@ -148,6 +258,7 @@ camera_count="$2"
 mkdir -p \
     "$app_dir/captures" \
     "$app_dir/instances" \
+    "$app_dir/.wheelhouse" \
     "$app_dir/.deploy-next/capture_node"
 for ((index = 0; index < camera_count; index++)); do
     mkdir -p "$app_dir/captures/camera${index}"
@@ -202,12 +313,30 @@ rsync \
     systemd/ \
     "$TARGET:$REMOTE_APP_DIR/systemd/"
 
+if [[ -n "$WHEELHOUSE" ]]; then
+    printf '==> Uploading offline Python wheelhouse\n'
+    rsync \
+        --archive \
+        --delete \
+        --rsh "$RSYNC_SSH" \
+        "$WHEELHOUSE/" \
+        "$TARGET:$REMOTE_APP_DIR/.wheelhouse/"
+fi
+
 printf '==> Activating deployment\n'
 ssh "${SSH_OPTIONS[@]}" "$TARGET" \
-    bash -s -- "$CAMERA_COUNT" <<'REMOTE_SCRIPT'
+    bash -s -- \
+        "$CAMERA_COUNT" \
+        "$OFFLINE" \
+        "$CACHE_WHEELS" \
+        "${CAMERA_SPECS[@]}" <<'REMOTE_SCRIPT'
 set -Eeuo pipefail
 
 camera_count="$1"
+offline="$2"
+cache_wheels="$3"
+shift 3
+camera_specs=("$@")
 app_dir="$HOME/capture-node"
 previous_dir="$app_dir/.deploy-previous"
 failed_dir="$app_dir/.deploy-failed"
@@ -283,12 +412,35 @@ fi
 mv .deploy-next/capture_node src/capture_node
 rm -rf .deploy-next
 
-if [[ -s .venv/bin/capture-node-web ]] \
-    && .venv/bin/python -c \
-        'import fastapi, paramiko, PIL, pydantic, uvicorn; import capture_node'; then
-    printf 'Reusing installed runtime dependencies for offline deployment.\n'
+runtime_ready() {
+    [[ -s .venv/bin/capture-node-web ]] \
+        && .venv/bin/python -c \
+            'import fastapi, paramiko, PIL, pydantic, uvicorn; import capture_node'
+}
+
+if runtime_ready; then
+    printf 'Reusing installed runtime dependencies.\n'
+elif ((offline == 1)); then
+    if ! compgen -G '.wheelhouse/*.whl' >/dev/null; then
+        printf 'Offline deployment requires an existing runtime or compatible wheels in %s/.wheelhouse.\n' \
+            "$app_dir" >&2
+        false
+    fi
+    printf 'Installing runtime dependencies from the offline wheelhouse.\n'
+    .venv/bin/python -m pip install \
+        --no-index \
+        --find-links "$app_dir/.wheelhouse" \
+        -e '.[web,sftp]'
 else
+    printf 'Installing runtime dependencies from the configured package index.\n'
     .venv/bin/python -m pip install -e '.[web,sftp]'
+fi
+if ((cache_wheels == 1)); then
+    printf 'Caching a compatible remote wheelhouse for later offline deployment.\n'
+    .venv/bin/python -m pip wheel \
+        --wheel-dir "$app_dir/.wheelhouse" \
+        hatchling \
+        '.[web,sftp]'
 fi
 .venv/bin/python -m compileall -q src/capture_node
 [[ -s .venv/bin/capture-node-web ]]
@@ -297,7 +449,7 @@ fi
 [[ -s src/capture_node/web/static/index.html ]]
 
 printf 'Preparing %s camera runtime configuration(s).\n' "$camera_count"
-.venv/bin/python - "$camera_count" <<'PY'
+.venv/bin/python - "$camera_count" "${camera_specs[@]}" <<'PY'
 from __future__ import annotations
 
 import json
@@ -305,7 +457,7 @@ import os
 import sys
 from pathlib import Path
 
-from capture_node.core.cameras.options import Picamera2Options
+from capture_node.core.cameras.options import Picamera2Options, V4L2CameraOptions
 from capture_node.core.encodings.options import PngImageOptions
 from capture_node.core.maintenance.options import (
     MaintenanceOptions,
@@ -315,20 +467,35 @@ from capture_node.core.options import CaptureOptions, Options
 from capture_node.core.storages.options import FileStorageOptions
 
 camera_count = int(sys.argv[1])
+camera_specs = sys.argv[2:]
 app_dir = Path.home() / "capture-node"
 
 
-def write_configuration(path: Path, camera_num: int) -> None:
-    if path.exists():
-        return
-    options = Options(
-        camera=Picamera2Options(
-            camera_num=camera_num,
+def camera_options(spec: str, instance_index: int):
+    if spec == "picamera2":
+        return Picamera2Options(camera_num=instance_index, width=1920, height=1080)
+    if spec.startswith("picamera2:"):
+        return Picamera2Options(
+            camera_num=int(spec.partition(":")[2]),
             width=1920,
             height=1080,
-            preview_fps=10,
-            preview_quality=75,
-        ),
+        )
+    if spec.startswith("v4l2:"):
+        return V4L2CameraOptions(
+            device=Path(spec.partition(":")[2]),
+            width=1920,
+            height=1080,
+        )
+    raise ValueError(f"unsupported camera specification: {spec}")
+
+
+def write_configuration(path: Path, camera_num: int, spec: str) -> None:
+    if path.exists():
+        Options.model_validate_json(path.read_text(encoding="utf-8"))
+        print(f"Preserved configuration: {path.name}")
+        return
+    options = Options(
+        camera=camera_options(spec, camera_num),
         capture=CaptureOptions(mode="disabled"),
         image=PngImageOptions(),
         storages=(
@@ -351,10 +518,15 @@ def write_configuration(path: Path, camera_num: int) -> None:
     )
     os.chmod(temporary, 0o600)
     os.replace(temporary, path)
+    print(f"Created configuration: {path.name} ({spec})")
 
 
-for camera_num in range(camera_count):
-    write_configuration(app_dir / f"config.camera{camera_num}.json", camera_num)
+for camera_num, spec in zip(range(camera_count), camera_specs, strict=True):
+    write_configuration(
+        app_dir / f"config.camera{camera_num}.json",
+        camera_num,
+        spec,
+    )
 PY
 
 find captures -maxdepth 1 -type f -exec mv -n {} captures/camera0/ \;
@@ -386,6 +558,21 @@ mv -f "$unit_temporary" "$unit_target"
 systemctl --user disable --now capture-node-web.service >/dev/null 2>&1 || true
 systemctl --user daemon-reload
 
+diagnose_instance() {
+    instance="$1"
+    service_name="capture-node-web@${instance}.service"
+    printf '\nDiagnostic information for %s\n' "$service_name" >&2
+    if [[ -f "instances/${instance}.env" ]]; then
+        grep -E '^CAPTURE_NODE_(CONFIG|PORT)=' "instances/${instance}.env" \
+            >&2 || true
+    fi
+    systemctl --user show "$service_name" \
+        --property=ActiveState,SubState,Result,ExecMainCode,ExecMainStatus \
+        --no-pager >&2 || true
+    systemctl --user status "$service_name" --no-pager --lines=20 >&2 || true
+    journalctl --user-unit "$service_name" --no-pager --lines=60 >&2 || true
+}
+
 for ((index = camera_count; index < ${#all_instances[@]}; index++)); do
     instance="${all_instances[$index]}"
     systemctl --user disable --now "capture-node-web@${instance}.service" \
@@ -395,7 +582,10 @@ done
 for instance in "${instances[@]}"; do
     service_name="capture-node-web@${instance}.service"
     systemctl --user enable "$service_name" >/dev/null
-    systemctl --user restart "$service_name"
+    if ! systemctl --user restart "$service_name"; then
+        diagnose_instance "$instance"
+        false
+    fi
 done
 
 for index in "${!instances[@]}"; do
@@ -403,29 +593,38 @@ for index in "${!instances[@]}"; do
     port="${ports[$index]}"
     service_name="capture-node-web@${instance}.service"
     health_file="/tmp/capture-node-health-${instance}.json"
+    health_error="/tmp/capture-node-health-${instance}.error"
     healthy=0
     for _attempt in {1..30}; do
+        if ! systemctl --user is-active "$service_name" >/dev/null 2>&1; then
+            break
+        fi
         if curl \
             --silent \
-            --show-error \
             --fail \
             --max-time 2 \
             "http://127.0.0.1:${port}/api/health" \
-            >"$health_file"; then
+            >"$health_file" \
+            2>"$health_error"; then
             healthy=1
             break
         fi
         sleep 1
     done
     if ((healthy == 0)); then
-        systemctl --user status "$service_name" --no-pager --lines=20 >&2 || true
-        journalctl --user-unit "$service_name" --no-pager --lines=40 >&2 || true
+        printf 'Health check failed: http://127.0.0.1:%s/api/health\n' \
+            "$port" >&2
+        if [[ -s "$health_error" ]]; then
+            printf 'Last curl error: ' >&2
+            cat "$health_error" >&2
+        fi
+        diagnose_instance "$instance"
         false
     fi
     printf '%s: ' "$instance"
     cat "$health_file"
     printf '\n'
-    rm -f "$health_file"
+    rm -f "$health_file" "$health_error"
 done
 
 rm -f "$legacy_unit"

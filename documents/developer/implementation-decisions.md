@@ -253,6 +253,10 @@ SRS-CAPTURENODE-001이며, 추가된 기능 계약은
 - 결정: `eng/deploy.sh <user@host>`는 기본적으로 Raspberry Pi의 Camera 0 Web
   instance만 갱신한다. `--camera-count 2`를 지정하면 Camera 0/1을 함께
   갱신한다. 장비 주소는 실행 시 받고 저장소나 문서에 고정하지 않는다.
+- 명시적 카메라: `--camera`를 instance 순서대로 반복해 `picamera2[:N]` 또는
+  `v4l2:/absolute/path`를 지정할 수 있다. 지정값은 설정 파일이 없을 때만 초기
+  Options 생성에 사용하고 기존 운영 설정은 검증 후 보존한다. `--camera-count`는
+  Picamera2 기본값을 만드는 호환 옵션으로 유지한다.
 - 인스턴스: systemd template unit을 사용한다. Camera 0은
   `config.camera0.json`, `captures/camera0`, port 8000을 사용하고 Camera 1은
   `config.camera1.json`, `captures/camera1`, port 8001을 사용한다. 소스와
@@ -266,10 +270,20 @@ SRS-CAPTURENODE-001이며, 추가된 기능 계약은
   Picamera2/libcamera binding을 사용한다. 플랫폼 모듈은 해당 Registration의
   생성 또는 discovery 시점에만 import한다.
 - 검증: 전송 전에 로컬 테스트와 Web build를 수행하고, 전송 후 선택한 systemd
-  user service를 재시작한 다음 해당 port의 `/api/health` 응답을 확인한다.
+  user service를 재시작한 다음 해당 port의 `/api/health` 응답을 확인한다. probe
+  오류는 반복 출력하지 않고 실패 시 설정 경로와 port, systemd result와 exit
+  status, service status, 최근 journal을 함께 출력한다.
 - 격리망 재배포: 기존 가상환경의 Web·SFTP 런타임 의존성과 entry point를 import로
   검증할 수 있으면 원격 `pip install`을 생략한다. 신규 장비나 의존성 변경은 별도
   provisioning 단계에서 package source를 사용할 수 있어야 한다.
+- 오프라인 모드: `--cache-wheels`는 온라인 provisioning 중 대상 Pi에서 현재
+  architecture와 Python에 맞는 runtime 및 build wheel을 보관한다. `--offline`은
+  package index 접근을 금지하고 기존 runtime 또는 `.wheelhouse`만 사용한다.
+  외부 wheelhouse는 `--wheelhouse`로 전송할 수 있으며 대상과 호환되지 않거나
+  불완전하면 이전 source로 rollback한다.
+- 최초 SSH: 알 수 없는 host key는 OpenSSH `accept-new`로 로컬 known_hosts에
+  기록하되 변경된 key는 거절한다. `--bootstrap-ssh`는 지정 public key를
+  `ssh-copy-id`로 설치한 뒤 BatchMode key 인증을 다시 검증한다.
 - 부팅: 배포 시 대상 사용자의 systemd linger를 활성화해 대화형 로그인 없이
   user service가 부팅 과정에서 시작되게 한다. 최초 활성화에는 sudo 권한이
   필요할 수 있다.
