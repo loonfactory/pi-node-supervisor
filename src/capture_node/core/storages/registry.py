@@ -12,6 +12,7 @@ from capture_node.core.models import StrictModel
 from capture_node.core.storages.contracts import Storage
 from capture_node.core.storages.options import (
     FileStorageOptions,
+    FtpsStorageOptions,
     SftpStorageOptions,
     StorageOptions,
 )
@@ -68,6 +69,7 @@ def default_storage_registry() -> StorageRegistry:
     """Return the immutable registry shipped with CaptureNode."""
 
     from capture_node.core.storages.file_storage import FileStorage
+    from capture_node.core.storages.ftps_storage import FtpsStorage
     from capture_node.core.storages.sftp_storage import SftpStorage
 
     return StorageRegistry(
@@ -81,6 +83,11 @@ def default_storage_registry() -> StorageRegistry:
                 "sftp",
                 SftpStorageOptions,
                 SftpStorage.from_options,
+            ),
+            StorageRegistration(
+                "ftps",
+                FtpsStorageOptions,
+                FtpsStorage.from_options,
             ),
         )
     )

@@ -89,6 +89,7 @@ class FakeStorage:
         self.exception = exception
         self.delay = delay
         self.calls: list[tuple[bytes, str]] = []
+        self.deleted: list[str] = []
 
     @property
     def name(self) -> str:
@@ -107,6 +108,9 @@ class FakeStorage:
 
     def list(self, page: int, page_size: int):
         raise io.UnsupportedOperation(f"storage {self.name!r} does not support listing")
+
+    def delete(self, name: str) -> None:
+        self.deleted.append(name)
 
 
 class FakeStorageProvider:

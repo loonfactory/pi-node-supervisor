@@ -65,8 +65,19 @@ class CameraManager:
                         )
                     generation = self._generation
                     frames = self._camera.frames()
-                assert frames is not None
+            assert frames is not None
+            try:
                 frame = next(frames)
+            except Exception:
+                with self._lock:
+                    self._ensure_open()
+                    if generation != self._generation:
+                        continue
+                raise
+            with self._lock:
+                self._ensure_open()
+                if generation != self._generation:
+                    continue
             yield frame
 
     def replace(

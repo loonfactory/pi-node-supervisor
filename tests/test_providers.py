@@ -233,7 +233,7 @@ def test_configured_storage_provider_builds_registered_targets(tmp_path: Path) -
 
 
 def test_default_storage_registry_has_unique_supported_keys() -> None:
-    assert default_storage_registry().keys == ("file", "sftp")
+    assert default_storage_registry().keys == ("file", "sftp", "ftps")
 
     duplicate = StorageRegistration(
         "file",

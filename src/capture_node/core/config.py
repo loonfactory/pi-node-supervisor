@@ -110,6 +110,10 @@ class Configuration:
                 raise UnsupportedRuntimeChange(
                     "storage targets cannot be changed while running"
                 )
+            if candidate.maintenance != previous.maintenance:
+                raise UnsupportedRuntimeChange(
+                    "maintenance policy cannot be changed while running"
+                )
             try:
                 self._repository.write(candidate)
                 apply(candidate.capture)

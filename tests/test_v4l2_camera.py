@@ -7,6 +7,8 @@ from types import SimpleNamespace
 import pytest
 from PIL import Image
 
+from capture_node.core.cameras import CameraControlsUnavailable
+import capture_node.core.cameras.v4l2 as v4l2_module
 from capture_node.core.cameras.v4l2 import V4L2Camera, extract_jpeg_frames
 from capture_node.core.cameras.v4l2 import (
     discover_v4l2_devices,
@@ -17,6 +19,23 @@ from capture_node.core.cameras.v4l2 import (
 def jpeg(color: str) -> bytes:
     output = BytesIO()
     Image.new("RGB", (12, 8), color).save(output, "JPEG")
+    return output.getvalue()
+
+
+def patterned_jpeg() -> bytes:
+    image = Image.new("RGB", (12, 8), "black")
+    for y in range(image.height):
+        for x in range(image.width):
+            image.putpixel(
+                (x, y),
+                (
+                    220 if x < image.width // 2 else 30,
+                    200 if y < image.height // 2 else 20,
+                    210 if x >= image.width // 2 else 40,
+                ),
+            )
+    output = BytesIO()
+    image.save(output, "JPEG", quality=95)
     return output.getvalue()
 
 
@@ -113,7 +132,67 @@ def test_v4l2_camera_shares_mjpeg_source_and_applies_controls(
         "exposure_time_absolute": 83,
     }
     assert captured.parameters["control_snapshot_at"].endswith("+00:00")
-    assert "--set-ctrl=brightness=140,white_balance_automatic=0" in control_calls[0][0]
+    assert any(
+        "--set-ctrl=brightness=140,white_balance_automatic=0" in command
+        for command, _kwargs in control_calls
+    )
+
+
+def test_v4l2_flip_prefers_hardware_per_axis_and_uses_software_fallback(
+    tmp_path: Path,
+) -> None:
+    device = tmp_path / "video0"
+    device.touch()
+    source = patterned_jpeg()
+    control_calls: list[list[str]] = []
+
+    def control_runner(command, **_kwargs):
+        control_calls.append(command)
+        if "--list-ctrls-menus" in command:
+            return SimpleNamespace(
+                returncode=0,
+                stdout="""
+ horizontal_flip 0x00980914 (bool) : default=0 value=1
+""",
+                stderr="",
+            )
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    camera = V4L2Camera(
+        device=device,
+        process_factory=lambda _command, **_kwargs: FakeProcess(source),
+        control_runner=control_runner,
+    )
+
+    camera.apply({"horizontal_flip": True, "vertical_flip": True})
+    controls = {control.name: control for control in camera.controls()}
+    captured = camera.capture()
+    preview = next(camera.frames())
+    camera.close()
+
+    set_commands = [
+        command
+        for command in control_calls
+        if any("--set-ctrl=" in part for part in command)
+    ]
+    assert len(set_commands) == 1
+    assert "--set-ctrl=horizontal_flip=1" in set_commands[0]
+    assert controls["horizontal_flip"].application == "hardware"
+    assert controls["vertical_flip"].application == "software"
+    with Image.open(BytesIO(source)) as decoded:
+        expected = decoded.convert("RGB").transpose(Image.Transpose.FLIP_TOP_BOTTOM)
+        expected.load()
+    assert captured.image.tobytes() == expected.tobytes()
+    assert captured.parameters["flip_application"] == {
+        "horizontal_flip": "hardware",
+        "vertical_flip": "software",
+    }
+    assert captured.parameters["horizontal_flip"] is True
+    assert captured.parameters["vertical_flip"] is True
+    assert captured.parameters["observed_controls"] == {
+        "horizontal_flip": True
+    }
+    assert preview.data == source
 
 
 def test_v4l2_camera_rejects_unsafe_control_names(tmp_path: Path) -> None:
@@ -169,6 +248,52 @@ def test_v4l2_control_snapshot_failure_does_not_discard_capture(
     )
     assert "observed_controls" not in captured.parameters
     camera.close()
+
+
+def test_missing_v4l2_ctl_warns_once_and_keeps_capture_available(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    device = tmp_path / "video0"
+    device.touch()
+    control_calls = 0
+
+    def missing_control_runner(_command, **_kwargs):
+        nonlocal control_calls
+        control_calls += 1
+        raise FileNotFoundError("v4l2-ctl")
+
+    v4l2_module._warn_v4l2_ctl_unavailable.cache_clear()
+    camera = V4L2Camera(
+        device=device,
+        process_factory=lambda _command, **_kwargs: FakeProcess(jpeg("white")),
+        control_runner=missing_control_runner,
+    )
+
+    with caplog.at_level("WARNING"):
+        with pytest.raises(CameraControlsUnavailable) as first:
+            camera.controls()
+        with pytest.raises(CameraControlsUnavailable):
+            camera.controls()
+        captured = camera.capture()
+        with pytest.raises(CameraControlsUnavailable):
+            camera.apply({"brightness": 100})
+
+    assert first.value.code == "v4l2_ctl_unavailable"
+    assert {
+        control.name: control.application for control in first.value.controls
+    } == {
+        "horizontal_flip": "software",
+        "vertical_flip": "software",
+    }
+    assert control_calls == 1
+    assert captured.image.size == (12, 8)
+    assert captured.parameters["control_snapshot_error"] == (
+        "v4l2-ctl is unavailable; capture and preview remain active"
+    )
+    assert sum("v4l2-ctl is unavailable" in record.message for record in caplog.records) == 1
+    camera.close()
+    v4l2_module._warn_v4l2_ctl_unavailable.cache_clear()
 
 
 def test_v4l2_control_parser_exposes_live_ranges_and_menus() -> None:

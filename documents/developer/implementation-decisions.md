@@ -47,10 +47,13 @@ SRS-CAPTURENODE-001이며, 추가된 기능 계약은
 
 ## DEC-004 Image Defaults
 
-- 결정: JPEG/PNG 인코딩 품질 기본값은 90, 메타데이터 포함 기본값은 true다.
-- 근거: 촬영 구도와 노출 확인에 충분한 기본 품질을 유지하면서 무손실 PNG의 압축
-  수준에도 일관된 품질 척도를 제공한다.
-- Web 표현: JPEG는 손실 품질 `1-100`, PNG는 무손실 압축 수준 `0-9`로 표시한다.
+- 결정: Image Options는 `JpegImageOptions`(quality 기본 90)와
+  `PngImageOptions`(compression 기본 9)의 discriminated union으로 분리한다.
+  새 설정의 기본 형식은 무손실 PNG이고 메타데이터는 기본 포함한다.
+- 근거: 손실 품질과 무손실 압축 수준은 의미가 다르므로 공통 `quality`
+  수치와 역변환을 공유하지 않는다.
+- Web 표현: JPEG는 `quality 1-100`, PNG는 `compression 0-9`를 각 설정
+  필드에 그대로 표시하며 서로 변환하지 않는다.
   PNG 압축 수준이 커질수록 파일 압축은 강해지지만 픽셀 화질은 변하지 않는다.
 - 메타데이터: 활성화 시 JPEG와 PNG 모두 EXIF를 기록한다. 구현별 전체 카메라
   파라미터는 EXIF `UserComment`의 JSON으로 보존하며, PNG text metadata는
@@ -74,8 +77,27 @@ SRS-CAPTURENODE-001이며, 추가된 기능 계약은
   설정의 `camera.type`으로 `picamera2`와 `v4l2`를 선택한다.
 - 구현: V4L2 장치는 하나의 지속적인 FFmpeg 프로세스가 MJPEG를 읽고, 스틸 촬영과
   Preview가 그 프레임 소스를 공유한다. 카메라 제어는 `v4l2-ctl` 경계로 격리한다.
-- 근거: 대상 Raspberry Pi 5에 FFmpeg와 v4l2-ctl이 이미 설치되어 있으며,
-  OpenCV 같은 추가 런타임 없이 UVC 카메라의 압축 프레임을 그대로 사용할 수 있다.
+- 선택 기능: FFmpeg는 필수지만 `v4l2-ctl`은 discovery, control과 촬영 직후
+  snapshot의 선택 의존성이다. 도구가 없으면 프로세스당 한 번 경고하고 Web에는
+  구조화된 unavailable capability를 반환하며 Preview·촬영·저장은 유지한다.
+  변경되지 않은 params는 재적용하지 않고 실제 control 변경만 거절한다.
+- Web 관찰: 초기 진입에서 control을 한 번 읽고 이후 EventBuffer의 최신
+  `capture.succeeded` ID가 변경될 때마다 실제 적용값을 다시 읽는다.
+  조회는 장치에 값을 쓰지 않고, 저장 전 편집 중인 control은 임시
+  표시값을 유지한다.
+- Web 장치명: V4L2 options와 API 식별자는 전체 장치 경로를 유지한다. 화면에는
+  kernel 장치명과 짧은 node 또는 정리한 `by-id` basename을 표시하고 전체 경로는
+  hover title로만 제공해 안정적인 식별과 가독성을 분리한다.
+- 반전 우선순위: `horizontal_flip`과 `vertical_flip`은 축별로 같은 이름의
+  V4L2 control 존재 여부를 판정한다. 존재하면 hardware에 위임하고, 없는 축만
+  저장 이미지의 PIL transpose와 Web Preview CSS transform으로 처리한다. control
+  응답의 `application`은 `hardware` 또는 `software`를 명시하며 Web은 software
+  축만 CSS로 변환한다. `mirror`는 horizontal flip과 중복되므로 추가하지 않는다.
+- 성능: software Preview 반전은 브라우저 합성으로 처리하고 FFmpeg의 MJPEG
+  `copy` pipeline은 유지한다. 따라서 두 USB 카메라의 모든 frame을 서버에서
+  decode·filter·re-encode하지 않는다.
+- 근거: OpenCV 같은 추가 런타임 없이 UVC 카메라의 압축 프레임을 그대로
+  사용하며, 운영 패키지 일부가 누락돼도 기본 수집 경로를 유지한다.
 - 기각: 스틸과 Preview마다 장치를 별도 개방하는 방식. 장치 점유 충돌과
   WEB-009 위반 가능성이 있어 기각했다.
 
@@ -86,9 +108,10 @@ SRS-CAPTURENODE-001이며, 추가된 기능 계약은
   `disabled`는 Preview와 수동 촬영을 유지하면서 자동 촬영 트리거만 중지한다.
 - 근거: 초 단위 주기 계약을 유지하면서 운영자가 특정 현지 시각을 명시할 수 있다.
   timezone을 설정에 영속화하여 호스트 timezone 변경에 따른 의미 변화를 막는다.
-- 제약: 트리거 필드는 상호 배타적이며, `daily`의 빈 시각 목록과 중복 시각은 전체
-  설정 검증 오류로 처리한다. Web에서 Daily 시각을 모두 삭제해 적용하면
-  `disabled` 상태로 저장한다.
+- 제약: 트리거 필드는 상호 배타적이며 중복 시각은 전체 설정 검증 오류로
+  처리한다. `daily_times`의 `null`은 빈 목록으로 정규화하고, 시각이 없는
+  `daily`는 모드를 유지한 채 자동 촬영 없이 대기한다. 이를 통해 Daily 모드와
+  촬영 시각을 단계적으로 설정할 수 있다.
 
 ## DEC-008 Web Event Pagination
 
@@ -120,6 +143,9 @@ SRS-CAPTURENODE-001이며, 추가된 기능 계약은
 - 연결 상태: Web 호스트는 시작 시 카메라가 없거나 실행 중 분리되더라도
   `UnavailableCamera`와 상태 capability를 통해 계속 실행한다. 상태 API는 실제
   연결 여부를 반환하고, 연결이 복구되기 전 Preview와 촬영 요청을 거절한다.
+- Preview 동시성: 여러 Preview 소비자는 동일한 최신 프레임 흐름을 독립적으로
+  받는다. Camera 수명주기 잠금은 프레임 대기 중 유지하지 않으며, 소비자 수에
+  따라 각 소비자의 프레임률이 분할되지 않게 한다.
 - 기각: Web에서 임의 `/dev/video*` 문자열 입력. metadata/ISP 노드 선택과 장치
   오입력 가능성이 있어 탐색된 capture node 선택을 기본 경로로 채택했다.
 
@@ -128,7 +154,7 @@ SRS-CAPTURENODE-001이며, 추가된 기능 계약은
 - 상태: 저장 조회 대상과 계약은 DEC-015로 대체됐다. filesystem 경계 결정은
   File Storage에 계속 적용한다.
 - 결정: 브라우저에서 원격 OS 파일관리자를 실행하지 않는다. 대신 설정에 등록된
-  file storage의 최상위 파일만 읽기 전용으로 페이지 조회·미리보기·다운로드한다.
+  Storage가 노출한 파일만 읽기 전용으로 페이지 조회·미리보기·다운로드한다.
 - 보안 경계: 대상 이름과 basename을 검증하고, resolve 결과가 storage root
   외부이거나 외부를 가리키는 symlink면 거절한다.
 - 기각: 임의 filesystem 탐색 API. 신뢰된 로컬 네트워크 전제와 별개로 설정된
@@ -210,7 +236,8 @@ SRS-CAPTURENODE-001이며, 추가된 기능 계약은
 
 ## DEC-015 Storage Read Contract
 
-- 결정: `Storage`는 필수 `save`와 파일 `read`, `list` 계약을 함께 제공한다.
+- 결정: `Storage`는 필수 `save`와 파일 `read`, `list`, `delete` 계약을
+  함께 제공한다.
   조회를 지원하지 않는 구현은 `io.UnsupportedOperation`을 발생시킨다.
 - Web 경계: Web은 Options의 구체 Storage 타입을 판별하지 않고
   `StorageProvider`가 제공한 구현에 조회를 위임한다. 대상 응답에는 안정된
@@ -223,29 +250,40 @@ SRS-CAPTURENODE-001이며, 추가된 기능 계약은
 
 ## DEC-016 Web Runtime Deployment
 
-- 결정: `scripts/deploy.sh <user@host>`가 Raspberry Pi의 Camera 0/1 Web
-  instance를 함께 갱신한다. 장비 주소는 실행 시 받고 저장소나 문서에 고정하지
-  않는다.
+- 결정: `eng/deploy.sh <user@host>`는 기본적으로 Raspberry Pi의 Camera 0 Web
+  instance만 갱신한다. `--camera-count 2`를 지정하면 Camera 0/1을 함께
+  갱신한다. 장비 주소는 실행 시 받고 저장소나 문서에 고정하지 않는다.
 - 인스턴스: systemd template unit을 사용한다. Camera 0은
   `config.camera0.json`, `captures/camera0`, port 8000을 사용하고 Camera 1은
   `config.camera1.json`, `captures/camera1`, port 8001을 사용한다. 소스와
   `.venv`만 공유한다.
-- 초기 설치: 대상 경로가 없으면 애플리케이션·촬영·가상환경 경로를 생성한다.
-  기존 단일 설정은 Camera 0에 보존하고 Camera 1의 최초 일정과 Image policy
-  기준으로도 사용한다. 이후 배포에서는 두 운영 설정과 촬영 파일을 교체하지
+- 초기 설치: 대상 경로가 없으면 애플리케이션·선택한 instance의 촬영·가상환경
+  경로를 생성한다. instance 설정은 예제 JSON을 복사하지 않고 검증된 Options
+  모델로 Picamera2, Preview-only 일정, PNG, 로컬 Storage와 365일 보존 정책을
+  생성한다. 이후 배포에서는 이미 생성된 운영 설정과 촬영 파일을 교체하지
   않는다.
 - Raspberry Pi Python: 배포 venv는 system site packages를 포함해 OS의
   Picamera2/libcamera binding을 사용한다. 플랫폼 모듈은 해당 Registration의
   생성 또는 discovery 시점에만 import한다.
-- 검증: 전송 전에 로컬 테스트와 Web build를 수행하고, 전송 후 두 systemd user
-  service를 재시작한 다음 port 8000/8001의 `/api/health` 응답을 확인한다.
+- 검증: 전송 전에 로컬 테스트와 Web build를 수행하고, 전송 후 선택한 systemd
+  user service를 재시작한 다음 해당 port의 `/api/health` 응답을 확인한다.
+- 격리망 재배포: 기존 가상환경의 Web·SFTP 런타임 의존성과 entry point를 import로
+  검증할 수 있으면 원격 `pip install`을 생략한다. 신규 장비나 의존성 변경은 별도
+  provisioning 단계에서 package source를 사용할 수 있어야 한다.
 - 부팅: 배포 시 대상 사용자의 systemd linger를 활성화해 대화형 로그인 없이
   user service가 부팅 과정에서 시작되게 한다. 최초 활성화에는 sudo 권한이
   필요할 수 있다.
 - 전환: 새 `capture_node` 소스는 staging 경로에 먼저 전송한다. 활성화 또는
   health 확인에 실패하면 직전 소스로 되돌리고 서비스를 다시 시작한다.
-- 보존: 두 instance 운영 설정, 촬영 파일 `captures/`, Python 가상 환경
-  `.venv/`는 후속 배포에서 교체하지 않는다.
+- 손상 방지: package 설치 후 Web entry point와 import, 정적 index가 비어 있지
+  않은지 확인한다. systemd template unit은 임시 파일을 검증한 뒤 같은
+  filesystem에서 원자적으로 교체해 설치 중단 시 기존 unit을 보존한다.
+- 보존: instance 운영 설정, 촬영 파일 `captures/`, Python 가상 환경 `.venv/`는
+  후속 배포에서 교체하지 않는다. 1대 배포는 Camera 1 service를 중지하고
+  비활성화하지만 기존 Camera 1 설정과 촬영 파일은 삭제하지 않는다.
+- 정리: template service 전환 이후 기존 단일 Web service는 중지·비활성화하고
+  설치된 user unit을 제거한다. 기존 설정 파일과 촬영 데이터는 자동 삭제하지
+  않는다.
 
 ## DEC-017 Graceful Service Shutdown
 
@@ -286,3 +324,86 @@ SRS-CAPTURENODE-001이며, 추가된 기능 계약은
   dependency로 격리하되 운영 Web 배포에는 설치한다.
 - 제약: SFTP 디렉터리는 서버에 미리 생성돼 있어야 한다. Web read 계약은 현재
   파일 전체를 메모리에 반환하므로 대형 영상 streaming은 이 결정 범위가 아니다.
+
+## DEC-019 Daily Storage Layout
+
+- 결정: File과 SFTP Storage의 기본 `layout`은 `daily`이며 CaptureNode가 만든
+  UTC 파일명 접두어를 이용해 `yyyyMMdd/기존 파일명`에 저장한다. `flat`을
+  명시하면 평면 저장을 유지한다.
+- 경계: 물리 경로만 변경하고 Storage의 논리 파일명, `SaveResult`, Web API와
+  Distributor 계약은 변경하지 않는다. 파일명의 날짜가 유효하지 않은 일반
+  `save` 호출은 최상위에 저장한다.
+- 호환성: 날짜 디렉터리와 기존 최상위 파일을 함께 읽고 목록에 제공한다.
+  symlink, basename과 root 이탈 검증은 양쪽 경로에 동일하게 적용한다.
+- 자원 사용: 목록은 모든 파일을 순회해 정확한 전체 개수를 계산하지만 요청한
+  페이지 끝까지 필요한 최신 항목만 메모리에 유지한다. SFTP도 날짜 디렉터리를
+  하나씩 조회하며 전체 원격 파일 객체를 한 목록으로 합치지 않는다.
+- 근거: 장기 운용 시 단일 디렉터리의 파일 수 증가로 발생할 수 있는 filesystem
+  및 원격 Storage 장애와 조회 비용을 제한하면서 기존 파일 접근을 보존한다.
+
+## DEC-020 Explicit FTPS Storage
+
+- 결정: SSH 기반 SFTP와 구분되는 `ftps` Storage registration을 추가하고
+  Python 표준 라이브러리 `FTP_TLS`로 explicit FTPS만 구현한다. CaptureNode,
+  Distributor와 Web은 구체 타입을 판별하지 않는다.
+- TLS: 기본값은 `ssl.create_default_context`로 certificate chain과 hostname을
+  검증한다. 자체 서명 인증서는 `ca_file`로 명시적으로 신뢰한다. 물리적으로
+  격리된 2-node 유선망에 한해 `verify_tls: false`를 명시할 수 있으며 이때도
+  로그인 후 `PROT P`로 data channel을 보호한다.
+- 저장·조회: 작업마다 독립 연결을 열며 같은 디렉터리 임시 업로드와 rename으로
+  저장을 확정한다. rename 전에 `SIZE`로 전송 크기를 검증하고 읽기도 전후 크기를
+  비교한다. 날짜 경로와 기존 평면 파일 호환은 DEC-019를 따른다.
+- 디렉터리 생성: 저장 작업은 configured `remote_directory`를 루트부터
+  재귀적으로 확인하고 누락된 경로를 생성한다. 실제 생성에 성공한 경로만 INFO로
+  기록하며 조회·목록·삭제 작업은 원격 구조를 변경하지 않는다. 날짜 디렉터리
+  생성은 반복적인 정상 동작이므로 별도 INFO 로그를 남기지 않는다.
+- 목록: 구조화된 `MLSD` fact를 우선 사용한다. 운영 대상처럼 `MLSD`가 없는
+  서버는 `NLST` 후 `SIZE`·`MDTM` 표준 명령으로 대체한다. 서버별 `LIST` 문자열
+  해석은 추가하지 않는다.
+- 인증: JSON에는 `password_env`만 저장한다. SFTP와 마찬가지로 실제 secret은
+  `.env.local` 또는 instance `.env`에서 주입한다.
+- 서버 호환: 일부 FTPS 서버가 data channel의 TLS `close_notify` 응답을
+  생략하거나 연결을 바로 닫을 수 있으므로 종료 대기는 1초로 제한한다. 표준
+  shutdown은 우선 시도하며 TLS record 전송, FTP 완료 응답과 원격 크기 검증은
+  그대로 요구한다.
+- 서버 배포: `eng/deploy-captureftp.ps1`은 IIS 설정 명령의 종료 코드를
+  검증하고 DNS SAN과 IPAddress SAN을 구분한다. 자체 서명 인증서는 Linux
+  `ca_file`에서 사용할 PEM으로 내보내며, 완료 전에 인증서 검증과 passive
+  업로드·목록·다운로드·내용 비교·삭제를 수행한다.
+- 범위: port 990 implicit FTPS, active mode와 자동 재시도는 제공하지 않는다.
+
+## DEC-021 Storage Retention Maintenance
+
+- 결정: Storage adapter는 단일 파일 삭제만 수행하고 대상 선정과 주기는
+  `core/maintenance` 영역의 `StorageMaintenance`, `RetentionOptions`,
+  `MaintenanceScheduler`가 소유한다.
+- Scheduler: 촬영 Scheduler와 독립된 고정 지연 스레드로 시작 즉시
+  실행하고 기본 86,400초마다 반복한다. 정책이 없으면 스레드를
+  생성하지 않는다.
+- 정책: target별 `max_age_days`를 명시하며 Storage가 반환한 UTC
+  `modified_at`을 기준으로 경계보다 오래된 파일만 삭제한다. 기본은 빈
+  정책이고 운영 예제의 local target에만 365일을 설정한다.
+- 실패: 목록·삭제 예외를 대상별로 기록하고 다른 파일·Storage 처리와
+  촬영 파이프라인은 계속한다. 런타임 정책 변경은 재시작을 요구한다.
+- 근거: 저장 행위가 기존 데이터를 암묵적으로 삭제하지 않게 하고, 새
+  Storage 구현이 촬영·보존 정책 파이프라인을 변경하지 않게 한다.
+
+## DEC-022 Isolated Network Time Source
+
+- 결정: 운영 CaptureNode는 gateway와 DNS가 없는 전용 `/24` 유선망에서 고정
+  주소를 사용하고, 같은 link의 Windows W32Time server를 단일 NTP source로
+  사용한다. Wi-Fi와 외부 fallback NTP는 사용하지 않는다.
+- 서버: 상위 시계가 없는 Windows server는 `Type=NoSync`,
+  `AnnounceFlags=5`, NTP server provider enabled 상태로 로컬 시계를 권위
+  source로 제공한다. UDP 123 inbound는 CaptureNode 주소에만 허용한다.
+- client: Pi는 `systemd-timesyncd`의 `NTP`에 server 주소를 명시하고
+  `FallbackNTP`를 비운다. Windows local clock의 기본 root dispersion 약
+  10초를 수용하도록 `RootDistanceMaxSec=15`를 사용하며 server dispersion을
+  임의로 낮추지 않는다.
+- RTC: Pi 5 내장 RTC는 UTC로 유지하고 NTP로 보정된 시스템 시각을 기록한다.
+  완전 전원 차단 시각 유지는 software가 아니라 RTC battery에 의존한다.
+- 검증: server 주소 표시는 성공 기준이 아니다. NTP header의 normal leap와
+  유효 stratum, `Packet count >= 1`, `System clock synchronized: yes`를 함께
+  확인한다.
+- 운영 절차와 장애 판별은
+  `documents/operations/isolated-network-time-sync.md`를 따른다.

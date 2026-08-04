@@ -4,10 +4,9 @@ set -Eeuo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 REMOTE_APP_DIR="capture-node"
-LEGACY_SERVICE_NAME="capture-node-web.service"
-SERVICE_TEMPLATE_NAME="capture-node-web@.service"
-INSTANCE_NAMES=("camera0" "camera1")
-INSTANCE_PORTS=(8000 8001)
+SUPPORTED_INSTANCE_NAMES=("camera0" "camera1")
+SUPPORTED_INSTANCE_PORTS=(8000 8001)
+CAMERA_COUNT=1
 SKIP_TESTS=0
 SKIP_LINGER=0
 DRY_RUN=0
@@ -15,21 +14,23 @@ TARGET=""
 
 usage() {
     cat <<'EOF'
-Usage: scripts/deploy.sh [options] <user@host>
+Usage: eng/deploy.sh [options] <user@host>
 
-Build and deploy two CaptureNode Web camera instances to ~/capture-node.
-The first deployment creates Camera 0 and Camera 1 configurations on ports
-8000 and 8001. Later deployments preserve both configurations, captures/, and
-.venv/. systemd linger enables startup without an interactive login.
+Build and deploy CaptureNode Web camera instances to ~/capture-node.
+One camera on port 8000 is deployed by default. Use --camera-count 2 to also
+deploy Camera 1 on port 8001. Existing configurations, captures/, and .venv/
+are preserved. systemd linger enables startup without an interactive login.
 
 Options:
-  --skip-tests  Skip the local pytest run.
-  --skip-linger Skip systemd linger setup when it is provisioned separately.
-  --dry-run     Build locally and print the target without connecting.
-  -h, --help    Show this help.
+  --camera-count N  Deploy 1 (default) or 2 camera instances.
+  --skip-tests      Skip the local pytest run.
+  --skip-linger     Skip systemd linger setup when it is provisioned separately.
+  --dry-run         Build locally and print the target without connecting.
+  -h, --help        Show this help.
 
 Example:
-  scripts/deploy.sh huintech@capture-node.local
+  eng/deploy.sh huintech@capture-node.local
+  eng/deploy.sh --camera-count 2 huintech@capture-node.local
 EOF
 }
 
@@ -40,6 +41,14 @@ fail() {
 
 while (($#)); do
     case "$1" in
+        --camera-count)
+            (($# >= 2)) || fail "--camera-count requires a value"
+            CAMERA_COUNT="$2"
+            shift
+            ;;
+        --camera-count=*)
+            CAMERA_COUNT="${1#*=}"
+            ;;
         --skip-tests)
             SKIP_TESTS=1
             ;;
@@ -63,6 +72,11 @@ while (($#)); do
     esac
     shift
 done
+
+[[ "$CAMERA_COUNT" =~ ^[12]$ ]] \
+    || fail "--camera-count must be 1 or 2"
+INSTANCE_NAMES=("${SUPPORTED_INSTANCE_NAMES[@]:0:CAMERA_COUNT}")
+INSTANCE_PORTS=("${SUPPORTED_INSTANCE_PORTS[@]:0:CAMERA_COUNT}")
 
 [[ -n "$TARGET" ]] || {
     usage >&2
@@ -126,22 +140,19 @@ REMOTE_CHECK
 
 printf '==> Preparing remote installation\n'
 ssh "${SSH_OPTIONS[@]}" "$TARGET" \
-    "mkdir -p \
-        '$REMOTE_APP_DIR/captures' \
-        '$REMOTE_APP_DIR/captures/camera0' \
-        '$REMOTE_APP_DIR/captures/camera1' \
-        '$REMOTE_APP_DIR/instances' \
-        '$REMOTE_APP_DIR/.deploy-next/capture_node'"
+    bash -s -- "$REMOTE_APP_DIR" "$CAMERA_COUNT" <<'REMOTE_PREPARE'
+set -eu
 
-if ! ssh "${SSH_OPTIONS[@]}" "$TARGET" \
-    "test -f '$REMOTE_APP_DIR/config.usb.json'"; then
-    printf '==> Creating initial Preview-only USB configuration\n'
-    rsync \
-        --archive \
-        --rsh "$RSYNC_SSH" \
-        config.usb.example.json \
-        "$TARGET:$REMOTE_APP_DIR/config.usb.json"
-fi
+app_dir="$1"
+camera_count="$2"
+mkdir -p \
+    "$app_dir/captures" \
+    "$app_dir/instances" \
+    "$app_dir/.deploy-next/capture_node"
+for ((index = 0; index < camera_count; index++)); do
+    mkdir -p "$app_dir/captures/camera${index}"
+done
+REMOTE_PREPARE
 
 if ((SKIP_LINGER == 0)); then
     printf '==> Enabling login-independent user service startup\n'
@@ -183,7 +194,6 @@ rsync \
     pyproject.toml \
     README.md \
     config.example.json \
-    config.usb.example.json \
     "$TARGET:$REMOTE_APP_DIR/"
 
 rsync \
@@ -194,26 +204,40 @@ rsync \
 
 printf '==> Activating deployment\n'
 ssh "${SSH_OPTIONS[@]}" "$TARGET" \
-    bash -s <<'REMOTE_SCRIPT'
+    bash -s -- "$CAMERA_COUNT" <<'REMOTE_SCRIPT'
 set -Eeuo pipefail
 
+camera_count="$1"
 app_dir="$HOME/capture-node"
 previous_dir="$app_dir/.deploy-previous"
 failed_dir="$app_dir/.deploy-failed"
-legacy_service="capture-node-web.service"
-instances=("camera0" "camera1")
+legacy_unit="$HOME/.config/systemd/user/capture-node-web.service"
+all_instances=("camera0" "camera1")
+instances=("${all_instances[@]:0:camera_count}")
 ports=(8000 8001)
-had_template_instances=0
-if systemctl --user is-enabled capture-node-web@camera0.service \
-    >/dev/null 2>&1; then
-    had_template_instances=1
+legacy_was_enabled=0
+legacy_was_active=0
+if [[ -f "$legacy_unit" ]]; then
+    if systemctl --user is-enabled capture-node-web.service >/dev/null 2>&1; then
+        legacy_was_enabled=1
+    fi
+    if systemctl --user is-active capture-node-web.service >/dev/null 2>&1; then
+        legacy_was_active=1
+    fi
 fi
+previously_enabled_instances=()
+for instance in "${all_instances[@]}"; do
+    if systemctl --user is-enabled "capture-node-web@${instance}.service" \
+        >/dev/null 2>&1; then
+        previously_enabled_instances+=("$instance")
+    fi
+done
 
 rollback() {
     status=$?
     trap - ERR
     printf 'Remote activation failed; restoring previous source.\n' >&2
-    for instance in "${instances[@]}"; do
+    for instance in "${all_instances[@]}"; do
         systemctl --user stop "capture-node-web@${instance}.service" \
             >/dev/null 2>&1 || true
     done
@@ -224,18 +248,17 @@ rollback() {
     if [[ -d "$previous_dir" ]]; then
         mv "$previous_dir" "$app_dir/src/capture_node"
     fi
-    if [[ -x "$app_dir/.venv/bin/python" ]]; then
-        "$app_dir/.venv/bin/python" -m pip install --no-deps -e "$app_dir" \
+    for instance in "${previously_enabled_instances[@]}"; do
+        systemctl --user enable "capture-node-web@${instance}.service" \
             >/dev/null 2>&1 || true
+        systemctl --user restart "capture-node-web@${instance}.service" \
+            >/dev/null 2>&1 || true
+    done
+    if ((legacy_was_enabled == 1)); then
+        systemctl --user enable capture-node-web.service >/dev/null 2>&1 || true
     fi
-    if ((had_template_instances == 1)); then
-        for instance in "${instances[@]}"; do
-            systemctl --user restart "capture-node-web@${instance}.service" \
-                >/dev/null 2>&1 || true
-        done
-    elif systemctl --user cat "$legacy_service" >/dev/null 2>&1; then
-        systemctl --user enable "$legacy_service" >/dev/null 2>&1 || true
-        systemctl --user restart "$legacy_service" >/dev/null 2>&1 || true
+    if ((legacy_was_active == 1)); then
+        systemctl --user restart capture-node-web.service >/dev/null 2>&1 || true
     fi
     exit "$status"
 }
@@ -260,49 +283,78 @@ fi
 mv .deploy-next/capture_node src/capture_node
 rm -rf .deploy-next
 
-.venv/bin/python -m pip install -e '.[web,sftp]'
+if [[ -s .venv/bin/capture-node-web ]] \
+    && .venv/bin/python -c \
+        'import fastapi, paramiko, PIL, pydantic, uvicorn; import capture_node'; then
+    printf 'Reusing installed runtime dependencies for offline deployment.\n'
+else
+    .venv/bin/python -m pip install -e '.[web,sftp]'
+fi
 .venv/bin/python -m compileall -q src/capture_node
+[[ -s .venv/bin/capture-node-web ]]
+.venv/bin/python -c \
+    'from capture_node.web.server import main; assert callable(main)'
+[[ -s src/capture_node/web/static/index.html ]]
 
-printf 'Preparing Camera 0 and Camera 1 runtime configurations.\n'
-.venv/bin/python - <<'PY'
+printf 'Preparing %s camera runtime configuration(s).\n' "$camera_count"
+.venv/bin/python - "$camera_count" <<'PY'
 from __future__ import annotations
 
-import copy
 import json
 import os
+import sys
 from pathlib import Path
 
+from capture_node.core.cameras.options import Picamera2Options
+from capture_node.core.encodings.options import PngImageOptions
+from capture_node.core.maintenance.options import (
+    MaintenanceOptions,
+    RetentionOptions,
+)
+from capture_node.core.options import CaptureOptions, Options
+from capture_node.core.storages.options import FileStorageOptions
+
+camera_count = int(sys.argv[1])
 app_dir = Path.home() / "capture-node"
-source_path = app_dir / "config.usb.json"
-source = json.loads(source_path.read_text(encoding="utf-8"))
 
 
 def write_configuration(path: Path, camera_num: int) -> None:
     if path.exists():
         return
-    document = copy.deepcopy(source)
-    document["camera"] = {
-        "type": "picamera2",
-        "camera_num": camera_num,
-        "width": 1920,
-        "height": 1080,
-        "preview_fps": 10,
-        "preview_quality": 75,
-    }
-    for storage in document.get("storages", []):
-        if storage.get("type") == "file":
-            storage["directory"] = f"captures/camera{camera_num}"
+    options = Options(
+        camera=Picamera2Options(
+            camera_num=camera_num,
+            width=1920,
+            height=1080,
+            preview_fps=10,
+            preview_quality=75,
+        ),
+        capture=CaptureOptions(mode="disabled"),
+        image=PngImageOptions(),
+        storages=(
+            FileStorageOptions(
+                type="file",
+                name="local",
+                directory=Path(f"captures/camera{camera_num}"),
+                layout="daily",
+            ),
+        ),
+        maintenance=MaintenanceOptions(
+            retention=(RetentionOptions(target="local", max_age_days=365),),
+        ),
+    )
     temporary = path.with_suffix(f"{path.suffix}.tmp")
     temporary.write_text(
-        json.dumps(document, ensure_ascii=True, indent=2) + "\n",
+        json.dumps(options.model_dump(mode="json"), ensure_ascii=True, indent=2)
+        + "\n",
         encoding="utf-8",
     )
     os.chmod(temporary, 0o600)
     os.replace(temporary, path)
 
 
-write_configuration(app_dir / "config.camera0.json", 0)
-write_configuration(app_dir / "config.camera1.json", 1)
+for camera_num in range(camera_count):
+    write_configuration(app_dir / f"config.camera{camera_num}.json", camera_num)
 PY
 
 find captures -maxdepth 1 -type f -exec mv -n {} captures/camera0/ \;
@@ -323,12 +375,22 @@ touch .env.local
 chmod 0600 .env.local
 
 mkdir -p "$HOME/.config/systemd/user"
+unit_target="$HOME/.config/systemd/user/capture-node-web@.service"
+unit_temporary="${unit_target}.tmp"
 install -m 0644 \
     systemd/capture-node-web@.user.service \
-    "$HOME/.config/systemd/user/capture-node-web@.service"
+    "$unit_temporary"
+[[ -s "$unit_temporary" ]]
+mv -f "$unit_temporary" "$unit_target"
 
+systemctl --user disable --now capture-node-web.service >/dev/null 2>&1 || true
 systemctl --user daemon-reload
-systemctl --user disable --now "$legacy_service" >/dev/null 2>&1 || true
+
+for ((index = camera_count; index < ${#all_instances[@]}; index++)); do
+    instance="${all_instances[$index]}"
+    systemctl --user disable --now "capture-node-web@${instance}.service" \
+        >/dev/null 2>&1 || true
+done
 
 for instance in "${instances[@]}"; do
     service_name="capture-node-web@${instance}.service"
@@ -366,6 +428,8 @@ for index in "${!instances[@]}"; do
     rm -f "$health_file"
 done
 
+rm -f "$legacy_unit"
+systemctl --user daemon-reload
 trap - ERR
 rm -rf "$failed_dir"
 REMOTE_SCRIPT

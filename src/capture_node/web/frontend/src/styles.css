@@ -187,6 +187,18 @@ h2 {
   object-fit: contain;
 }
 
+.preview-frame img.software-flip-horizontal {
+  transform: scaleX(-1);
+}
+
+.preview-frame img.software-flip-vertical {
+  transform: scaleY(-1);
+}
+
+.preview-frame img.software-flip-horizontal.software-flip-vertical {
+  transform: scale(-1, -1);
+}
+
 .preview-offline {
   width: 100%;
   height: 100%;
@@ -319,6 +331,16 @@ textarea {
   color: #aeb7bc;
   font-size: 12px;
   font-weight: 650;
+}
+
+.field-label-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.field-label-status svg {
+  color: #e7b45f;
 }
 
 .field-heading {
@@ -639,6 +661,38 @@ textarea {
   background: #2b1b1a;
   font-size: 12px;
   line-height: 1.45;
+}
+
+.warning-message {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 8px;
+  padding: 10px 11px;
+  color: #f4dfb5;
+  border-left: 3px solid #d7a447;
+  background: #292318;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.warning-message > svg {
+  margin-top: 1px;
+}
+
+.warning-dismiss {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  color: #c9b98f;
+  border: 0;
+  background: transparent;
+}
+
+.warning-dismiss:hover {
+  color: #fff;
 }
 
 .error-message svg {

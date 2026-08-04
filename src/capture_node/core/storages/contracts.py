@@ -67,6 +67,9 @@ class Storage(Protocol):
     def list(self, page: int, page_size: int) -> StorageListResult:
         """List one file page or raise io.UnsupportedOperation."""
 
+    def delete(self, name: str) -> None:
+        """Delete one named file or raise the relevant filesystem exception."""
+
 
 class StorageProvider(Protocol):
     """Provides the complete storage target set assembled by the host."""

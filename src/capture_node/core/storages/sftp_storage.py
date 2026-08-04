@@ -127,6 +127,22 @@ class SftpStorage:
             self._require_directory(session)
             return newest_page(self._files(session), page, page_size)
 
+    def delete(self, name: str) -> None:
+        with self._session_factory() as session:
+            for relative in storage_read_paths(name):
+                path = self._path(relative)
+                try:
+                    attributes = session.lstat(path)
+                except OSError as exc:
+                    if self._is_missing(exc):
+                        continue
+                    raise
+                if not self._is_regular_file(attributes):
+                    raise FileNotFoundError(f"storage entry is not a file: {name}")
+                session.remove(path)
+                return
+        raise FileNotFoundError(f"storage file does not exist: {name}")
+
     def _files(self, session: _SftpClient) -> Iterator[StoredFile]:
         root_entries = session.listdir_attr(self._remote_directory)
         for attributes in root_entries:

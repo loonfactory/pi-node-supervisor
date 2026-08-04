@@ -8,7 +8,7 @@ from typing import Any
 from capture_node.core.cameras import Capture
 from capture_node.core.encodings.contracts import EncodedImage
 from capture_node.core.encodings.exif import capture_exif
-from capture_node.core.encodings.options import ImageOptions
+from capture_node.core.encodings.options import ImageOptions, JpegImageOptions
 
 
 class JpegEncoding:
@@ -16,6 +16,8 @@ class JpegEncoding:
     extension = "jpg"
 
     def encode(self, capture: Capture, options: ImageOptions) -> EncodedImage:
+        if not isinstance(options, JpegImageOptions):
+            raise TypeError("JPEG encoding requires JpegImageOptions")
         output = BytesIO()
         save_options: dict[str, Any] = {
             "format": "JPEG",

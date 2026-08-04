@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import subprocess
 import threading
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from functools import lru_cache
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -16,6 +18,7 @@ from PIL import Image
 
 from capture_node.core.cameras.contracts import (
     CameraControl,
+    CameraControlsUnavailable,
     CameraDevice,
     CameraStatus,
     Capture,
@@ -33,6 +36,11 @@ _CONTROL_LINE = re.compile(
 )
 _MENU_LINE = re.compile(r"^\s+(-?\d+):\s+(.+)$")
 _NUMERIC_ATTRIBUTE = re.compile(r"\b(min|max|step|default|value)=(-?\d+(?:\.\d+)?)")
+_CONTROLS_UNAVAILABLE_DETAIL = (
+    "v4l2-ctl is unavailable; capture and preview remain active"
+)
+_CONTROLS_UNAVAILABLE_CODE = "v4l2_ctl_unavailable"
+_FLIP_CONTROLS = ("horizontal_flip", "vertical_flip")
 
 __all__ = [
     "V4L2Camera",
@@ -87,8 +95,11 @@ class V4L2Camera:
         self._frame_rate = frame_rate
         self._startup_timeout = startup_timeout_seconds
         self._control_runner = control_runner
+        self._control_tool_available = True
         self._parameters_lock = threading.Lock()
         self._parameters: dict[str, Any] = {}
+        self._software_flips = {name: False for name in _FLIP_CONTROLS}
+        self._flip_application: dict[str, str] = {}
         self._stream = FFmpegMjpegStream(
             device=device,
             width=width,
@@ -104,7 +115,7 @@ class V4L2Camera:
         snapshot_at = datetime.now(UTC)
         try:
             observed_controls = {
-                control.name: control.value for control in self.controls()
+                control.name: control.value for control in self._hardware_controls()
             }
             snapshot: dict[str, Any] = {
                 "control_snapshot_at": snapshot_at.isoformat(),
@@ -120,6 +131,12 @@ class V4L2Camera:
             image.load()
         with self._parameters_lock:
             configured_parameters = dict(self._parameters)
+            software_flips = dict(self._software_flips)
+            flip_application = dict(self._flip_application)
+        if software_flips["horizontal_flip"]:
+            image = image.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
+        if software_flips["vertical_flip"]:
+            image = image.transpose(Image.Transpose.FLIP_TOP_BOTTOM)
         return Capture(
             image=image,
             captured_at=captured_at,
@@ -128,6 +145,7 @@ class V4L2Camera:
                 "width": self._width,
                 "height": self._height,
                 "frame_rate": self._frame_rate,
+                "flip_application": flip_application,
                 **configured_parameters,
                 **snapshot,
             },
@@ -142,47 +160,120 @@ class V4L2Camera:
     def apply(self, parameters: Mapping[str, Any]) -> None:
         if not parameters:
             return
-        controls = ",".join(
-            f"{self._validate_control_name(name)}={self._control_value(value)}"
-            for name, value in parameters.items()
-        )
-        completed = self._control_runner(
-            [
-                "v4l2-ctl",
-                "--device",
-                str(self._device),
-                f"--set-ctrl={controls}",
-            ],
-            stdin=subprocess.DEVNULL,
-            capture_output=True,
-            text=True,
-            timeout=self._startup_timeout,
-            check=False,
-        )
-        if completed.returncode != 0:
-            detail = completed.stderr.strip() or completed.stdout.strip()
-            raise RuntimeError(f"cannot apply V4L2 controls: {detail}")
+        for name in parameters:
+            self._validate_control_name(name)
+        try:
+            hardware_controls = self._hardware_controls()
+        except CameraControlsUnavailable:
+            unsupported = set(parameters).difference(_FLIP_CONTROLS)
+            if unsupported:
+                raise
+            hardware_controls = ()
+        hardware_names = {control.name for control in hardware_controls}
+        hardware_parameters: dict[str, Any] = {}
+        software_flips: dict[str, bool] = {}
+        flip_application: dict[str, str] = {}
+        for name, value in parameters.items():
+            if name not in _FLIP_CONTROLS:
+                hardware_parameters[name] = value
+                continue
+            if not isinstance(value, bool):
+                raise ValueError(f"{name} must be boolean")
+            if name in hardware_names:
+                hardware_parameters[name] = value
+                software_flips[name] = False
+                flip_application[name] = "hardware"
+            else:
+                software_flips[name] = value
+                flip_application[name] = "software"
+        if hardware_parameters:
+            controls = ",".join(
+                f"{name}={self._control_value(value)}"
+                for name, value in hardware_parameters.items()
+            )
+            completed = self._run_control(
+                [
+                    "v4l2-ctl",
+                    "--device",
+                    str(self._device),
+                    f"--set-ctrl={controls}",
+                ],
+            )
+            if completed.returncode != 0:
+                detail = completed.stderr.strip() or completed.stdout.strip()
+                raise RuntimeError(f"cannot apply V4L2 controls: {detail}")
         with self._parameters_lock:
             self._parameters = dict(parameters)
+            self._software_flips.update(software_flips)
+            self._flip_application.update(flip_application)
 
     def controls(self) -> tuple[CameraControl, ...]:
-        completed = self._control_runner(
+        try:
+            hardware_controls = self._hardware_controls()
+        except CameraControlsUnavailable as exc:
+            raise self._controls_unavailable(self._software_controls()) from exc
+        hardware_names = {control.name for control in hardware_controls}
+        return hardware_controls + tuple(
+            control
+            for control in self._software_controls()
+            if control.name not in hardware_names
+        )
+
+    def _hardware_controls(self) -> tuple[CameraControl, ...]:
+        completed = self._run_control(
             [
                 "v4l2-ctl",
                 "--device",
                 str(self._device),
                 "--list-ctrls-menus",
             ],
-            stdin=subprocess.DEVNULL,
-            capture_output=True,
-            text=True,
-            timeout=self._startup_timeout,
-            check=False,
         )
         if completed.returncode != 0:
             detail = completed.stderr.strip() or completed.stdout.strip()
             raise RuntimeError(f"cannot read V4L2 controls: {detail}")
         return parse_v4l2_controls(completed.stdout)
+
+    def _software_controls(self) -> tuple[CameraControl, ...]:
+        with self._parameters_lock:
+            values = dict(self._software_flips)
+        return tuple(
+            CameraControl(
+                name=name,
+                label=name.replace("_", " ").title(),
+                control_type="bool",
+                value=values[name],
+                default=False,
+                application="software",
+            )
+            for name in _FLIP_CONTROLS
+        )
+
+    def _run_control(self, command: list[str]) -> Any:
+        if not self._control_tool_available:
+            raise self._controls_unavailable()
+        try:
+            return self._control_runner(
+                command,
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                text=True,
+                timeout=self._startup_timeout,
+                check=False,
+            )
+        except FileNotFoundError as exc:
+            self._control_tool_available = False
+            _warn_v4l2_ctl_unavailable()
+            raise self._controls_unavailable() from exc
+
+    @staticmethod
+    def _controls_unavailable(
+        controls: tuple[CameraControl, ...] = (),
+    ) -> CameraControlsUnavailable:
+        return CameraControlsUnavailable(
+            _CONTROLS_UNAVAILABLE_DETAIL,
+            code=_CONTROLS_UNAVAILABLE_CODE,
+            controls=controls,
+        )
 
     def status(self) -> CameraStatus:
         if self._stream.closed:
@@ -276,14 +367,18 @@ def discover_v4l2_devices(
             except OSError:
                 continue
         device = Path("/dev") / entry.name
-        completed = runner(
-            ["v4l2-ctl", "--device", str(device), "--get-fmt-video"],
-            stdin=subprocess.DEVNULL,
-            capture_output=True,
-            text=True,
-            timeout=3,
-            check=False,
-        )
+        try:
+            completed = runner(
+                ["v4l2-ctl", "--device", str(device), "--get-fmt-video"],
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                text=True,
+                timeout=3,
+                check=False,
+            )
+        except FileNotFoundError:
+            _warn_v4l2_ctl_unavailable()
+            return ()
         if completed.returncode != 0:
             continue
         try:
@@ -310,3 +405,8 @@ def discover_v4l2_camera_devices() -> tuple[CameraDevice, ...]:
 def _number(value: str) -> int | float:
     parsed = float(value)
     return int(parsed) if parsed.is_integer() else parsed
+
+
+@lru_cache(maxsize=1)
+def _warn_v4l2_ctl_unavailable() -> None:
+    logging.getLogger(__name__).warning(_CONTROLS_UNAVAILABLE_DETAIL)

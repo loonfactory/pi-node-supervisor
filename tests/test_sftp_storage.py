@@ -187,6 +187,12 @@ def test_sftp_storage_uses_daily_directories_and_reads_legacy_files() -> None:
     assert storage.read("legacy.jpg") == b"legacy"
     assert {item.name for item in listing.items} == {name, "legacy.jpg"}
 
+    storage.delete(name)
+
+    assert f"/captures/20260731/{name}" not in client.files
+    with pytest.raises(FileNotFoundError):
+        storage.delete(name)
+
 
 def test_sftp_storage_falls_back_to_standard_rename() -> None:
     client = FakeSftpClient()

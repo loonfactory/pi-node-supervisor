@@ -31,6 +31,14 @@ class EventBuffer(logging.Handler):
         with self._events_lock:
             return list(self._events)
 
+    def latest_capture_id(self) -> str | None:
+        with self._events_lock:
+            for event in self._events:
+                if event.get("event_type") == "capture.succeeded":
+                    capture_id = event.get("capture_id")
+                    return capture_id if isinstance(capture_id, str) else None
+        return None
+
     def page(
         self,
         page: int,

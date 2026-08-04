@@ -96,3 +96,18 @@ def test_disabled_scheduler_waits_until_a_schedule_is_enabled() -> None:
     scheduler.update_schedule(CaptureSchedule(mode="interval", interval_seconds=0.01))
     assert captured.wait(0.2)
     scheduler.stop()
+
+
+@pytest.mark.covers("CAP-001")
+def test_daily_scheduler_without_times_waits_until_configured() -> None:
+    captured = threading.Event()
+    scheduler = CaptureScheduler(
+        CaptureSchedule(mode="daily"),
+        captured.set,
+    )
+
+    scheduler.start()
+    assert not captured.wait(0.05)
+    scheduler.update_schedule(CaptureSchedule(mode="interval", interval_seconds=0.01))
+    assert captured.wait(0.2)
+    scheduler.stop()

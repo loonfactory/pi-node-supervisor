@@ -18,6 +18,7 @@ from capture_node.core.config import (
 )
 from capture_node.core.encodings import ImageEncoder
 from capture_node.core.events import EventEmitter, EventType, cause_payload
+from capture_node.core.maintenance import MaintenanceScheduler, StorageMaintenance
 from capture_node.core.options import CaptureOptions, Options
 from capture_node.core.scheduler import CaptureSchedule, CaptureScheduler
 from capture_node.core.storages import (
@@ -64,6 +65,18 @@ class CaptureNode:
         self._camera_provider = camera_provider
         self._configuration = configuration
         self._distributor = Distributor(storage_provider)
+        self._maintenance = StorageMaintenance(
+            storage_provider,
+            configuration.current.maintenance.retention,
+        )
+        self._maintenance_scheduler = (
+            MaintenanceScheduler(
+                configuration.current.maintenance.interval_seconds,
+                self._run_maintenance,
+            )
+            if configuration.current.maintenance.retention
+            else None
+        )
         self._encoder = encoder or ImageEncoder()
         self._emitter = emitter or EventEmitter()
         self._pending_condition = threading.Condition()
@@ -105,6 +118,8 @@ class CaptureNode:
             self._camera_provider.camera().apply(self.options.capture.params)
             self._active_capture_options = self.options.capture
             self._scheduler.start()
+            if self._maintenance_scheduler is not None:
+                self._maintenance_scheduler.start()
             self._started = True
         self._emitter.emit(
             EventType.STARTED,
@@ -124,6 +139,8 @@ class CaptureNode:
             with self._pending_condition:
                 self._accepting_work = False
             self._scheduler.stop()
+            if self._maintenance_scheduler is not None:
+                self._maintenance_scheduler.stop()
             self._executor.shutdown(wait=True)
             with self._pending_condition:
                 while self._pending_since is not None:
@@ -299,14 +316,45 @@ class CaptureNode:
             self._pending_since = None
             self._pending_condition.notify_all()
 
+    def _run_maintenance(self) -> None:
+        try:
+            result = self._maintenance.run()
+        except BaseException as exc:
+            self._emitter.emit(
+                EventType.RETENTION_FAILED,
+                failures=[{"target": None, "name": None, "cause": cause_payload(exc)}],
+            )
+            return
+        if result.deleted:
+            self._emitter.emit(
+                EventType.RETENTION_COMPLETED,
+                deleted=[
+                    {"target": target, "name": name}
+                    for target, name in result.deleted
+                ],
+            )
+        if result.failures:
+            self._emitter.emit(
+                EventType.RETENTION_FAILED,
+                failures=[
+                    {
+                        "target": failure.target,
+                        "name": failure.name,
+                        "cause": cause_payload(failure.cause),
+                    }
+                    for failure in result.failures
+                ],
+            )
+
     def _apply_capture_options(self, candidate: CaptureOptions) -> None:
         previous = self._active_capture_options
-        camera = self._camera_provider.camera()
-        try:
-            camera.apply(candidate.params)
-        except BaseException:
-            camera.apply(previous.params)
-            raise
+        if candidate.params != previous.params:
+            camera = self._camera_provider.camera()
+            try:
+                camera.apply(candidate.params)
+            except BaseException:
+                camera.apply(previous.params)
+                raise
         self._scheduler.update_schedule(self._capture_schedule(candidate))
         self._active_capture_options = candidate
 
@@ -331,6 +379,9 @@ class CaptureNode:
             "capture_timezone": options.capture.timezone,
             "image_format": options.image.format,
             "storage_targets": [storage.name for storage in options.storages],
+            "retention_targets": [
+                rule.target for rule in options.maintenance.retention
+            ],
         }
 
     @staticmethod

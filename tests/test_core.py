@@ -341,7 +341,7 @@ def test_runtime_preview_only_mode_keeps_manual_capture_and_image_policy(
     }
     document["image"] = {
         "format": "png",
-        "quality": 72,
+        "compression": 7,
         "embed_metadata": False,
     }
 

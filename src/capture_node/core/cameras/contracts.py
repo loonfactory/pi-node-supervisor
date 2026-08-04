@@ -5,12 +5,27 @@ from __future__ import annotations
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
 from PIL import Image
 
 if TYPE_CHECKING:
     from capture_node.core.cameras.options import CameraOptions
+
+
+class CameraControlsUnavailable(RuntimeError):
+    """Raised when optional camera-control tooling is unavailable."""
+
+    def __init__(
+        self,
+        detail: str,
+        *,
+        code: str = "camera_controls_unavailable",
+        controls: Sequence[CameraControl] = (),
+    ) -> None:
+        super().__init__(detail)
+        self.code = code
+        self.controls = tuple(controls)
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,6 +59,7 @@ class CameraControl:
     default: int | float | bool | None = None
     options: Mapping[int, str] = field(default_factory=dict)
     inactive: bool = False
+    application: Literal["hardware", "software"] = "hardware"
 
 
 @dataclass(frozen=True, slots=True)

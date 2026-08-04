@@ -9,7 +9,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from pydantic import Field, field_validator, model_validator
 
 from capture_node.core.cameras.options import CameraOptions, Picamera2Options
-from capture_node.core.encodings.options import ImageOptions
+from capture_node.core.encodings.options import ImageOptions, PngImageOptions
+from capture_node.core.maintenance import MaintenanceOptions
 from capture_node.core.models import StrictModel
 from capture_node.core.storages.options import StorageOptions
 
@@ -20,6 +21,11 @@ class CaptureOptions(StrictModel):
     daily_times: tuple[Time, ...] = ()
     timezone: str = "Asia/Seoul"
     params: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("daily_times", mode="before")
+    @classmethod
+    def normalize_missing_daily_times(cls, value: Any) -> Any:
+        return () if value is None else value
 
     @field_validator("timezone")
     @classmethod
@@ -44,8 +50,6 @@ class CaptureOptions(StrictModel):
         elif self.mode == "daily":
             if self.interval_seconds is not None:
                 raise ValueError("interval_seconds must be null in daily mode")
-            if not self.daily_times:
-                raise ValueError("daily_times requires at least one time in daily mode")
         else:
             if self.interval_seconds is not None:
                 raise ValueError("interval_seconds must be null in disabled mode")
@@ -57,5 +61,21 @@ class CaptureOptions(StrictModel):
 class Options(StrictModel):
     camera: CameraOptions = Field(default_factory=Picamera2Options)
     capture: CaptureOptions
-    image: ImageOptions = Field(default_factory=ImageOptions)
+    image: ImageOptions = Field(default_factory=PngImageOptions)
     storages: tuple[StorageOptions, ...] = ()
+    maintenance: MaintenanceOptions = Field(default_factory=MaintenanceOptions)
+
+    @model_validator(mode="after")
+    def validate_storage_targets(self) -> Options:
+        storage_names = [storage.name for storage in self.storages]
+        if len(set(storage_names)) != len(storage_names):
+            raise ValueError("storage target names must be unique")
+        retention_targets = [rule.target for rule in self.maintenance.retention]
+        if len(set(retention_targets)) != len(retention_targets):
+            raise ValueError("retention targets must be unique")
+        missing = set(retention_targets).difference(storage_names)
+        if missing:
+            raise ValueError(
+                f"retention target is not configured: {sorted(missing)[0]}"
+            )
+        return self

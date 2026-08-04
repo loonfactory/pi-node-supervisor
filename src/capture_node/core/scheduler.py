@@ -27,8 +27,6 @@ class CaptureSchedule:
         elif self.mode == "daily":
             if self.interval_seconds is not None:
                 raise ValueError("daily schedule cannot contain an interval")
-            if not self.daily_times:
-                raise ValueError("daily schedule requires at least one time")
             ZoneInfo(self.timezone)
         else:
             if self.interval_seconds is not None or self.daily_times:
@@ -125,7 +123,7 @@ class CaptureScheduler:
                         break
                     wait_seconds = (
                         None
-                        if schedule.mode == "disabled"
+                        if deadline is None
                         else (
                             remaining
                             if schedule.mode == "interval"
@@ -163,6 +161,8 @@ class CaptureScheduler:
             return self._clock() + schedule.interval_seconds
         if schedule.mode == "disabled":
             return None
+        if not schedule.daily_times:
+            return None
         return next_daily_occurrence(
             self._now(),
             schedule.daily_times,
@@ -174,7 +174,7 @@ class CaptureScheduler:
         schedule: CaptureSchedule,
         deadline: float | datetime | None,
     ) -> float:
-        if schedule.mode == "disabled":
+        if deadline is None:
             return float("inf")
         if schedule.mode == "interval":
             assert isinstance(deadline, float)

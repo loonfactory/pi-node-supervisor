@@ -18,6 +18,14 @@ from capture_node.core.options import Options
 from conftest import make_configuration
 
 
+def test_example_configuration_is_valid() -> None:
+    repository_root = Path(__file__).resolve().parents[1]
+
+    Options.model_validate_json(
+        (repository_root / "config.example.json").read_text(encoding="utf-8")
+    )
+
+
 def test_picamera2_size_is_validated_by_its_options_model() -> None:
     options = Picamera2Options(camera_num=1, width=1920, height=1080)
 
@@ -41,10 +49,11 @@ def test_a1_loads_full_headless_configuration_and_defaults(tmp_path: Path) -> No
 
     assert configuration.current.capture.interval_seconds == 5
     assert configuration.current.camera.type == "picamera2"
-    assert configuration.current.image.format == "jpeg"
-    assert configuration.current.image.quality == 90
+    assert configuration.current.image.format == "png"
+    assert configuration.current.image.compression == 9
     assert configuration.current.image.embed_metadata is True
     assert configuration.current.storages == ()
+    assert configuration.current.maintenance.retention == ()
 
 
 @pytest.mark.parametrize(
@@ -53,6 +62,10 @@ def test_a1_loads_full_headless_configuration_and_defaults(tmp_path: Path) -> No
         {"capture": {"interval_seconds": 0}},
         {"capture": {"interval_seconds": 1, "unknown": True}},
         {"image": {"format": "jpeg"}},
+        {
+            "capture": {"interval_seconds": 1},
+            "image": {"format": "png", "quality": 90},
+        },
         {"capture": {"interval_seconds": 1}, "unknown": True},
     ],
 )
@@ -89,13 +102,6 @@ def test_daily_capture_schedule_is_strictly_validated() -> None:
         {
             "capture": {
                 "mode": "daily",
-                "interval_seconds": None,
-                "daily_times": [],
-            }
-        },
-        {
-            "capture": {
-                "mode": "daily",
                 "interval_seconds": 10,
                 "daily_times": ["08:30:00"],
             }
@@ -126,6 +132,24 @@ def test_daily_capture_schedule_is_strictly_validated() -> None:
     for document in invalid_documents:
         with pytest.raises(ValidationError):
             Options.model_validate(document)
+
+
+@pytest.mark.parametrize("daily_times", [None, []])
+def test_daily_schedule_without_times_waits_for_configuration(
+    daily_times,
+) -> None:
+    options = Options.model_validate(
+        {
+            "capture": {
+                "mode": "daily",
+                "interval_seconds": None,
+                "daily_times": daily_times,
+            }
+        }
+    )
+
+    assert options.capture.mode == "daily"
+    assert options.capture.daily_times == ()
 
 
 @pytest.mark.covers("CAP-001", "CFG-001", "CFG-005")
@@ -215,6 +239,57 @@ def test_d2_runtime_change_rejects_storage_and_camera(
             lambda _capture: None,
         )
 
+    configured = Options.model_validate(
+        {
+            "capture": {"interval_seconds": 1},
+            "storages": [
+                {"type": "file", "name": "local", "directory": "captures"}
+            ],
+            "maintenance": {
+                "retention": [{"target": "local", "max_age_days": 180}]
+            },
+        }
+    )
+    maintenance_configuration = Configuration(
+        JsonOptionsRepository(tmp_path / "maintenance.json"),
+        configured,
+    )
+    changed = configured.model_dump(mode="json")
+    changed["maintenance"]["interval_seconds"] = 3600
+    with pytest.raises(UnsupportedRuntimeChange, match="maintenance"):
+        maintenance_configuration.replace(changed, lambda _capture: None)
+
+
+def test_retention_targets_must_be_configured_and_unique() -> None:
+    base = {
+        "capture": {"interval_seconds": 1},
+        "storages": [
+            {"type": "file", "name": "local", "directory": "captures"}
+        ],
+    }
+
+    with pytest.raises(ValidationError, match="not configured"):
+        Options.model_validate(
+            {
+                **base,
+                "maintenance": {
+                    "retention": [{"target": "missing", "max_age_days": 180}]
+                },
+            }
+        )
+    with pytest.raises(ValidationError, match="must be unique"):
+        Options.model_validate(
+            {
+                **base,
+                "maintenance": {
+                    "retention": [
+                        {"target": "local", "max_age_days": 180},
+                        {"target": "local", "max_age_days": 30},
+                    ]
+                },
+            }
+        )
+
 
 @pytest.mark.covers("CFG-009", "CAP-008", "CAP-009")
 def test_d2_runtime_change_persists_image_policy(tmp_path: Path) -> None:
@@ -227,7 +302,7 @@ def test_d2_runtime_change_persists_image_policy(tmp_path: Path) -> None:
             **base,
             "image": {
                 "format": "png",
-                "quality": 72,
+                "compression": 7,
                 "embed_metadata": False,
             },
         },
@@ -236,7 +311,7 @@ def test_d2_runtime_change_persists_image_policy(tmp_path: Path) -> None:
 
     assert result.succeeded
     assert result.options.image.format == "png"
-    assert result.options.image.quality == 72
+    assert result.options.image.compression == 7
     assert result.options.image.embed_metadata is False
     assert Configuration.load(path).current.image == result.options.image
 

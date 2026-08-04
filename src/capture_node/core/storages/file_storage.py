@@ -71,6 +71,20 @@ class FileStorage:
         root = self._root()
         return newest_page(self._files(root), page, page_size)
 
+    def delete(self, name: str) -> None:
+        root = self._root()
+        for relative in storage_read_paths(name):
+            try:
+                path = self._path(root, relative, require_exists=True)
+            except FileNotFoundError:
+                continue
+            if not path.is_file():
+                raise FileNotFoundError(f"storage entry is not a file: {name}")
+            path.unlink()
+            self._remove_empty_daily_directory(root, path.parent)
+            return
+        raise FileNotFoundError(f"storage file does not exist: {name}")
+
     def _root(self, *, create: bool = False) -> Path:
         if create:
             self._directory.mkdir(parents=True, exist_ok=True)
@@ -123,3 +137,12 @@ class FileStorage:
         except ValueError as exc:
             raise ValueError("storage file is outside the configured target") from exc
         return path
+
+    @staticmethod
+    def _remove_empty_daily_directory(root: Path, directory: Path) -> None:
+        if directory == root or not is_capture_date_directory(directory.name):
+            return
+        try:
+            directory.rmdir()
+        except OSError:
+            pass

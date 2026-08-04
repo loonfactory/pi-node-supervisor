@@ -1,19 +1,22 @@
 {
   "camera": {
     "type": "picamera2",
+    "camera_num": 0,
+    "width": 1920,
+    "height": 1080,
     "preview_fps": 10,
     "preview_quality": 75
   },
   "capture": {
-    "mode": "interval",
-    "interval_seconds": 10,
+    "mode": "disabled",
+    "interval_seconds": null,
     "daily_times": [],
     "timezone": "Asia/Seoul",
     "params": {}
   },
   "image": {
-    "format": "jpeg",
-    "quality": 90,
+    "format": "png",
+    "compression": 9,
     "embed_metadata": true
   },
   "storages": [
@@ -22,19 +25,15 @@
       "name": "local",
       "directory": "./captures",
       "layout": "daily"
-    },
-    {
-      "type": "sftp",
-      "name": "archive",
-      "host": "storage.example.local",
-      "port": 22,
-      "username": "capture-node",
-      "remote_directory": "/captures",
-      "password_env": "CAPTURE_NODE_SFTP_PASSWORD",
-      "known_hosts": "~/.ssh/known_hosts",
-      "connect_timeout_seconds": 10,
-      "operation_timeout_seconds": 30,
-      "layout": "daily"
     }
-  ]
+  ],
+  "maintenance": {
+    "interval_seconds": 86400,
+    "retention": [
+      {
+        "target": "local",
+        "max_age_days": 365
+      }
+    ]
+  }
 }

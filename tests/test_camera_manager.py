@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import threading
 from collections.abc import Mapping
 from datetime import UTC, datetime
 
 import pytest
 from PIL import Image
 
-from capture_node.core.cameras import CameraStatus, Capture
+from capture_node.core.cameras import CameraStatus, Capture, PreviewFrame
 from capture_node.core.cameras.manager import CameraManager
 
 
@@ -31,6 +32,32 @@ class ManagedCamera:
 class StatusCamera(ManagedCamera):
     def status(self) -> CameraStatus:
         return CameraStatus(False, "USB camera disconnected")
+
+
+class BroadcastCamera(ManagedCamera):
+    def __init__(self) -> None:
+        super().__init__("broadcast")
+        self._condition = threading.Condition()
+        self._waiting = 0
+        self._sequence = 0
+
+    def frames(self):
+        sequence = 0
+        with self._condition:
+            self._waiting += 1
+            self._condition.notify_all()
+            self._condition.wait_for(lambda: self._sequence > sequence)
+            sequence = self._sequence
+        yield PreviewFrame(str(sequence).encode("ascii"))
+
+    def wait_for_consumers(self, count: int, timeout: float) -> bool:
+        with self._condition:
+            return self._condition.wait_for(lambda: self._waiting >= count, timeout)
+
+    def publish(self) -> None:
+        with self._condition:
+            self._sequence += 1
+            self._condition.notify_all()
 
 
 def test_camera_manager_replaces_and_closes_previous_camera() -> None:
@@ -68,3 +95,24 @@ def test_camera_manager_exposes_implementation_status() -> None:
 
     assert not status.connected
     assert status.detail == "USB camera disconnected"
+
+
+def test_camera_manager_does_not_serialize_preview_consumers() -> None:
+    camera = BroadcastCamera()
+    manager = CameraManager(camera)
+    received: list[bytes] = []
+
+    def consume() -> None:
+        received.append(next(manager.frames()).data)
+
+    consumers = [threading.Thread(target=consume) for _ in range(2)]
+    for consumer in consumers:
+        consumer.start()
+
+    assert camera.wait_for_consumers(2, timeout=1)
+    camera.publish()
+
+    for consumer in consumers:
+        consumer.join(timeout=1)
+        assert not consumer.is_alive()
+    assert received == [b"1", b"1"]

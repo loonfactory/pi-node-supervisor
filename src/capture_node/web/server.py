@@ -18,6 +18,7 @@ from capture_node.core import CaptureNode
 from capture_node.core.cameras import (
     Camera,
     CameraControlSource,
+    CameraControlsUnavailable,
     ConfiguredCameraProvider,
     CameraDiscoveryProvider,
     CameraProvider,
@@ -170,6 +171,7 @@ def create_app(
             "page_size": page_size,
             "total": total,
             "pages": pages,
+            "latest_capture_id": event_buffer.latest_capture_id(),
         }
 
     @app.get("/api/camera/devices")
@@ -195,6 +197,15 @@ def create_app(
             return {"items": []}
         try:
             controls = camera.controls()
+        except CameraControlsUnavailable as exc:
+            return {
+                "items": [asdict(control) for control in exc.controls],
+                "available": bool(exc.controls),
+                "warning": {
+                    "code": exc.code,
+                    "message": str(exc),
+                },
+            }
         except RuntimeError as exc:
             raise ApiProblem(
                 409,
@@ -202,7 +213,11 @@ def create_app(
                 "Camera controls unavailable",
                 str(exc),
             ) from exc
-        return {"items": [asdict(control) for control in controls]}
+        return {
+            "items": [asdict(control) for control in controls],
+            "available": True,
+            "warning": None,
+        }
 
     @app.put("/api/camera")
     async def update_camera(document: dict[str, Any]) -> dict[str, Any]:

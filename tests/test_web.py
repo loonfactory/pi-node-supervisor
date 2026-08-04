@@ -12,7 +12,13 @@ pytest.importorskip("fastapi")
 from fastapi import Request
 
 from capture_node.core import CaptureNode
-from capture_node.core.cameras import CameraDevice, Picamera2Options, V4L2CameraOptions
+from capture_node.core.cameras import (
+    CameraControl,
+    CameraControlsUnavailable,
+    CameraDevice,
+    Picamera2Options,
+    V4L2CameraOptions,
+)
 from capture_node.core.cameras.unavailable import UnavailableCamera
 from capture_node.core.events import EventEmitter, EventType, LOGGER_NAME
 from capture_node.core.storages import (
@@ -139,6 +145,64 @@ def test_x3_camera_without_stream_reports_preview_unavailable(
     assert raised.value.status == 501
 
 
+def test_web_reports_optional_camera_controls_as_unavailable(
+    tmp_path: Path,
+) -> None:
+    class ControlsUnavailableCamera(PreviewCamera):
+        def controls(self):
+            raise CameraControlsUnavailable(
+                "v4l2-ctl is unavailable; capture and preview remain active",
+                code="v4l2_ctl_unavailable",
+            )
+
+    camera = ControlsUnavailableCamera()
+    node, provider, storages = web_runtime(tmp_path, camera)
+    app = create_app(node, provider, storages, manage_lifecycle=False)
+
+    response = endpoint(app, "/api/camera/controls")()
+
+    assert response == {
+        "items": [],
+        "available": False,
+        "warning": {
+            "code": "v4l2_ctl_unavailable",
+            "message": (
+                "v4l2-ctl is unavailable; capture and preview remain active"
+            ),
+        },
+    }
+
+
+def test_web_exposes_software_controls_when_hardware_tool_is_unavailable(
+    tmp_path: Path,
+) -> None:
+    fallback = CameraControl(
+        name="horizontal_flip",
+        label="Horizontal Flip",
+        control_type="bool",
+        value=True,
+        application="software",
+    )
+
+    class SoftwareControlsCamera(PreviewCamera):
+        def controls(self):
+            raise CameraControlsUnavailable(
+                "hardware controls unavailable",
+                controls=(fallback,),
+            )
+
+    camera = SoftwareControlsCamera()
+    node, provider, storages = web_runtime(tmp_path, camera)
+    app = create_app(node, provider, storages, manage_lifecycle=False)
+
+    response = endpoint(app, "/api/camera/controls")()
+
+    assert response["available"] is True
+    assert response["items"][0]["name"] == "horizontal_flip"
+    assert response["items"][0]["application"] == "software"
+    assert response["warning"]["message"] == "hardware controls unavailable"
+
+
 @pytest.mark.covers("WEB-001", "WEB-003")
 def test_web_reports_disconnected_camera_and_rejects_capture(
     tmp_path: Path,
@@ -185,7 +249,7 @@ def test_e2_web_reads_and_updates_runtime_settings(tmp_path: Path) -> None:
     }
     document["image"] = {
         "format": "png",
-        "quality": 75,
+        "compression": 7,
         "embed_metadata": False,
     }
     response = asyncio.run(endpoint(app, "/api/config", "PUT")(document))
@@ -193,7 +257,7 @@ def test_e2_web_reads_and_updates_runtime_settings(tmp_path: Path) -> None:
     assert response["capture"]["interval_seconds"] == 2.5
     assert response["image"] == {
         "format": "png",
-        "quality": 75,
+        "compression": 7,
         "embed_metadata": False,
     }
     assert camera.applied[-1] == {"Contrast": 1.2}
@@ -303,7 +367,9 @@ def test_e3_event_buffer_retains_only_current_process_events() -> None:
         EventType.TERMINAL_COMPLETED,
         EventType.CAPTURE_SUCCEEDED,
     ]
+    assert handler.latest_capture_id() == "one"
     assert EventBuffer(capacity=2).snapshot() == []
+    assert EventBuffer(capacity=2).latest_capture_id() is None
 
 
 @pytest.mark.covers("WEB-007", "WEB-008")

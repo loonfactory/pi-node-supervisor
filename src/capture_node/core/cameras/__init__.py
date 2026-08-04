@@ -3,6 +3,7 @@
 from capture_node.core.cameras.contracts import (
     Camera,
     CameraControl,
+    CameraControlsUnavailable,
     CameraControlSource,
     CameraDevice,
     CameraDiscoveryProvider,
@@ -29,6 +30,7 @@ from capture_node.core.cameras.registry import (
 __all__ = [
     "Camera",
     "CameraControl",
+    "CameraControlsUnavailable",
     "CameraControlSource",
     "CameraDevice",
     "CameraDiscoveryProvider",

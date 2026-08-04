@@ -12,8 +12,9 @@ from capture_node.core.cameras import Capture
 from capture_node.core.encodings import (
     EncodedImage,
     ImageEncoder,
-    ImageOptions,
     JpegEncoding,
+    JpegImageOptions,
+    PngImageOptions,
 )
 from capture_node.core.storages import Distributor, SaveResult, TerminalState
 from capture_node.core.storages.file_storage import FileStorage
@@ -40,7 +41,7 @@ def sample_capture() -> Capture:
 def test_b1_encodes_jpeg_with_standard_metadata() -> None:
     encoded = ImageEncoder().encode(
         sample_capture(),
-        ImageOptions(format="jpeg", quality=83, embed_metadata=True),
+        JpegImageOptions(quality=83, embed_metadata=True),
     )
     image = Image.open(BytesIO(encoded.data))
     exif = image.getexif()
@@ -55,7 +56,7 @@ def test_b1_encodes_jpeg_with_standard_metadata() -> None:
 def test_b1_2_encodes_png_with_readable_metadata() -> None:
     encoded = ImageEncoder().encode(
         sample_capture(),
-        ImageOptions(format="png", quality=90, embed_metadata=True),
+        PngImageOptions(compression=9, embed_metadata=True),
     )
     image = Image.open(BytesIO(encoded.data))
     exif = image.getexif()
@@ -74,14 +75,13 @@ def test_b1_2_encodes_png_with_readable_metadata() -> None:
 
 @pytest.mark.covers("CAP-009")
 def test_b1_3_metadata_can_be_omitted() -> None:
-    for format_name in ("jpeg", "png"):
+    for options in (
+        JpegImageOptions(embed_metadata=False),
+        PngImageOptions(embed_metadata=False),
+    ):
         encoded = ImageEncoder().encode(
             sample_capture(),
-            ImageOptions(
-                format=format_name,
-                quality=90,
-                embed_metadata=False,
-            ),
+            options,
         )
         image = Image.open(BytesIO(encoded.data))
         assert not image.getexif()
@@ -95,7 +95,7 @@ def test_image_encoder_rejects_duplicate_formats() -> None:
 
 def test_image_encoder_rejects_an_unregistered_format() -> None:
     with pytest.raises(ValueError, match="unsupported image format"):
-        ImageEncoder(()).encode(sample_capture(), ImageOptions())
+        ImageEncoder(()).encode(sample_capture(), PngImageOptions())
 
 
 def test_image_encoder_uses_the_registered_implementation() -> None:
@@ -108,7 +108,10 @@ def test_image_encoder_uses_the_registered_implementation() -> None:
 
     encoder = ImageEncoder((StubJpegEncoding(),))
 
-    encoded = encoder.encode(sample_capture(), ImageOptions())
+    encoded = encoder.encode(
+        sample_capture(),
+        JpegImageOptions(),
+    )
 
     assert encoded == EncodedImage(b"registered implementation", "test")
 
@@ -140,6 +143,12 @@ def test_file_storage_uses_daily_directories_and_reads_legacy_files(
     assert storage.read(name) == b"daily"
     assert storage.read("legacy.jpg") == b"legacy"
     assert {item.name for item in listing.items} == {name, "legacy.jpg"}
+
+    storage.delete(name)
+
+    assert not (tmp_path / "20260731").exists()
+    with pytest.raises(FileNotFoundError):
+        storage.delete(name)
 
 
 def test_file_storage_can_explicitly_use_a_flat_layout(tmp_path: Path) -> None:

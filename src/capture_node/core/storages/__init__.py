@@ -16,6 +16,7 @@ from capture_node.core.storages.distribution import (
 )
 from capture_node.core.storages.options import (
     FileStorageOptions,
+    FtpsStorageOptions,
     SftpStorageOptions,
     StorageOptions,
 )
@@ -32,6 +33,7 @@ __all__ = [
     "DistributionResult",
     "Distributor",
     "FileStorageOptions",
+    "FtpsStorageOptions",
     "SaveResult",
     "SftpStorageOptions",
     "Storage",

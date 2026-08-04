@@ -1,6 +1,7 @@
 import React, {
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import { createRoot } from "react-dom/client";
@@ -64,14 +65,20 @@ function App() {
   const [captureRanges, setCaptureRanges] = useState([DEFAULT_CAPTURE_RANGE]);
   const [timezone, setTimezone] = useState("Asia/Seoul");
   const [imageDraft, setImageDraft] = useState({
-    format: "jpeg",
-    quality: 90,
+    format: "png",
+    compression: 9,
     embed_metadata: true,
   });
   const [params, setParams] = useState("{}");
   const [controls, setControls] = useState([]);
+  const [controlsAvailable, setControlsAvailable] = useState(true);
+  const [controlWarning, setControlWarning] = useState("");
+  const controlWarningShown = useRef(false);
   const [controlValues, setControlValues] = useState({});
   const [dirtyControls, setDirtyControls] = useState([]);
+  const dirtyControlsRef = useRef(new Set());
+  const lastCaptureIdRef = useRef(null);
+  const eventsLoadedRef = useRef(false);
   const [devices, setDevices] = useState([]);
   const [cameraDraft, setCameraDraft] = useState(null);
   const [cameraSaving, setCameraSaving] = useState(false);
@@ -109,15 +116,36 @@ function App() {
     setCameraDraft(next.camera);
   };
 
-  const loadControls = async () => {
+  const loadControls = async ({ preserveDirty = false } = {}) => {
     const response = await fetch("/api/camera/controls");
     if (!response.ok) return;
-    const items = (await response.json()).items;
+    const body = await response.json();
+    const items = body.items;
+    const available = body.available !== false;
+    setControlsAvailable(available);
+    if (body.warning?.message) {
+      if (!controlWarningShown.current) {
+        controlWarningShown.current = true;
+        setControlWarning(body.warning.message);
+      }
+    } else if (available) {
+      setControlWarning("");
+    }
     setControls(items);
-    setControlValues(
-      Object.fromEntries(items.map((control) => [control.name, control.value])),
+    setControlValues((current) =>
+      Object.fromEntries(
+        items.map((control) => [
+          control.name,
+          preserveDirty && dirtyControlsRef.current.has(control.name)
+            ? current[control.name]
+            : control.value,
+        ]),
+      ),
     );
-    setDirtyControls([]);
+    if (!preserveDirty) {
+      dirtyControlsRef.current = new Set();
+      setDirtyControls([]);
+    }
   };
 
   const loadDevices = async () => {
@@ -133,6 +161,14 @@ function App() {
     setEvents(body.items);
     setEventMeta({ total: body.total, pages: body.pages });
     if (page > body.pages) setEventPage(body.pages);
+    const latestCaptureId = body.latest_capture_id || null;
+    const captureChanged =
+      eventsLoadedRef.current &&
+      latestCaptureId &&
+      latestCaptureId !== lastCaptureIdRef.current;
+    lastCaptureIdRef.current = latestCaptureId;
+    eventsLoadedRef.current = true;
+    if (captureChanged) await loadControls({ preserveDirty: true });
   };
 
   const loadHealth = async () => {
@@ -186,16 +222,32 @@ function App() {
     () => isCameraDraftApplied(cameraDraft, config?.camera, cameraOnline),
     [cameraDraft, cameraOnline, config],
   );
+  const softwarePreviewFlips = useMemo(
+    () => ({
+      horizontal: controls.some(
+        (control) =>
+          control.name === "horizontal_flip" &&
+          control.application === "software" &&
+          Boolean(control.value),
+      ),
+      vertical: controls.some(
+        (control) =>
+          control.name === "vertical_flip" &&
+          control.application === "software" &&
+          Boolean(control.value),
+      ),
+    }),
+    [controls],
+  );
   const imagePolicyValue =
     imageDraft.format === "png"
-      ? qualityToPngCompression(imageDraft.quality)
+      ? imageDraft.compression
       : imageDraft.quality;
   const imagePolicy = useMemo(() => {
     if (!config) return "";
-    const value =
-      config.image.format === "png"
-        ? `Compression ${qualityToPngCompression(config.image.quality)}`
-        : `Q${config.image.quality}`;
+    const value = config.image.format === "png"
+      ? `Compression ${config.image.compression}`
+      : `Q${config.image.quality}`;
     return `${config.image.format.toUpperCase()} · ${value} · ${
       config.image.embed_metadata ? "Metadata on" : "Metadata off"
     }`;
@@ -217,16 +269,21 @@ function App() {
       if (scheduleMode === "interval" && intervalSeconds <= 0) {
         throw new Error("Capture interval must be greater than zero");
       }
-      const captureMode =
-        scheduleMode === "daily" && dailyTimes.length === 0
-          ? "disabled"
-          : scheduleMode;
+      const captureMode = scheduleMode;
       const next = {
         ...config,
-        image: {
-          ...imageDraft,
-          quality: Number(imageDraft.quality),
-        },
+        image:
+          imageDraft.format === "png"
+            ? {
+                format: "png",
+                compression: Number(imageDraft.compression),
+                embed_metadata: imageDraft.embed_metadata,
+              }
+            : {
+                format: "jpeg",
+                quality: Number(imageDraft.quality),
+                embed_metadata: imageDraft.embed_metadata,
+              },
         capture: {
           mode: captureMode,
           interval_seconds: captureMode === "interval" ? intervalSeconds : null,
@@ -262,18 +319,17 @@ function App() {
 
   const changeControl = (name, value) => {
     setControlValues((current) => ({ ...current, [name]: value }));
-    setDirtyControls((current) =>
-      current.includes(name) ? current : [...current, name],
-    );
+    setDirtyControls((current) => {
+      const next = current.includes(name) ? current : [...current, name];
+      dirtyControlsRef.current = new Set(next);
+      return next;
+    });
   };
 
   const changeImagePolicyValue = (value) => {
     setImageDraft((current) => ({
       ...current,
-      quality:
-        current.format === "png"
-          ? pngCompressionToQuality(Number(value))
-          : Number(value),
+      [current.format === "png" ? "compression" : "quality"]: Number(value),
     }));
   };
 
@@ -349,6 +405,8 @@ function App() {
       const response = await fetch("/api/capture", { method: "POST" });
       const body = await response.json();
       if (!response.ok) throw new Error(body.detail || "Capture failed");
+      lastCaptureIdRef.current = body.capture_id;
+      await loadControls({ preserveDirty: true });
       setEventPage(1);
       await loadEvents(1);
     } catch (cause) {
@@ -453,6 +511,11 @@ function App() {
                   key={previewKey}
                   src="/api/preview"
                   alt="Live camera preview"
+                  className={`${
+                    softwarePreviewFlips.horizontal ? "software-flip-horizontal" : ""
+                  } ${
+                    softwarePreviewFlips.vertical ? "software-flip-vertical" : ""
+                  }`.trim()}
                   onError={() => setError("Preview stream is unavailable")}
                 />
               ) : (
@@ -501,6 +564,9 @@ function App() {
                   </div>
                   <select
                     value={cameraOptionIdentifier(cameraDraft)}
+                    title={
+                      cameraDraft.type === "v4l2" ? cameraDraft.device : undefined
+                    }
                     onChange={(event) => {
                       const selected = devices.find(
                         (device) => device.id === event.target.value,
@@ -570,10 +636,19 @@ function App() {
                   <select
                     value={imageDraft.format}
                     onChange={(event) =>
-                      setImageDraft((current) => ({
-                        ...current,
-                        format: event.target.value,
-                      }))
+                      setImageDraft((current) =>
+                        event.target.value === "png"
+                          ? {
+                              format: "png",
+                              compression: 9,
+                              embed_metadata: current.embed_metadata,
+                            }
+                          : {
+                              format: "jpeg",
+                              quality: 90,
+                              embed_metadata: current.embed_metadata,
+                            },
+                      )
                     }
                   >
                     <option value="jpeg">JPEG</option>
@@ -811,7 +886,15 @@ function App() {
               )}
               <div className="field-group">
                 <div className="field-heading">
-                  <span className="field-label">Camera parameters</span>
+                  <span className="field-label field-label-status">
+                    Camera parameters
+                    {!controlsAvailable && (
+                      <AlertTriangle
+                        size={14}
+                        aria-label="Camera controls unavailable"
+                      />
+                    )}
+                  </span>
                   <button
                     className={`small-icon-button parameter-toggle ${
                       cameraParametersOpen ? "active" : ""
@@ -828,6 +911,7 @@ function App() {
                         : "Show camera parameters"
                     }
                     aria-expanded={cameraParametersOpen}
+                    disabled={!controlsAvailable}
                     onClick={() => setCameraParametersOpen((current) => !current)}
                   >
                     <SlidersHorizontal size={16} />
@@ -857,6 +941,21 @@ function App() {
                   </>
                 )}
               </div>
+              {controlWarning && (
+                <div className="warning-message" role="status">
+                  <AlertTriangle size={16} />
+                  <span>{controlWarning}</span>
+                  <button
+                    className="warning-dismiss"
+                    type="button"
+                    title="Dismiss warning"
+                    aria-label="Dismiss warning"
+                    onClick={() => setControlWarning("")}
+                  >
+                    <X size={15} />
+                  </button>
+                </div>
+              )}
               {error && (
                 <div className="error-message" role="alert">
                   <AlertTriangle size={16} />
@@ -872,12 +971,8 @@ function App() {
             <div className="fixed-config">
               <div>
                 <span>Camera</span>
-                <strong>
-                  {config?.camera.type === "v4l2"
-                    ? `${config.camera.device} · ${config.camera.width}×${config.camera.height}`
-                    : `Picamera2 · Camera ${config?.camera.camera_num ?? 0} · ${
-                        config?.camera.width ?? "Auto"
-                      }×${config?.camera.height ?? "Auto"}`}
+                <strong title={config?.camera.type === "v4l2" ? config.camera.device : undefined}>
+                  {formatAppliedCamera(config?.camera, devices)}
                 </strong>
               </div>
               <div>
@@ -1091,6 +1186,9 @@ function formatAppliedSchedule(capture) {
   if (!capture) return "Schedule unavailable";
   if (capture.mode === "disabled") return "Preview only";
   if (capture.mode === "daily") {
+    if (capture.daily_times.length === 0) {
+      return `Daily · Preview only · ${capture.timezone}`;
+    }
     const blocks = partitionCaptureTimes(capture.daily_times);
     const intervals = blocks.map(captureBlockInterval);
     const commonInterval =
@@ -1110,14 +1208,6 @@ function formatAppliedSchedule(capture) {
 
 function scheduleEditorMode(mode) {
   return mode === "disabled" ? "daily" : mode;
-}
-
-function qualityToPngCompression(quality) {
-  return Math.round(((100 - Number(quality)) * 9) / 99);
-}
-
-function pngCompressionToQuality(compression) {
-  return 100 - Number(compression) * 11;
 }
 
 function generateCaptureTimes(range) {
@@ -1325,14 +1415,41 @@ function cameraDeviceLabel(device) {
   if (device.type === "picamera2") {
     return `Pi CSI · ${device.name} · Camera ${device.options.camera_num}`;
   }
-  return `USB/UVC · ${device.name} · ${device.options.device}`;
+  return `USB/UVC · ${device.name} · ${v4l2DeviceLabel(device.options.device)}`;
 }
 
 function formatCameraOptions(options) {
   if (options.type === "picamera2") {
     return `Pi CSI · Camera ${options.camera_num ?? 0}`;
   }
-  return `USB/UVC · ${options.device}`;
+  return `USB/UVC · ${v4l2DeviceLabel(options.device)}`;
+}
+
+function formatAppliedCamera(options, devices) {
+  if (!options) return "—";
+  if (options.type === "picamera2") {
+    return `Picamera2 · Camera ${options.camera_num ?? 0} · ${
+      options.width ?? "Auto"
+    }×${options.height ?? "Auto"}`;
+  }
+  const discovered = devices.find(
+    (device) => device.id === cameraOptionIdentifier(options),
+  );
+  const label = discovered
+    ? cameraDeviceLabel(discovered)
+    : formatCameraOptions(options);
+  return `${label} · ${options.width}×${options.height}`;
+}
+
+function v4l2DeviceLabel(path) {
+  const basename = String(path).split("/").filter(Boolean).at(-1) || String(path);
+  if (!basename.startsWith("usb-")) return basename;
+  return basename
+    .replace(/^usb-/, "")
+    .replace(/-video-index\d+$/, "")
+    .replaceAll("_", " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function cameraFormatFields(type) {
@@ -1406,7 +1523,7 @@ function CameraControlField({ control, value, onChange }) {
   if (control.control_type === "bool") {
     return (
       <label className="camera-control boolean-control">
-        <span>{control.label}</span>
+        <span>{cameraControlLabel(control)}</span>
         <input
           type="checkbox"
           checked={Boolean(value)}
@@ -1419,7 +1536,7 @@ function CameraControlField({ control, value, onChange }) {
   if (Object.keys(control.options).length > 0) {
     return (
       <label className="camera-control menu-control">
-        <span>{control.label}</span>
+        <span>{cameraControlLabel(control)}</span>
         <select
           value={value}
           disabled={control.inactive}
@@ -1436,7 +1553,7 @@ function CameraControlField({ control, value, onChange }) {
   }
   return (
     <label className="camera-control numeric-control">
-      <span>{control.label}</span>
+      <span>{cameraControlLabel(control)}</span>
       <div>
         <input
           type="range"
@@ -1459,6 +1576,12 @@ function CameraControlField({ control, value, onChange }) {
       </div>
     </label>
   );
+}
+
+function cameraControlLabel(control) {
+  return control.application === "software"
+    ? `${control.label} (Software)`
+    : control.label;
 }
 
 function EventRow({ item }) {
