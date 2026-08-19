@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "timezone": "Asia/Seoul",
+  "policies": {
+    "boot-lead-seconds": 120,
+    "shutdown-grace-seconds": 60,
+    "merge-power-gaps-shorter-than-seconds": 1800,
+    "minimum-lead-seconds": 60,
+    "clock-tolerance-seconds": 5
+  },
+  "activities": []
+}

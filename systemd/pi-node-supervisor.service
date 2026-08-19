@@ -1,0 +1,29 @@
+[Unit]
+Description=Pi Node Supervisor local control service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi-node-supervisor
+Group=pi-node-supervisor
+EnvironmentFile=/etc/pi-node-supervisor/supervisor.env
+ExecStart=/opt/pi-node-supervisor/.venv/bin/pi-node-supervisor --nodes /etc/pi-node-supervisor/nodes.json --state-dir /var/lib/pi-node-supervisor --active-config /etc/pi-node-supervisor/config.json --power-config /etc/pi-power-manager/config.json serve --host 127.0.0.1 --port 8080
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=90
+
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/etc/pi-node-supervisor /var/lib/pi-node-supervisor /etc/pi-power-manager/config.json
+
+[Install]
+WantedBy=multi-user.target

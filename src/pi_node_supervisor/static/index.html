@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Pi Node Supervisor</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark">π</span>
+        <div><strong>Node Supervisor</strong><small>RASPBERRY PI · LOCAL CONTROL</small></div>
+      </div>
+      <div class="top-actions">
+        <span id="connection" class="pill muted">연결 확인 중</span>
+        <button id="token-button" class="ghost">접속 토큰</button>
+        <button id="refresh-button">갱신</button>
+      </div>
+    </header>
+
+    <div class="shell">
+      <nav class="sidebar" aria-label="주 메뉴">
+        <button class="nav-item active" data-view="dashboard">대시보드</button>
+        <button class="nav-item" data-view="cameras">카메라</button>
+        <button class="nav-item" data-view="settings">설정</button>
+        <button class="nav-item" data-view="runs">실행 이력</button>
+        <button class="nav-item" data-view="events">이벤트</button>
+        <button class="nav-item" data-view="data">데이터</button>
+        <button class="nav-item" data-view="nodes">노드</button>
+      </nav>
+
+      <main>
+        <section id="dashboard" class="view active">
+          <div class="page-heading"><div><p class="eyebrow">SYSTEM OVERVIEW</p><h1>장치 운영 현황</h1></div><button id="refresh-dashboard">노드 상태 갱신</button></div>
+          <div id="metric-grid" class="metric-grid"></div>
+          <div class="two-column">
+            <article class="panel"><div class="panel-title"><h2>전원 타임라인</h2><span>Active revision</span></div><div id="power-timeline" class="timeline empty">활성 계획이 없습니다.</div></article>
+            <article class="panel"><div class="panel-title"><h2>노드 상태</h2><span>Live</span></div><div id="node-summary" class="stack empty">등록된 실행 노드가 없습니다.</div></article>
+          </div>
+          <article class="panel"><div class="panel-title"><h2>최근 실행</h2><button class="text-button" data-go="runs">전체 보기</button></div><div id="recent-runs"></div></article>
+        </section>
+
+        <section id="cameras" class="view">
+          <div class="page-heading"><div><p class="eyebrow">LIVE CAMERA CHECK</p><h1>카메라 프리뷰</h1></div><button id="refresh-previews">스트림 재연결</button></div>
+          <p class="camera-help">카메라 상태를 실시간으로 확인합니다.</p>
+          <div id="camera-grid" class="camera-grid"></div>
+        </section>
+
+        <section id="settings" class="view">
+          <div class="page-heading"><div><p class="eyebrow">DEVICE SETTINGS</p><h1>설정</h1><p class="page-description">촬영 시각과 카메라 저장 위치를 한곳에서 관리합니다.</p></div></div>
+
+          <div class="settings-grid">
+            <article class="panel settings-card capture-schedule-card">
+              <div class="panel-title"><div><h2>촬영 일정</h2><span>카메라의 반복 촬영 시간과 간격을 설정합니다.</span></div></div>
+              <form id="capture-schedule-form">
+                <input id="capture-schedule-timezone" type="hidden" value="Asia/Seoul" />
+                <div class="form-grid schedule-mode-grid">
+                  <label class="field"><span>적용 대상</span><select id="capture-schedule-camera"></select></label>
+                  <label class="field"><span>자동 촬영 방식</span><select id="capture-schedule-mode"><option value="disabled">사용 안 함</option><option value="interval">일정 간격마다</option><option value="daily">매일 지정한 시각</option></select></label>
+                </div>
+                <div class="capture-interval-field capture-duration-editor">
+                  <div class="subsection-heading"><div><strong>촬영 간격</strong><span>CaptureNode와 동일하게 일·시간·분·초로 입력합니다.</span></div></div>
+                  <div class="duration-grid">
+                    <label class="field"><input id="capture-interval-days" type="number" min="0" max="9999" step="1" /><span>일</span></label>
+                    <label class="field"><input id="capture-interval-hours" type="number" min="0" max="23" step="1" /><span>시간</span></label>
+                    <label class="field"><input id="capture-interval-minutes" type="number" min="0" max="59" step="1" /><span>분</span></label>
+                    <label class="field"><input id="capture-interval-seconds" type="number" min="0" max="59.99" step="0.01" /><span>초</span></label>
+                  </div>
+                </div>
+                <div class="capture-daily-field">
+                  <div class="subsection-heading"><div><strong>촬영 시간 블록</strong><span>시작·간격·종료를 입력해 촬영 시각을 생성합니다.</span></div><button id="add-capture-range" type="button" class="ghost">+ 블록 추가</button></div>
+                  <div id="capture-range-list" class="capture-range-list"></div>
+                  <button id="generate-daily-times" type="button" class="ghost generate-times-button">촬영 시각 생성</button>
+                  <div class="subsection-heading generated-times-heading"><div><strong>생성된 촬영 시각</strong><span>초 단위 시각도 직접 조정할 수 있습니다.</span></div><div class="inline-actions"><button id="clear-daily-times" type="button" class="text-button danger-text">모두 지우기</button><button id="add-daily-time" type="button" class="ghost">+ 시각 추가</button></div></div>
+                  <div id="daily-time-list" class="daily-time-list"></div>
+                </div>
+                <p id="capture-schedule-summary" class="field-help"></p>
+                <p id="capture-schedule-warning" class="settings-warning" hidden>촬영 시각이 없습니다. 촬영과 자동 전원 계획이 모두 비활성화됩니다.</p>
+                <div class="settings-actions storage-apply-actions"><span id="capture-schedule-note">촬영 일정을 불러오는 중입니다.</span><button id="apply-capture-schedule" type="submit">촬영 일정 적용</button></div>
+              </form>
+            </article>
+
+            <article class="panel settings-card power-settings-card">
+              <div class="panel-title"><div><h2>전원 운용 설정</h2><span>촬영 일정에 따른 여유 시간과 별도 전원 유지 일정을 관리합니다.</span></div></div>
+              <form id="power-settings-form">
+                <section class="power-settings-section">
+                  <div class="subsection-heading"><div><strong>촬영 전후 여유 시간</strong><span>촬영 일정이 있을 때 전원을 미리 켜고 나중에 끄기 위한 시간을 설정합니다.</span></div></div>
+                  <div class="form-grid">
+                    <label class="field"><span>촬영 전 워밍업(초)</span><input id="power-warmup-seconds" type="number" min="0" max="86400" step="1" required /></label>
+                    <label class="field"><span>촬영 후 정리 시간(초)</span><input id="power-cleanup-seconds" type="number" min="0" max="86400" step="1" required /></label>
+                  </div>
+                  <p class="field-help">워밍업은 촬영 전에 전원을 미리 켜 두는 시간이며, 정리 시간은 마지막 촬영 후 전원을 유지하는 시간입니다.</p>
+                </section>
+                <section class="power-settings-section power-keep-section">
+                  <div class="subsection-heading power-keep-heading"><div><strong>전원 유지 시간</strong><span>촬영 일정이 없어도 매일 지정한 시간에는 장치 전원을 유지합니다.</span></div><button id="add-power-keep" type="button" class="ghost">+ 전원 유지 추가</button></div>
+                  <div id="power-keep-list" class="power-keep-list"></div>
+                </section>
+                <div class="settings-actions storage-apply-actions"><span id="power-settings-note">전원 유지 일정은 촬영 일정과 독립적으로 매일 작동합니다.</span><button type="submit">전원 설정 적용</button></div>
+              </form>
+            </article>
+
+            <article class="panel settings-card storage-card">
+              <div class="panel-title"><div><h2>카메라 저장소</h2><span>촬영 파일을 저장할 위치를 카메라별로 지정합니다.</span></div><button id="add-storage" class="ghost">+ 저장소 추가</button></div>
+              <label class="field compact-field"><span>적용 대상</span><select id="storage-camera"></select></label>
+              <div id="storage-list" class="storage-list empty">카메라 설정을 불러오는 중입니다.</div>
+
+              <form id="storage-editor" class="storage-editor" hidden>
+                <input id="storage-edit-index" type="hidden" value="-1" />
+                <div class="form-grid">
+                  <label class="field"><span>저장 방식</span><select id="storage-type"><option value="file">이 장치의 폴더</option><option value="sftp">SFTP 서버</option><option value="ftps">FTPS 서버</option></select></label>
+                  <label class="field"><span>표시 이름</span><input id="storage-name" required placeholder="예: local 또는 archive" /></label>
+                  <label class="field"><span>폴더 구성</span><select id="storage-layout"><option value="daily">날짜별 폴더</option><option value="flat">한 폴더에 저장</option></select></label>
+                  <label class="field storage-file-field"><span>저장 폴더</span><input id="storage-directory" placeholder="예: captures/camera0" /></label>
+                  <label class="field storage-remote-field"><span>서버 주소</span><input id="storage-host" placeholder="storage.example.local" /></label>
+                  <label class="field storage-remote-field"><span>포트</span><input id="storage-port" type="number" min="1" max="65535" /></label>
+                  <label class="field storage-remote-field"><span>사용자 이름</span><input id="storage-username" /></label>
+                  <label class="field storage-remote-field"><span>원격 폴더</span><input id="storage-remote-directory" placeholder="/captures/camera0" /></label>
+                  <label class="field storage-sftp-field"><span>SSH 개인 키 경로</span><input id="storage-private-key" placeholder="~/.ssh/id_ed25519" /></label>
+                  <label class="field storage-secret-field"><span>비밀번호 환경변수 이름</span><input id="storage-password-env" placeholder="CAMERA_STORAGE_PASSWORD" /></label>
+                  <label class="field storage-ftps-field checkbox-field"><input id="storage-verify-tls" type="checkbox" checked /><span>TLS 인증서 검증</span></label>
+                </div>
+                <p class="field-help storage-secret-field">비밀번호 값은 화면이나 JSON에 저장하지 않습니다. 지정한 환경변수는 장치의 보호된 환경 파일에서 제공해야 합니다.</p>
+                <div class="settings-actions"><button id="cancel-storage" type="button" class="ghost">취소</button><button type="submit">목록에 저장</button></div>
+              </form>
+              <div class="settings-actions storage-apply-actions"><span id="storage-restart-note">저장소를 적용하면 카메라 런타임이 안전하게 재시작됩니다.</span><button id="apply-storages">저장소 적용</button></div>
+            </article>
+
+            <details class="panel advanced-settings">
+              <summary>고급 설정 · JSON 직접 편집</summary>
+              <p class="help">센서 업무나 유지보수 창처럼 일반 화면에 없는 기능이 필요할 때만 사용하세요.</p>
+              <div class="button-row"><button id="load-draft" class="ghost">저장된 초안</button><button id="preview-plan" class="ghost">JSON 검증</button><button id="save-draft" class="ghost">초안 저장</button><button id="apply-draft" class="danger">JSON 적용</button></div>
+              <textarea id="config-editor" spellcheck="false" aria-label="고급 업무 설정 JSON"></textarea>
+            </details>
+          </div>
+        </section>
+
+        <section id="runs" class="view"><div class="page-heading"><div><p class="eyebrow">EXECUTION</p><h1>실행 이력</h1><p class="page-description">촬영 요청이 언제 실행됐고 정상 완료됐는지 확인하는 기록입니다.</p></div></div><article class="panel"><div id="runs-table"></div></article></section>
+        <section id="events" class="view"><div class="page-heading"><div><p class="eyebrow">AUDIT LOG</p><h1>이벤트</h1><p class="page-description">카메라 재시작, 설정 변경, 오류처럼 장치에서 일어난 일을 시간순으로 보여줍니다.</p></div></div><article class="panel events-panel"><div id="events-table"></div><div id="events-pagination" class="pagination"><label>페이지당 <select id="events-page-size"><option value="25">25건</option><option value="50">50건</option><option value="100">100건</option></select></label><span id="events-page-info">0건</span><div class="pagination-actions"><button id="events-prev" type="button" class="ghost">이전</button><button id="events-next" type="button" class="ghost">다음</button></div></div></article></section>
+        <section id="data" class="view"><div class="page-heading"><div><p class="eyebrow">DATA CATALOG</p><h1>수집 데이터</h1><p class="page-description">촬영 파일과 센서 측정 기록을 시간순으로 확인합니다.</p></div><button id="sync-data">저장 데이터 다시 찾기</button></div><article class="panel data-panel"><div id="data-table"></div><div id="data-pagination" class="pagination"><label>페이지당 <select id="data-page-size"><option value="25">25건</option><option value="50">50건</option><option value="100">100건</option></select></label><span id="data-page-info">0건</span><div class="pagination-actions"><button id="data-prev" type="button" class="ghost">이전</button><button id="data-next" type="button" class="ghost">다음</button></div></div></article></section>
+        <section id="nodes" class="view"><div class="page-heading"><div><p class="eyebrow">MANAGED NODES</p><h1>연결된 장치</h1><p class="page-description">Supervisor가 관리하는 카메라와 실행 기능의 연결 상태입니다.</p></div></div><div id="node-grid" class="node-grid"></div></section>
+      </main>
+    </div>
+
+    <dialog id="token-dialog">
+      <form method="dialog">
+        <p class="eyebrow">LOCAL AUTHENTICATION</p><h2>접속 토큰</h2>
+        <p class="help">토큰은 이 브라우저의 sessionStorage에만 보관됩니다.</p>
+        <input id="token-input" type="password" autocomplete="current-password" placeholder="X-Supervisor-Token" />
+        <div class="dialog-actions"><button value="cancel" class="ghost">취소</button><button id="save-token" value="default">연결</button></div>
+      </form>
+    </dialog>
+    <div id="toast" role="status" aria-live="polite"></div>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,23 @@
+[Unit]
+Description=Pi Node Supervisor operator service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/pi-node-supervisor
+EnvironmentFile=%h/pi-node-supervisor/config/supervisor.env
+EnvironmentFile=-%h/capture-node/.env.local
+ExecStart=%h/pi-node-supervisor/current/.venv/bin/pi-node-supervisor --nodes %h/pi-node-supervisor/config/nodes.json --state-dir %h/pi-node-supervisor/state --active-config %h/pi-node-supervisor/config/config.json --power-config @POWER_CONFIG@ --capture-node-executable @CAPTURE_NODE_EXECUTABLE@ serve --host @BIND_HOST@ --port @PORT@
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=90
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=-/etc/pi-power-manager
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=default.target
