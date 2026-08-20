@@ -1,6 +1,32 @@
 """Driver for the CWT-Soil-THC-S soil sensor."""
 
+from dataclasses import dataclass
+from enum import IntFlag
+from typing import cast
+
 from huintech.stream import Stream
+
+
+class SoilMeasurement(IntFlag):
+    """Measurement fields that can be read in one contiguous request."""
+
+    HUMIDITY = 1 << 0
+    TEMPERATURE = 1 << 1
+    CONDUCTIVITY = 1 << 2
+    SALINITY = 1 << 3
+    TDS = 1 << 4
+    ALL = HUMIDITY | TEMPERATURE | CONDUCTIVITY | SALINITY | TDS
+
+
+@dataclass
+class SoilMeasurements:
+    """Decoded soil measurements; unrequested fields are ``None``."""
+
+    humidity: float | None = None
+    temperature: float | None = None
+    conductivity: int | None = None
+    salinity: int | None = None
+    tds: int | None = None
 
 
 class ModbusError(Exception):
@@ -30,6 +56,20 @@ class ModbusExceptionResponseError(ModbusProtocolError):
 class CWTSoilTHCS:
     _READ_HOLDING_REGISTERS = 0x03
     _WRITE_SINGLE_REGISTER = 0x06
+
+    _HUMIDITY_REGISTER = 0x0000
+    _TEMPERATURE_REGISTER = 0x0001
+    _CONDUCTIVITY_REGISTER = 0x0002
+    _SALINITY_REGISTER = 0x0003
+    _TDS_REGISTER = 0x0004
+
+    _MEASUREMENT_REGISTERS = {
+        SoilMeasurement.HUMIDITY: _HUMIDITY_REGISTER,
+        SoilMeasurement.TEMPERATURE: _TEMPERATURE_REGISTER,
+        SoilMeasurement.CONDUCTIVITY: _CONDUCTIVITY_REGISTER,
+        SoilMeasurement.SALINITY: _SALINITY_REGISTER,
+        SoilMeasurement.TDS: _TDS_REGISTER,
+    }
 
     def __init__(self, stream: Stream, slave_id: int = 1):
         if not 0 <= slave_id <= 0xFF:
@@ -193,3 +233,93 @@ class CWTSoilTHCS:
             raise ModbusProtocolError(
                 "write response register or value does not match the request"
             )
+
+    @staticmethod
+    def _decode_temperature(value: int) -> float:
+        if value & 0x8000:
+            value -= 0x10000
+        return value / 10.0
+
+    def read_measurements(
+        self,
+        measurements: SoilMeasurement = SoilMeasurement.ALL,
+    ) -> SoilMeasurements:
+        """Read selected measurements using one minimal contiguous request."""
+
+        if not isinstance(measurements, SoilMeasurement):
+            raise TypeError("measurements must be a SoilMeasurement value")
+        if not measurements:
+            raise ValueError("at least one measurement must be selected")
+
+        unknown_bits = int(measurements) & ~int(SoilMeasurement.ALL)
+        if unknown_bits:
+            raise ValueError(
+                f"measurements contains unsupported flags: 0x{unknown_bits:X}"
+            )
+
+        selected_registers = [
+            register
+            for measurement, register in self._MEASUREMENT_REGISTERS.items()
+            if measurements & measurement
+        ]
+        first_register = min(selected_registers)
+        last_register = max(selected_registers)
+        registers = self._read_holding_registers(
+            first_register,
+            last_register - first_register + 1,
+        )
+
+        def register_value(register: int) -> int:
+            return registers[register - first_register]
+
+        return SoilMeasurements(
+            humidity=(
+                register_value(self._HUMIDITY_REGISTER) / 10.0
+                if measurements & SoilMeasurement.HUMIDITY
+                else None
+            ),
+            temperature=(
+                self._decode_temperature(
+                    register_value(self._TEMPERATURE_REGISTER)
+                )
+                if measurements & SoilMeasurement.TEMPERATURE
+                else None
+            ),
+            conductivity=(
+                register_value(self._CONDUCTIVITY_REGISTER)
+                if measurements & SoilMeasurement.CONDUCTIVITY
+                else None
+            ),
+            salinity=(
+                register_value(self._SALINITY_REGISTER)
+                if measurements & SoilMeasurement.SALINITY
+                else None
+            ),
+            tds=(
+                register_value(self._TDS_REGISTER)
+                if measurements & SoilMeasurement.TDS
+                else None
+            ),
+        )
+
+    def read_humidity(self) -> float:
+        value = self.read_measurements(SoilMeasurement.HUMIDITY).humidity
+        return cast(float, value)
+
+    def read_temperature(self) -> float:
+        value = self.read_measurements(SoilMeasurement.TEMPERATURE).temperature
+        return cast(float, value)
+
+    def read_conductivity(self) -> int:
+        value = self.read_measurements(
+            SoilMeasurement.CONDUCTIVITY
+        ).conductivity
+        return cast(int, value)
+
+    def read_salinity(self) -> int:
+        value = self.read_measurements(SoilMeasurement.SALINITY).salinity
+        return cast(int, value)
+
+    def read_tds(self) -> int:
+        value = self.read_measurements(SoilMeasurement.TDS).tds
+        return cast(int, value)
