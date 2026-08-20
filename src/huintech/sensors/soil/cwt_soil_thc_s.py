@@ -3,19 +3,19 @@
 from huintech.stream import Stream
 
 
-class CWTSoilTHCError(Exception):
-    """Base error raised by the CWT-Soil-THC-S driver."""
+class ModbusError(Exception):
+    """Base error raised while communicating over Modbus."""
 
 
-class CWTSoilTHCCommunicationError(CWTSoilTHCError):
+class ModbusCommunicationError(ModbusError):
     """The injected stream could not complete a request or response."""
 
 
-class CWTSoilTHCProtocolError(CWTSoilTHCError):
+class ModbusProtocolError(ModbusError):
     """A sensor response did not match the expected Modbus RTU frame."""
 
 
-class CWTSoilTHCModbusException(CWTSoilTHCProtocolError):
+class ModbusExceptionResponseError(ModbusProtocolError):
     """The sensor returned a Modbus exception response."""
 
     def __init__(self, function_code: int, exception_code: int):
@@ -65,14 +65,14 @@ class CWTSoilTHCS:
             try:
                 written = self._stream.write(data[offset:])
             except Exception as error:
-                raise CWTSoilTHCCommunicationError("stream write failed") from error
+                raise ModbusCommunicationError("stream write failed") from error
 
             if not isinstance(written, int) or written <= 0:
-                raise CWTSoilTHCCommunicationError(
+                raise ModbusCommunicationError(
                     "stream write did not make progress"
                 )
             if written > len(data) - offset:
-                raise CWTSoilTHCCommunicationError(
+                raise ModbusCommunicationError(
                     "stream reported writing more bytes than requested"
                 )
             offset += written
@@ -84,17 +84,17 @@ class CWTSoilTHCS:
             try:
                 chunk = self._stream.read(remaining)
             except Exception as error:
-                raise CWTSoilTHCCommunicationError("stream read failed") from error
+                raise ModbusCommunicationError("stream read failed") from error
 
             if not isinstance(chunk, bytes):
-                raise CWTSoilTHCCommunicationError("stream read did not return bytes")
+                raise ModbusCommunicationError("stream read did not return bytes")
             if not chunk:
                 received = size - remaining
-                raise CWTSoilTHCCommunicationError(
+                raise ModbusCommunicationError(
                     f"incomplete response: expected {size} bytes, received {received}"
                 )
             if len(chunk) > remaining:
-                raise CWTSoilTHCCommunicationError(
+                raise ModbusCommunicationError(
                     "stream returned more bytes than requested"
                 )
 
@@ -109,20 +109,20 @@ class CWTSoilTHCS:
         expected_length: int,
     ) -> None:
         if len(response) != expected_length:
-            raise CWTSoilTHCProtocolError(
+            raise ModbusProtocolError(
                 f"invalid response length: expected {expected_length}, "
                 f"received {len(response)}"
             )
         if self._crc16(response[:-2]) != int.from_bytes(
             response[-2:], byteorder="little"
         ):
-            raise CWTSoilTHCProtocolError("response CRC does not match")
+            raise ModbusProtocolError("response CRC does not match")
         if response[0] != self._slave_id:
-            raise CWTSoilTHCProtocolError(
+            raise ModbusProtocolError(
                 f"unexpected slave ID: expected {self._slave_id}, received {response[0]}"
             )
         if response[1] != expected_function:
-            raise CWTSoilTHCProtocolError(
+            raise ModbusProtocolError(
                 f"unexpected function code: expected 0x{expected_function:02X}, "
                 f"received 0x{response[1]:02X}"
             )
@@ -132,7 +132,7 @@ class CWTSoilTHCS:
     ) -> None:
         exception_function = expected_function | 0x80
         self._validate_response(response, exception_function, 5)
-        raise CWTSoilTHCModbusException(expected_function, response[2])
+        raise ModbusExceptionResponseError(expected_function, response[2])
 
     def _read_holding_registers(self, register: int, count: int) -> list[int]:
         self._validate_register(register)
@@ -160,7 +160,7 @@ class CWTSoilTHCS:
             3 + count * 2 + 2,
         )
         if byte_count[0] != count * 2:
-            raise CWTSoilTHCProtocolError(
+            raise ModbusProtocolError(
                 f"invalid byte count: expected {count * 2}, received {byte_count[0]}"
             )
 
@@ -190,6 +190,6 @@ class CWTSoilTHCS:
         response = prefix + self._read_exactly(6)
         self._validate_response(response, self._WRITE_SINGLE_REGISTER, 8)
         if response != request:
-            raise CWTSoilTHCProtocolError(
+            raise ModbusProtocolError(
                 "write response register or value does not match the request"
             )
