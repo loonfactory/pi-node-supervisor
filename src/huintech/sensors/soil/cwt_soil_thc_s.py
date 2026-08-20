@@ -7,7 +7,7 @@ from typing import cast
 from huintech.stream import Stream
 
 
-class SoilMeasurement(IntFlag):
+class CWTSoilTHCSMeasurement(IntFlag):
     """Measurement fields that can be read in one contiguous request."""
 
     HUMIDITY = 1 << 0
@@ -19,7 +19,7 @@ class SoilMeasurement(IntFlag):
 
 
 @dataclass
-class SoilMeasurements:
+class CWTSoilTHCSMeasurements:
     """Decoded soil measurements; unrequested fields are ``None``."""
 
     humidity: float | None = None
@@ -64,11 +64,11 @@ class CWTSoilTHCS:
     _TDS_REGISTER = 0x0004
 
     _MEASUREMENT_REGISTERS = {
-        SoilMeasurement.HUMIDITY: _HUMIDITY_REGISTER,
-        SoilMeasurement.TEMPERATURE: _TEMPERATURE_REGISTER,
-        SoilMeasurement.CONDUCTIVITY: _CONDUCTIVITY_REGISTER,
-        SoilMeasurement.SALINITY: _SALINITY_REGISTER,
-        SoilMeasurement.TDS: _TDS_REGISTER,
+        CWTSoilTHCSMeasurement.HUMIDITY: _HUMIDITY_REGISTER,
+        CWTSoilTHCSMeasurement.TEMPERATURE: _TEMPERATURE_REGISTER,
+        CWTSoilTHCSMeasurement.CONDUCTIVITY: _CONDUCTIVITY_REGISTER,
+        CWTSoilTHCSMeasurement.SALINITY: _SALINITY_REGISTER,
+        CWTSoilTHCSMeasurement.TDS: _TDS_REGISTER,
     }
 
     def __init__(self, stream: Stream, slave_id: int = 1):
@@ -242,16 +242,18 @@ class CWTSoilTHCS:
 
     def read_measurements(
         self,
-        measurements: SoilMeasurement = SoilMeasurement.ALL,
-    ) -> SoilMeasurements:
+        measurements: CWTSoilTHCSMeasurement = CWTSoilTHCSMeasurement.ALL,
+    ) -> CWTSoilTHCSMeasurements:
         """Read selected measurements using one minimal contiguous request."""
 
-        if not isinstance(measurements, SoilMeasurement):
-            raise TypeError("measurements must be a SoilMeasurement value")
+        if not isinstance(measurements, CWTSoilTHCSMeasurement):
+            raise TypeError(
+                "measurements must be a CWTSoilTHCSMeasurement value"
+            )
         if not measurements:
             raise ValueError("at least one measurement must be selected")
 
-        unknown_bits = int(measurements) & ~int(SoilMeasurement.ALL)
+        unknown_bits = int(measurements) & ~int(CWTSoilTHCSMeasurement.ALL)
         if unknown_bits:
             raise ValueError(
                 f"measurements contains unsupported flags: 0x{unknown_bits:X}"
@@ -272,54 +274,60 @@ class CWTSoilTHCS:
         def register_value(register: int) -> int:
             return registers[register - first_register]
 
-        return SoilMeasurements(
+        return CWTSoilTHCSMeasurements(
             humidity=(
                 register_value(self._HUMIDITY_REGISTER) / 10.0
-                if measurements & SoilMeasurement.HUMIDITY
+                if measurements & CWTSoilTHCSMeasurement.HUMIDITY
                 else None
             ),
             temperature=(
                 self._decode_temperature(
                     register_value(self._TEMPERATURE_REGISTER)
                 )
-                if measurements & SoilMeasurement.TEMPERATURE
+                if measurements & CWTSoilTHCSMeasurement.TEMPERATURE
                 else None
             ),
             conductivity=(
                 register_value(self._CONDUCTIVITY_REGISTER)
-                if measurements & SoilMeasurement.CONDUCTIVITY
+                if measurements & CWTSoilTHCSMeasurement.CONDUCTIVITY
                 else None
             ),
             salinity=(
                 register_value(self._SALINITY_REGISTER)
-                if measurements & SoilMeasurement.SALINITY
+                if measurements & CWTSoilTHCSMeasurement.SALINITY
                 else None
             ),
             tds=(
                 register_value(self._TDS_REGISTER)
-                if measurements & SoilMeasurement.TDS
+                if measurements & CWTSoilTHCSMeasurement.TDS
                 else None
             ),
         )
 
     def read_humidity(self) -> float:
-        value = self.read_measurements(SoilMeasurement.HUMIDITY).humidity
+        value = self.read_measurements(
+            CWTSoilTHCSMeasurement.HUMIDITY
+        ).humidity
         return cast(float, value)
 
     def read_temperature(self) -> float:
-        value = self.read_measurements(SoilMeasurement.TEMPERATURE).temperature
+        value = self.read_measurements(
+            CWTSoilTHCSMeasurement.TEMPERATURE
+        ).temperature
         return cast(float, value)
 
     def read_conductivity(self) -> int:
         value = self.read_measurements(
-            SoilMeasurement.CONDUCTIVITY
+            CWTSoilTHCSMeasurement.CONDUCTIVITY
         ).conductivity
         return cast(int, value)
 
     def read_salinity(self) -> int:
-        value = self.read_measurements(SoilMeasurement.SALINITY).salinity
+        value = self.read_measurements(
+            CWTSoilTHCSMeasurement.SALINITY
+        ).salinity
         return cast(int, value)
 
     def read_tds(self) -> int:
-        value = self.read_measurements(SoilMeasurement.TDS).tds
+        value = self.read_measurements(CWTSoilTHCSMeasurement.TDS).tds
         return cast(int, value)
