@@ -1,0 +1,1000 @@
+{
+  "task": "TASK-007",
+  "phase": "settings",
+  "startedAt": "2026-08-20T05:38:25.076087+00:00",
+  "environment": {
+    "hostname": "hu-pi-02",
+    "platform": "Linux-6.18.34+rpt-rpi-2712-aarch64-with-glibc2.41",
+    "python": "3.13.5 (main, Jun 13 2026, 14:18:01) [GCC 14.2.0]",
+    "pyserial": "3.5",
+    "port": "/dev/ttyAMA0",
+    "baudrate": 4800,
+    "bytesize": 8,
+    "parity": "N",
+    "stopbits": 1,
+    "timeout": 1.0,
+    "initialSlaveId": 1
+  },
+  "operations": [
+    {
+      "name": "settings.conductivityFactor.backup",
+      "status": "passed",
+      "result": 0.0,
+      "elapsedSeconds": 0.046417,
+      "frameRange": [
+        0,
+        4
+      ]
+    },
+    {
+      "name": "settings.conductivityFactor.writeSameValue",
+      "status": "passed",
+      "result": null,
+      "elapsedSeconds": 0.062747,
+      "frameRange": [
+        4,
+        7
+      ]
+    },
+    {
+      "name": "settings.conductivityFactor.readback",
+      "status": "passed",
+      "result": 0.0,
+      "elapsedSeconds": 0.046336,
+      "frameRange": [
+        7,
+        11
+      ]
+    },
+    {
+      "name": "settings.conductivityFactor.restore",
+      "status": "passed",
+      "result": null,
+      "elapsedSeconds": 0.063424,
+      "frameRange": [
+        11,
+        14
+      ]
+    },
+    {
+      "name": "settings.conductivityFactor.verifyRestore",
+      "status": "passed",
+      "result": 0.0,
+      "elapsedSeconds": 0.046345,
+      "frameRange": [
+        14,
+        18
+      ]
+    },
+    {
+      "name": "settings.salinityFactor.backup",
+      "status": "passed",
+      "result": 0.55,
+      "elapsedSeconds": 0.046837,
+      "frameRange": [
+        18,
+        22
+      ]
+    },
+    {
+      "name": "settings.salinityFactor.writeSameValue",
+      "status": "passed",
+      "result": null,
+      "elapsedSeconds": 0.063611,
+      "frameRange": [
+        22,
+        25
+      ]
+    },
+    {
+      "name": "settings.salinityFactor.readback",
+      "status": "passed",
+      "result": 0.55,
+      "elapsedSeconds": 0.046108,
+      "frameRange": [
+        25,
+        29
+      ]
+    },
+    {
+      "name": "settings.salinityFactor.restore",
+      "status": "passed",
+      "result": null,
+      "elapsedSeconds": 0.062731,
+      "frameRange": [
+        29,
+        32
+      ]
+    },
+    {
+      "name": "settings.salinityFactor.verifyRestore",
+      "status": "passed",
+      "result": 0.55,
+      "elapsedSeconds": 0.04633,
+      "frameRange": [
+        32,
+        36
+      ]
+    },
+    {
+      "name": "settings.tdsFactor.backup",
+      "status": "passed",
+      "result": 0.5,
+      "elapsedSeconds": 0.046736,
+      "frameRange": [
+        36,
+        40
+      ]
+    },
+    {
+      "name": "settings.tdsFactor.writeSameValue",
+      "status": "passed",
+      "result": null,
+      "elapsedSeconds": 0.063986,
+      "frameRange": [
+        40,
+        43
+      ]
+    },
+    {
+      "name": "settings.tdsFactor.readback",
+      "status": "passed",
+      "result": 0.5,
+      "elapsedSeconds": 0.046795,
+      "frameRange": [
+        43,
+        47
+      ]
+    },
+    {
+      "name": "settings.tdsFactor.restore",
+      "status": "passed",
+      "result": null,
+      "elapsedSeconds": 0.062751,
+      "frameRange": [
+        47,
+        50
+      ]
+    },
+    {
+      "name": "settings.tdsFactor.verifyRestore",
+      "status": "passed",
+      "result": 0.5,
+      "elapsedSeconds": 0.046032,
+      "frameRange": [
+        50,
+        54
+      ]
+    },
+    {
+      "name": "settings.temperatureOffset.backup",
+      "status": "passed",
+      "result": 0.0,
+      "elapsedSeconds": 0.045912,
+      "frameRange": [
+        54,
+        58
+      ]
+    },
+    {
+      "name": "settings.temperatureOffset.writeSameValue",
+      "status": "passed",
+      "result": null,
+      "elapsedSeconds": 0.062806,
+      "frameRange": [
+        58,
+        61
+      ]
+    },
+    {
+      "name": "settings.temperatureOffset.readback",
+      "status": "passed",
+      "result": 0.0,
+      "elapsedSeconds": 0.046032,
+      "frameRange": [
+        61,
+        65
+      ]
+    },
+    {
+      "name": "settings.temperatureOffset.restore",
+      "status": "passed",
+      "result": null,
+      "elapsedSeconds": 0.063172,
+      "frameRange": [
+        65,
+        68
+      ]
+    },
+    {
+      "name": "settings.temperatureOffset.verifyRestore",
+      "status": "passed",
+      "result": 0.0,
+      "elapsedSeconds": 0.04656,
+      "frameRange": [
+        68,
+        72
+      ]
+    },
+    {
+      "name": "settings.humidityOffset.backup",
+      "status": "passed",
+      "result": 0.0,
+      "elapsedSeconds": 0.046052,
+      "frameRange": [
+        72,
+        76
+      ]
+    },
+    {
+      "name": "settings.humidityOffset.writeSameValue",
+      "status": "passed",
+      "result": null,
+      "elapsedSeconds": 0.063639,
+      "frameRange": [
+        76,
+        79
+      ]
+    },
+    {
+      "name": "settings.humidityOffset.readback",
+      "status": "passed",
+      "result": 0.0,
+      "elapsedSeconds": 0.046092,
+      "frameRange": [
+        79,
+        83
+      ]
+    },
+    {
+      "name": "settings.humidityOffset.restore",
+      "status": "passed",
+      "result": null,
+      "elapsedSeconds": 0.06351,
+      "frameRange": [
+        83,
+        86
+      ]
+    },
+    {
+      "name": "settings.humidityOffset.verifyRestore",
+      "status": "passed",
+      "result": 0.0,
+      "elapsedSeconds": 0.046318,
+      "frameRange": [
+        86,
+        90
+      ]
+    },
+    {
+      "name": "settings.conductivityOffset.backup",
+      "status": "passed",
+      "result": 0,
+      "elapsedSeconds": 0.047189,
+      "frameRange": [
+        90,
+        94
+      ]
+    },
+    {
+      "name": "settings.conductivityOffset.writeSameValue",
+      "status": "passed",
+      "result": null,
+      "elapsedSeconds": 0.063279,
+      "frameRange": [
+        94,
+        97
+      ]
+    },
+    {
+      "name": "settings.conductivityOffset.readback",
+      "status": "passed",
+      "result": 0,
+      "elapsedSeconds": 0.046104,
+      "frameRange": [
+        97,
+        101
+      ]
+    },
+    {
+      "name": "settings.conductivityOffset.restore",
+      "status": "passed",
+      "result": null,
+      "elapsedSeconds": 0.062705,
+      "frameRange": [
+        101,
+        104
+      ]
+    },
+    {
+      "name": "settings.conductivityOffset.verifyRestore",
+      "status": "passed",
+      "result": 0,
+      "elapsedSeconds": 0.046157,
+      "frameRange": [
+        104,
+        108
+      ]
+    }
+  ],
+  "frames": [
+    {
+      "at": "2026-08-20T05:38:20.480906+00:00",
+      "direction": "tx",
+      "requested": 8,
+      "written": 8,
+      "data": "01 03 00 22 00 01 24 00"
+    },
+    {
+      "at": "2026-08-20T05:38:20.527133+00:00",
+      "direction": "rx",
+      "requested": 2,
+      "data": "01 03"
+    },
+    {
+      "at": "2026-08-20T05:38:20.527166+00:00",
+      "direction": "rx",
+      "requested": 1,
+      "data": "02"
+    },
+    {
+      "at": "2026-08-20T05:38:20.527182+00:00",
+      "direction": "rx",
+      "requested": 4,
+      "data": "00 00 b8 44"
+    },
+    {
+      "at": "2026-08-20T05:38:20.627390+00:00",
+      "direction": "tx",
+      "requested": 8,
+      "written": 8,
+      "data": "01 06 00 22 00 00 29 c0"
+    },
+    {
+      "at": "2026-08-20T05:38:20.689972+00:00",
+      "direction": "rx",
+      "requested": 2,
+      "data": "01 06"
+    },
+    {
+      "at": "2026-08-20T05:38:20.690000+00:00",
+      "direction": "rx",
+      "requested": 6,
+      "data": "00 22 00 00 29 c0"
+    },
+    {
+      "at": "2026-08-20T05:38:20.790207+00:00",
+      "direction": "tx",
+      "requested": 8,
+      "written": 8,
+      "data": "01 03 00 22 00 01 24 00"
+    },
+    {
+      "at": "2026-08-20T05:38:20.836371+00:00",
+      "direction": "rx",
+      "requested": 2,
+      "data": "01 03"
+    },
+    {
+      "at": "2026-08-20T05:38:20.836399+00:00",
+      "direction": "rx",
+      "requested": 1,
+      "data": "02"
+    },
+    {
+      "at": "2026-08-20T05:38:20.836415+00:00",
+      "direction": "rx",
+      "requested": 4,
+      "data": "00 00 b8 44"
+    },
+    {
+      "at": "2026-08-20T05:38:20.936654+00:00",
+      "direction": "tx",
+      "requested": 8,
+      "written": 8,
+      "data": "01 06 00 22 00 00 29 c0"
+    },
+    {
+      "at": "2026-08-20T05:38:20.999870+00:00",
+      "direction": "rx",
+      "requested": 2,
+      "data": "01 06"
+    },
+    {
+      "at": "2026-08-20T05:38:20.999921+00:00",
+      "direction": "rx",
+      "requested": 6,
+      "data": "00 22 00 00 29 c0"
+    },
+    {
+      "at": "2026-08-20T05:38:21.100136+00:00",
+      "direction": "tx",
+      "requested": 8,
+      "written": 8,
+      "data": "01 03 00 22 00 01 24 00"
+    },
+    {
+      "at": "2026-08-20T05:38:21.146266+00:00",
+      "direction": "rx",
+      "requested": 2,
+      "data": "01 03"
+    },
+    {
+      "at": "2026-08-20T05:38:21.146327+00:00",
+      "direction": "rx",
+      "requested": 1,
+      "data": "02"
+    },
+    {
+      "at": "2026-08-20T05:38:21.146345+00:00",
+      "direction": "rx",
+      "requested": 4,
+      "data": "00 00 b8 44"
+    },
+    {
+      "at": "2026-08-20T05:38:21.246571+00:00",
+      "direction": "tx",
+      "requested": 8,
+      "written": 8,
+      "data": "01 03 00 23 00 01 75 c0"
+    },
+    {
+      "at": "2026-08-20T05:38:21.293234+00:00",
+      "direction": "rx",
+      "requested": 2,
+      "data": "01 03"
+    },
+    {
+      "at": "2026-08-20T05:38:21.293268+00:00",
+      "direction": "rx",
+      "requested": 1,
+      "data": "02"
+    },
+    {
+      "at": "2026-08-20T05:38:21.293284+00:00",
+      "direction": "rx",
+      "requested": 4,
+      "data": "00 37 f9 92"
+    },
+    {
+      "at": "2026-08-20T05:38:21.393512+00:00",
+      "direction": "tx",
+      "requested": 8,
+      "written": 8,
+      "data": "01 06 00 23 00 37 39 d6"
+    },
+    {
+      "at": "2026-08-20T05:38:21.456932+00:00",
+      "direction": "rx",
+      "requested": 2,
+      "data": "01 06"
+    },
+    {
+      "at": "2026-08-20T05:38:21.456976+00:00",
+      "direction": "rx",
+      "requested": 6,
+      "data": "00 23 00 37 39 d6"
+    },
+    {
+      "at": "2026-08-20T05:38:21.557180+00:00",
+      "direction": "tx",
+      "requested": 8,
+      "written": 8,
+      "data": "01 03 00 23 00 01 75 c0"
+    },
+    {
+      "at": "2026-08-20T05:38:21.603106+00:00",
+      "direction": "rx",
+      "requested": 2,
+      "data": "01 03"
+    },
+    {
+      "at": "2026-08-20T05:38:21.603150+00:00",
+      "direction": "rx",
+      "requested": 1,
+      "data": "02"
+    },
+    {
+      "at": "2026-08-20T05:38:21.603166+00:00",
+      "direction": "rx",
+      "requested": 4,
+      "data": "00 37 f9 92"
+    },
+    {
+      "at": "2026-08-20T05:38:21.703396+00:00",
+      "direction": "tx",
+      "requested": 8,
+      "written": 8,
+      "data": "01 06 00 23 00 37 39 d6"
+    },
+    {
+      "at": "2026-08-20T05:38:21.765936+00:00",
+      "direction": "rx",
+      "requested": 2,
+      "data": "01 06"
+    },
+    {
+      "at": "2026-08-20T05:38:21.765979+00:00",
+      "direction": "rx",
+      "requested": 6,
+      "data": "00 23 00 37 39 d6"
+    },
+    {
+      "at": "2026-08-20T05:38:21.866182+00:00",
+      "direction": "tx",
+      "requested": 8,
+      "written": 8,
+      "data": "01 03 00 23 00 01 75 c0"
+    },
+    {
+      "at": "2026-08-20T05:38:21.912332+00:00",
+      "direction": "rx",
+      "requested": 2,
+      "data": "01 03"
+    },
+    {
+      "at": "2026-08-20T05:38:21.912374+00:00",
+      "direction": "rx",
+      "requested": 1,
+      "data": "02"
+    },
+    {
+      "at": "2026-08-20T05:38:21.912389+00:00",
+      "direction": "rx",
+      "requested": 4,
+      "data": "00 37 f9 92"
+    },
+    {
+      "at": "2026-08-20T05:38:22.012599+00:00",
+      "direction": "tx",
+      "requested": 8,
+      "written": 8,
+      "data": "01 03 00 24 00 01 c4 01"
+    },
+    {
+      "at": "2026-08-20T05:38:22.059150+00:00",
+      "direction": "rx",
+      "requested": 2,
+      "data": "01 03"
+    },
+    {
+      "at": "2026-08-20T05:38:22.059193+00:00",
+      "direction": "rx",
+      "requested": 1,
+      "data": "02"
+    },
+    {
+      "at": "2026-08-20T05:38:22.059209+00:00",
+      "direction": "rx",
+      "requested": 4,
+      "data": "00 32 39 91"
+    },
+    {
+      "at": "2026-08-20T05:38:22.159440+00:00",
+      "direction": "tx",
+      "requested": 8,
+      "written": 8,
+      "data": "01 06 00 24 00 32 48 14"
+    },
+    {
+      "at": "2026-08-20T05:38:22.223234+00:00",
+      "direction": "rx",
+      "requested": 2,
+      "data": "01 06"
+    },
+    {
+      "at": "2026-08-20T05:38:22.223277+00:00",
+      "direction": "rx",
+      "requested": 6,
+      "data": "00 24 00 32 48 14"
+    },
+    {
+      "at": "2026-08-20T05:38:22.323482+00:00",
+      "direction": "tx",
+      "requested": 8,
+      "written": 8,
+      "data": "01 03 00 24 00 01 c4 01"
+    },
+    {
+      "at": "2026-08-20T05:38:22.370051+00:00",
+      "direction": "rx",
+      "requested": 2,
+      "data": "01 03"
+    },
+    {
+      "at": "2026-08-20T05:38:22.370109+00:00",
+      "direction": "rx",
+      "requested": 1,
+      "data": "02"
+    },
+    {
+      "at": "2026-08-20T05:38:22.370126+00:00",
+      "direction": "rx",
+      "requested": 4,
+      "data": "00 32 39 91"
+    },
+    {
+      "at": "2026-08-20T05:38:22.470386+00:00",
+      "direction": "tx",
+      "requested": 8,
+      "written": 8,
+      "data": "01 06 00 24 00 32 48 14"
+    },
+    {
+      "at": "2026-08-20T05:38:22.532919+00:00",
+      "direction": "rx",
+      "requested": 2,
+      "data": "01 06"
+    },
+    {
+      "at": "2026-08-20T05:38:22.532979+00:00",
+      "direction": "rx",
+      "requested": 6,
+      "data": "00 24 00 32 48 14"
+    },
+    {
+      "at": "2026-08-20T05:38:22.633238+00:00",
+      "direction": "tx",
+      "requested": 8,
+      "written": 8,
+      "data": "01 03 00 24 00 01 c4 01"
+    },
+    {
+      "at": "2026-08-20T05:38:22.679063+00:00",
+      "direction": "rx",
+      "requested": 2,
+      "data": "01 03"
+    },
+    {
+      "at": "2026-08-20T05:38:22.679102+00:00",
+      "direction": "rx",
+      "requested": 1,
+      "data": "02"
+    },
+    {
+      "at": "2026-08-20T05:38:22.679118+00:00",
+      "direction": "rx",
+      "requested": 4,
+      "data": "00 32 39 91"
+    },
+    {
+      "at": "2026-08-20T05:38:22.779318+00:00",
+      "direction": "tx",
+      "requested": 8,
+      "written": 8,
+      "data": "01 03 00 50 00 01 84 1b"
+    },
+    {
+      "at": "2026-08-20T05:38:22.825046+00:00",
+      "direction": "rx",
+      "requested": 2,
+      "data": "01 03"
+    },
+    {
+      "at": "2026-08-20T05:38:22.825090+00:00",
+      "direction": "rx",
+      "requested": 1,
+      "data": "02"
+    },
+    {
+      "at": "2026-08-20T05:38:22.825106+00:00",
+      "direction": "rx",
+      "requested": 4,
+      "data": "00 00 b8 44"
+    },
+    {
+      "at": "2026-08-20T05:38:22.925334+00:00",
+      "direction": "tx",
+      "requested": 8,
+      "written": 8,
+      "data": "01 06 00 50 00 00 89 db"
+    },
+    {
+      "at": "2026-08-20T05:38:22.987927+00:00",
+      "direction": "rx",
+      "requested": 2,
+      "data": "01 06"
+    },
+    {
+      "at": "2026-08-20T05:38:22.987989+00:00",
+      "direction": "rx",
+      "requested": 6,
+      "data": "00 50 00 00 89 db"
+    },
+    {
+      "at": "2026-08-20T05:38:23.088242+00:00",
+      "direction": "tx",
+      "requested": 8,
+      "written": 8,
+      "data": "01 03 00 50 00 01 84 1b"
+    },
+    {
+      "at": "2026-08-20T05:38:23.134064+00:00",
+      "direction": "rx",
+      "requested": 2,
+      "data": "01 03"
+    },
+    {
+      "at": "2026-08-20T05:38:23.134102+00:00",
+      "direction": "rx",
+      "requested": 1,
+      "data": "02"
+    },
+    {
+      "at": "2026-08-20T05:38:23.134117+00:00",
+      "direction": "rx",
+      "requested": 4,
+      "data": "00 00 b8 44"
+    },
+    {
+      "at": "2026-08-20T05:38:23.234350+00:00",
+      "direction": "tx",
+      "requested": 8,
+      "written": 8,
+      "data": "01 06 00 50 00 00 89 db"
+    },
+    {
+      "at": "2026-08-20T05:38:23.297331+00:00",
+      "direction": "rx",
+      "requested": 2,
+      "data": "01 06"
+    },
+    {
+      "at": "2026-08-20T05:38:23.297375+00:00",
+      "direction": "rx",
+      "requested": 6,
+      "data": "00 50 00 00 89 db"
+    },
+    {
+      "at": "2026-08-20T05:38:23.397624+00:00",
+      "direction": "tx",
+      "requested": 8,
+      "written": 8,
+      "data": "01 03 00 50 00 01 84 1b"
+    },
+    {
+      "at": "2026-08-20T05:38:23.443941+00:00",
+      "direction": "rx",
+      "requested": 2,
+      "data": "01 03"
+    },
+    {
+      "at": "2026-08-20T05:38:23.443992+00:00",
+      "direction": "rx",
+      "requested": 1,
+      "data": "02"
+    },
+    {
+      "at": "2026-08-20T05:38:23.444008+00:00",
+      "direction": "rx",
+      "requested": 4,
+      "data": "00 00 b8 44"
+    },
+    {
+      "at": "2026-08-20T05:38:23.544275+00:00",
+      "direction": "tx",
+      "requested": 8,
+      "written": 8,
+      "data": "01 03 00 51 00 01 d5 db"
+    },
+    {
+      "at": "2026-08-20T05:38:23.590107+00:00",
+      "direction": "rx",
+      "requested": 2,
+      "data": "01 03"
+    },
+    {
+      "at": "2026-08-20T05:38:23.590149+00:00",
+      "direction": "rx",
+      "requested": 1,
+      "data": "02"
+    },
+    {
+      "at": "2026-08-20T05:38:23.590165+00:00",
+      "direction": "rx",
+      "requested": 4,
+      "data": "00 00 b8 44"
+    },
+    {
+      "at": "2026-08-20T05:38:23.690392+00:00",
+      "direction": "tx",
+      "requested": 8,
+      "written": 8,
+      "data": "01 06 00 51 00 00 d8 1b"
+    },
+    {
+      "at": "2026-08-20T05:38:23.753815+00:00",
+      "direction": "rx",
+      "requested": 2,
+      "data": "01 06"
+    },
+    {
+      "at": "2026-08-20T05:38:23.753877+00:00",
+      "direction": "rx",
+      "requested": 6,
+      "data": "00 51 00 00 d8 1b"
+    },
+    {
+      "at": "2026-08-20T05:38:23.854098+00:00",
+      "direction": "tx",
+      "requested": 8,
+      "written": 8,
+      "data": "01 03 00 51 00 01 d5 db"
+    },
+    {
+      "at": "2026-08-20T05:38:23.899975+00:00",
+      "direction": "rx",
+      "requested": 2,
+      "data": "01 03"
+    },
+    {
+      "at": "2026-08-20T05:38:23.900032+00:00",
+      "direction": "rx",
+      "requested": 1,
+      "data": "02"
+    },
+    {
+      "at": "2026-08-20T05:38:23.900048+00:00",
+      "direction": "rx",
+      "requested": 4,
+      "data": "00 00 b8 44"
+    },
+    {
+      "at": "2026-08-20T05:38:24.000383+00:00",
+      "direction": "tx",
+      "requested": 8,
+      "written": 8,
+      "data": "01 06 00 51 00 00 d8 1b"
+    },
+    {
+      "at": "2026-08-20T05:38:24.063635+00:00",
+      "direction": "rx",
+      "requested": 2,
+      "data": "01 06"
+    },
+    {
+      "at": "2026-08-20T05:38:24.063676+00:00",
+      "direction": "rx",
+      "requested": 6,
+      "data": "00 51 00 00 d8 1b"
+    },
+    {
+      "at": "2026-08-20T05:38:24.163876+00:00",
+      "direction": "tx",
+      "requested": 8,
+      "written": 8,
+      "data": "01 03 00 51 00 01 d5 db"
+    },
+    {
+      "at": "2026-08-20T05:38:24.210011+00:00",
+      "direction": "rx",
+      "requested": 2,
+      "data": "01 03"
+    },
+    {
+      "at": "2026-08-20T05:38:24.210056+00:00",
+      "direction": "rx",
+      "requested": 1,
+      "data": "02"
+    },
+    {
+      "at": "2026-08-20T05:38:24.210071+00:00",
+      "direction": "rx",
+      "requested": 4,
+      "data": "00 00 b8 44"
+    },
+    {
+      "at": "2026-08-20T05:38:24.310281+00:00",
+      "direction": "tx",
+      "requested": 8,
+      "written": 8,
+      "data": "01 03 00 52 00 01 25 db"
+    },
+    {
+      "at": "2026-08-20T05:38:24.357255+00:00",
+      "direction": "rx",
+      "requested": 2,
+      "data": "01 03"
+    },
+    {
+      "at": "2026-08-20T05:38:24.357321+00:00",
+      "direction": "rx",
+      "requested": 1,
+      "data": "02"
+    },
+    {
+      "at": "2026-08-20T05:38:24.357339+00:00",
+      "direction": "rx",
+      "requested": 4,
+      "data": "00 00 b8 44"
+    },
+    {
+      "at": "2026-08-20T05:38:24.457627+00:00",
+      "direction": "tx",
+      "requested": 8,
+      "written": 8,
+      "data": "01 06 00 52 00 00 28 1b"
+    },
+    {
+      "at": "2026-08-20T05:38:24.520669+00:00",
+      "direction": "rx",
+      "requested": 2,
+      "data": "01 06"
+    },
+    {
+      "at": "2026-08-20T05:38:24.520714+00:00",
+      "direction": "rx",
+      "requested": 6,
+      "data": "00 52 00 00 28 1b"
+    },
+    {
+      "at": "2026-08-20T05:38:24.620969+00:00",
+      "direction": "tx",
+      "requested": 8,
+      "written": 8,
+      "data": "01 03 00 52 00 01 25 db"
+    },
+    {
+      "at": "2026-08-20T05:38:24.666850+00:00",
+      "direction": "rx",
+      "requested": 2,
+      "data": "01 03"
+    },
+    {
+      "at": "2026-08-20T05:38:24.666892+00:00",
+      "direction": "rx",
+      "requested": 1,
+      "data": "02"
+    },
+    {
+      "at": "2026-08-20T05:38:24.666907+00:00",
+      "direction": "rx",
+      "requested": 4,
+      "data": "00 00 b8 44"
+    },
+    {
+      "at": "2026-08-20T05:38:24.767163+00:00",
+      "direction": "tx",
+      "requested": 8,
+      "written": 8,
+      "data": "01 06 00 52 00 00 28 1b"
+    },
+    {
+      "at": "2026-08-20T05:38:24.829683+00:00",
+      "direction": "rx",
+      "requested": 2,
+      "data": "01 06"
+    },
+    {
+      "at": "2026-08-20T05:38:24.829726+00:00",
+      "direction": "rx",
+      "requested": 6,
+      "data": "00 52 00 00 28 1b"
+    },
+    {
+      "at": "2026-08-20T05:38:24.929930+00:00",
+      "direction": "tx",
+      "requested": 8,
+      "written": 8,
+      "data": "01 03 00 52 00 01 25 db"
+    },
+    {
+      "at": "2026-08-20T05:38:24.975882+00:00",
+      "direction": "rx",
+      "requested": 2,
+      "data": "01 03"
+    },
+    {
+      "at": "2026-08-20T05:38:24.975935+00:00",
+      "direction": "rx",
+      "requested": 1,
+      "data": "02"
+    },
+    {
+      "at": "2026-08-20T05:38:24.975951+00:00",
+      "direction": "rx",
+      "requested": 4,
+      "data": "00 00 b8 44"
+    }
+  ]
+}
