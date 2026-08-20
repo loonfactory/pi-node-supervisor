@@ -1,6 +1,7 @@
 """Driver for the CWT-Soil-THC-S soil sensor."""
 
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from enum import IntFlag
 from typing import cast
 
@@ -71,12 +72,25 @@ class CWTSoilTHCS:
         CWTSoilTHCSMeasurement.TDS: _TDS_REGISTER,
     }
 
+    _CONDUCTIVITY_FACTOR_REGISTER = 0x0022
+    _SALINITY_FACTOR_REGISTER = 0x0023
+    _TDS_FACTOR_REGISTER = 0x0024
+    _TEMPERATURE_OFFSET_REGISTER = 0x0050
+    _HUMIDITY_OFFSET_REGISTER = 0x0051
+    _CONDUCTIVITY_OFFSET_REGISTER = 0x0052
+    _SLAVE_ID_REGISTER = 0x07D0
+
     def __init__(self, stream: Stream, slave_id: int = 1):
-        if not 0 <= slave_id <= 0xFF:
-            raise ValueError("slave_id must fit in one byte")
+        self._validate_slave_id(slave_id)
 
         self._stream = stream
         self._slave_id = slave_id
+
+    @property
+    def slave_id(self) -> int:
+        """Slave ID currently used by this driver instance."""
+
+        return self._slave_id
 
     @staticmethod
     def _crc16(data: bytes) -> int:
@@ -98,6 +112,81 @@ class CWTSoilTHCS:
     def _validate_register(register: int) -> None:
         if not 0 <= register <= 0xFFFF:
             raise ValueError("register must be between 0 and 65535")
+
+    @staticmethod
+    def _validate_slave_id(slave_id: int) -> None:
+        if isinstance(slave_id, bool) or not isinstance(slave_id, int):
+            raise TypeError("slave_id must be an integer")
+        if not 1 <= slave_id <= 254:
+            raise ValueError("slave_id must be between 1 and 254")
+
+    @staticmethod
+    def _encode_scaled_value(
+        name: str,
+        value: float | int,
+        multiplier: int,
+        minimum_raw: int,
+        maximum_raw: int,
+    ) -> int:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise TypeError(f"{name} must be a number")
+
+        try:
+            decimal_value = Decimal(str(value))
+        except InvalidOperation as error:
+            raise ValueError(f"{name} must be finite") from error
+        if not decimal_value.is_finite():
+            raise ValueError(f"{name} must be finite")
+
+        scaled = decimal_value * multiplier
+        integral = scaled.to_integral_value()
+        if scaled != integral:
+            resolution = Decimal(1) / multiplier
+            raise ValueError(
+                f"{name} must use increments of {resolution}"
+            )
+
+        raw_value = int(integral)
+        if not minimum_raw <= raw_value <= maximum_raw:
+            minimum = Decimal(minimum_raw) / multiplier
+            maximum = Decimal(maximum_raw) / multiplier
+            raise ValueError(f"{name} must be between {minimum} and {maximum}")
+        return raw_value
+
+    @classmethod
+    def _encode_factor(
+        cls, name: str, value: float, multiplier: int
+    ) -> int:
+        return cls._encode_scaled_value(name, value, multiplier, 0, 100)
+
+    @staticmethod
+    def _decode_factor(name: str, raw_value: int, multiplier: int) -> float:
+        if not 0 <= raw_value <= 100:
+            raise ModbusProtocolError(
+                f"invalid {name} register value: {raw_value}"
+            )
+        return raw_value / multiplier
+
+    @classmethod
+    def _encode_offset(
+        cls, name: str, value: float | int, multiplier: int
+    ) -> int:
+        raw_value = cls._encode_scaled_value(
+            name,
+            value,
+            multiplier,
+            -0x8000,
+            0x7FFF,
+        )
+        return raw_value & 0xFFFF
+
+    @staticmethod
+    def _decode_offset(raw_value: int, multiplier: int) -> float | int:
+        if raw_value & 0x8000:
+            raw_value -= 0x10000
+        if multiplier == 1:
+            return raw_value
+        return raw_value / multiplier
 
     def _write_all(self, data: bytes) -> None:
         offset = 0
@@ -331,3 +420,86 @@ class CWTSoilTHCS:
     def read_tds(self) -> int:
         value = self.read_measurements(CWTSoilTHCSMeasurement.TDS).tds
         return cast(int, value)
+
+    def _read_single_register(self, register: int) -> int:
+        return self._read_holding_registers(register, 1)[0]
+
+    def read_conductivity_factor(self) -> float:
+        raw_value = self._read_single_register(
+            self._CONDUCTIVITY_FACTOR_REGISTER
+        )
+        return self._decode_factor("conductivity factor", raw_value, 10)
+
+    def set_conductivity_factor(self, value: float) -> None:
+        raw_value = self._encode_factor("conductivity factor", value, 10)
+        self._write_single_register(
+            self._CONDUCTIVITY_FACTOR_REGISTER, raw_value
+        )
+
+    def read_salinity_factor(self) -> float:
+        raw_value = self._read_single_register(self._SALINITY_FACTOR_REGISTER)
+        return self._decode_factor("salinity factor", raw_value, 100)
+
+    def set_salinity_factor(self, value: float) -> None:
+        raw_value = self._encode_factor("salinity factor", value, 100)
+        self._write_single_register(self._SALINITY_FACTOR_REGISTER, raw_value)
+
+    def read_tds_factor(self) -> float:
+        raw_value = self._read_single_register(self._TDS_FACTOR_REGISTER)
+        return self._decode_factor("TDS factor", raw_value, 100)
+
+    def set_tds_factor(self, value: float) -> None:
+        raw_value = self._encode_factor("TDS factor", value, 100)
+        self._write_single_register(self._TDS_FACTOR_REGISTER, raw_value)
+
+    def read_temperature_offset(self) -> float:
+        raw_value = self._read_single_register(
+            self._TEMPERATURE_OFFSET_REGISTER
+        )
+        value = self._decode_offset(raw_value, 10)
+        return float(value)
+
+    def set_temperature_offset(self, value: float) -> None:
+        raw_value = self._encode_offset("temperature offset", value, 10)
+        self._write_single_register(
+            self._TEMPERATURE_OFFSET_REGISTER, raw_value
+        )
+
+    def read_humidity_offset(self) -> float:
+        raw_value = self._read_single_register(self._HUMIDITY_OFFSET_REGISTER)
+        value = self._decode_offset(raw_value, 10)
+        return float(value)
+
+    def set_humidity_offset(self, value: float) -> None:
+        raw_value = self._encode_offset("humidity offset", value, 10)
+        self._write_single_register(self._HUMIDITY_OFFSET_REGISTER, raw_value)
+
+    def read_conductivity_offset(self) -> int:
+        raw_value = self._read_single_register(
+            self._CONDUCTIVITY_OFFSET_REGISTER
+        )
+        value = self._decode_offset(raw_value, 1)
+        return int(value)
+
+    def set_conductivity_offset(self, value: int) -> None:
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise TypeError("conductivity offset must be an integer")
+        raw_value = self._encode_offset("conductivity offset", value, 1)
+        self._write_single_register(
+            self._CONDUCTIVITY_OFFSET_REGISTER, raw_value
+        )
+
+    def read_slave_id(self) -> int:
+        slave_id = self._read_single_register(self._SLAVE_ID_REGISTER)
+        try:
+            self._validate_slave_id(slave_id)
+        except (TypeError, ValueError) as error:
+            raise ModbusProtocolError(
+                f"invalid slave ID register value: {slave_id}"
+            ) from error
+        return slave_id
+
+    def set_slave_id(self, slave_id: int) -> None:
+        self._validate_slave_id(slave_id)
+        self._write_single_register(self._SLAVE_ID_REGISTER, slave_id)
+        self._slave_id = slave_id
