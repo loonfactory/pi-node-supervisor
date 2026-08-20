@@ -46,6 +46,50 @@ class FakeCaptureAdapter:
         ]
 
 
+class NativeCaptureAdapter:
+    node_id = "camera0"
+    capture_id = "a" * 32
+
+    def __init__(self, *, with_event=False):
+        self.with_event = with_event
+
+    def list_data(self, *, activity_id=None, run_id=None, capture_id=None):
+        if capture_id is not None and capture_id != self.capture_id:
+            return []
+        captured_at = datetime(2030, 1, 1, 0, 0, 8, tzinfo=UTC)
+        return [
+            DataRecord(
+                data_id=f"camera0:local:20300101T000000.000000Z_{self.capture_id}.png",
+                node_id="camera0",
+                activity_id=activity_id,
+                run_id=run_id,
+                kind="image",
+                captured_at=captured_at,
+                uri=(
+                    "http://127.0.0.1/api/storage/files/local/"
+                    f"20300101T000000.000000Z_{self.capture_id}.png"
+                ),
+                media_type="image/png",
+                size=100,
+                integrity="available",
+                summary="capture",
+                indexed_at=captured_at,
+            )
+        ]
+
+    def capture_events(self):
+        if not self.with_event:
+            return []
+        return [
+            {
+                "event_type": "terminal.completed",
+                "timestamp": "2030-01-01T00:00:08+00:00",
+                "capture_id": self.capture_id,
+                "targets": ["local"],
+            }
+        ]
+
+
 def active_document(at):
     return {
         "schema_version": 1,
@@ -162,3 +206,39 @@ def test_power_linked_recurring_capture_is_not_executed_by_supervisor(service):
     assert first == []
     assert second == []
     assert adapter.executions == []
+
+
+def test_storage_sync_reconstructs_native_timer_run_and_links_data(service):
+    scheduled = datetime(2030, 1, 1, tzinfo=UTC)
+    runtime = apply_at(service, scheduled)
+    adapter = NativeCaptureAdapter()
+    engine = ExecutionEngine(service.store, runtime, {"camera0": adapter})
+
+    first = engine.sync_data()
+    second = engine.sync_data()
+
+    assert first["runs_added"] == 1
+    assert second["runs_added"] == 0
+    run = runtime.list_runs()[0]
+    assert run.status == "succeeded"
+    assert run.external_id == adapter.capture_id
+    assert run.scheduled_at == scheduled
+    assert runtime.list_data()[0].run_id == run.run_id
+
+
+def test_native_timer_completion_is_observed_and_indexed_once(service):
+    scheduled = datetime(2030, 1, 1, tzinfo=UTC)
+    runtime = apply_at(service, scheduled)
+    adapter = NativeCaptureAdapter(with_event=True)
+    engine = ExecutionEngine(service.store, runtime, {"camera0": adapter})
+
+    first = engine.sync_native_captures()
+    second = engine.sync_native_captures()
+
+    assert first == {"runs_added": 1, "data_indexed": 1, "failures": []}
+    assert second == {"runs_added": 0, "data_indexed": 0, "failures": []}
+    run = runtime.list_runs()[0]
+    assert run.status == "succeeded"
+    assert run.external_id == adapter.capture_id
+    assert run.result["source"] == "capture-node-timer"
+    assert runtime.list_data()[0].run_id == run.run_id

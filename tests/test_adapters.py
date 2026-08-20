@@ -174,6 +174,11 @@ def test_capture_node_data_catalog_keeps_remote_original_uri():
                         "modified_at": "2030-01-01T00:00:05+00:00",
                     },
                     {
+                        "name": "20300101_cap-1.dng",
+                        "size": 4567,
+                        "modified_at": "2030-01-01T00:00:05+00:00",
+                    },
+                    {
                         "name": "other.jpg",
                         "size": 9,
                         "modified_at": "2030-01-01T00:00:04+00:00",
@@ -187,10 +192,12 @@ def test_capture_node_data_catalog_keeps_remote_original_uri():
         node_id="camera0", activity_id="capture", run_id="run-1", capture_id="cap-1"
     )
 
-    assert len(records) == 1
+    assert len(records) == 2
     assert records[0].data_id == "camera0:local:20300101_cap-1.jpg"
     assert records[0].uri == (
         "http://127.0.0.1:8000/api/storage/files/local/20300101_cap-1.jpg"
     )
     assert records[0].size == 1234
     assert records[0].captured_at == datetime(2030, 1, 1, 0, 0, 5, tzinfo=UTC)
+    assert records[1].data_id == "camera0:local:20300101_cap-1.dng"
+    assert records[1].media_type == "image/x-adobe-dng"

@@ -206,14 +206,29 @@ StorageSettings = Annotated[
 ]
 
 
+class StorageRetentionSettings(StrictModel):
+    target: Identifier
+    max_age_days: int = Field(gt=0, le=36500)
+
+
 class StorageSettingsDocument(StrictModel):
     items: tuple[StorageSettings, ...]
+    retention: tuple[StorageRetentionSettings, ...] | None = None
 
     @model_validator(mode="after")
     def unique_names(self) -> "StorageSettingsDocument":
         names = [item.name for item in self.items]
         if len(names) != len(set(names)):
             raise ValueError("storage names must be unique")
+        if self.retention is not None:
+            targets = [item.target for item in self.retention]
+            if len(targets) != len(set(targets)):
+                raise ValueError("retention targets must be unique")
+            missing = set(targets).difference(names)
+            if missing:
+                raise ValueError(
+                    f"retention target is not configured: {sorted(missing)[0]}"
+                )
         return self
 
 
@@ -308,6 +323,13 @@ class PowerSettingsUpdate(StrictModel):
         return self
 
 
+class CaptureNodeSettings(StrictModel):
+    """CaptureNode-native JSON overlays stored with a Supervisor revision."""
+
+    common: dict[str, Any] = Field(default_factory=dict)
+    nodes: dict[Identifier, dict[str, Any]] = Field(default_factory=dict)
+
+
 class SupervisorConfiguration(StrictModel):
     schema_version: Literal[1] = 1
     timezone: str
@@ -315,6 +337,7 @@ class SupervisorConfiguration(StrictModel):
     activities: tuple[Activity, ...] = ()
     capture_schedules: tuple[CaptureScheduleDefinition, ...] = ()
     power_keep_schedules: tuple[DailyPowerKeepSchedule, ...] = ()
+    capture_node_settings: CaptureNodeSettings = Field(default_factory=CaptureNodeSettings)
 
     @field_validator("timezone")
     @classmethod

@@ -126,11 +126,40 @@ For another machine on a trusted wired LAN, pass an explicit `--host` address.
 The built-in server does not terminate TLS and must not be exposed to the
 Internet.
 
+The advanced configuration accepts CaptureNode-native values without changing
+their field names. `capture_node_settings.common` is recursively merged into
+every managed camera and `capture_node_settings.nodes.<node-id>` is merged on
+top of it. Objects are merged recursively; arrays and scalar values replace the
+common value. `GET /api/settings/capture-nodes` returns the current native
+configuration of every managed CaptureNode in the same shape, so it can be
+copied into the advanced editor. For example, a shared 180-degree camera mount
+can be represented as:
+
+```json
+{
+  "capture_node_settings": {
+    "common": {
+      "capture": {
+        "params": {
+          "horizontal_flip": true,
+          "vertical_flip": true
+        }
+      }
+    },
+    "nodes": {}
+  }
+}
+```
+
+Node-specific CaptureNode configuration, including calibration metadata, can
+instead be placed below `capture_node_settings.nodes.<node-id>`.
+
 Authenticated endpoints:
 
 - `PUT /api/config/draft`
 - `GET /api/config/draft`
 - `GET /api/config/active`
+- `GET /api/settings/capture-nodes`
 - `POST /api/plan/preview`
 - `POST /api/revisions/apply`
 - `GET /api/revisions`
@@ -339,3 +368,25 @@ bounded JPEG/PNG multipart frames, and closes all streams when the operator
 leaves the camera view. Camera ports remain bound to loopback and the API token
 is never placed in a URL. The single-frame endpoint remains available for
 health checks and low-bandwidth clients.
+
+## New Raspberry Pi bootstrap
+
+Provision a Raspberry Pi 5 from SSH key enrollment through CaptureNode,
+Supervisor, and the privileged RTC boundary with one interactive command:
+
+```bash
+scripts/bootstrap-device.sh scnu@192.168.12.8
+```
+
+The script installs the local public key when needed, installs Raspberry Pi
+runtime packages, applies `POWER_OFF_ON_HALT=1` and `WAKE_ON_GPIO=0`, reboots,
+deploys two Picamera2 instances, renders account-specific managed-node paths,
+and installs `pi-power-manager`. Automatic shutdown remains disabled. Remove
+the GPIO26-to-GND jumper and opt in only after checking the device:
+
+```bash
+scripts/bootstrap-device.sh --enable-power scnu@192.168.12.8
+```
+
+`--enable-power` fails and disables the timer if the startup GPIO26 latch is
+not HIGH. Repeat `--camera` to select one or two Picamera2 or V4L2 devices.

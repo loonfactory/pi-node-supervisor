@@ -153,6 +153,10 @@ async def test_runtime_catalog_endpoints_and_static_ui(service: SupervisorServic
         assert "카메라 저장소" in root.text
         assert "촬영 일정" in root.text
         assert "수집 데이터" in root.text
+        assert "실행 이력" not in root.text
+        assert "최근 촬영" in root.text
+        assert "장치 연결이 잠시 끊겼습니다" in (await browser.get("/app.js")).text
+        assert 'console.warn("[Pi Node Supervisor]"' in (await browser.get("/app.js")).text
         assert "날짜를 지정한 1회 작업" not in root.text
         assert "기준 시간대" not in root.text
         assert "노드 상태 갱신" in root.text

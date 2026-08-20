@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 import subprocess
@@ -13,7 +14,12 @@ from typing import Any, Protocol
 
 from .adapters import CaptureNodeClient
 from .errors import SupervisorError
-from .models import CaptureScheduleSettings, NodeDefinition, StorageSettingsDocument
+from .models import (
+    CaptureNodeSettings,
+    CaptureScheduleSettings,
+    NodeDefinition,
+    StorageSettingsDocument,
+)
 from .registry import NodeRegistry
 from .runtime_store import RuntimeStore
 
@@ -140,14 +146,71 @@ class CaptureNodeProcessManager:
         node = self._managed_node(node_id)
         assert node.managed_capture is not None
         document = self._read_configuration(node.managed_capture.config_path)
-        return {
-            "node_id": node.id,
-            "camera": document.get("camera"),
-            "capture": document.get("capture"),
-            "image": document.get("image"),
-            "storages": document.get("storages", []),
-            "maintenance": document.get("maintenance"),
-        }
+        return {"node_id": node.id, **document}
+
+    def apply_settings_overlays(
+        self,
+        settings: CaptureNodeSettings,
+        activate: Callable[[], dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Apply native CaptureNode overlays and the revision as one transaction."""
+
+        with self._lifecycle_lock:
+            known = {node.id for node in self.nodes}
+            unknown = sorted(set(settings.nodes) - known)
+            if unknown:
+                raise ValueError(
+                    "capture_node_settings contains unmanaged nodes: "
+                    + ", ".join(unknown)
+                )
+            updates: list[tuple[NodeDefinition, Path, bytes, dict[str, Any]]] = []
+            for node in self.nodes:
+                assert node.managed_capture is not None
+                path = node.managed_capture.config_path
+                previous_bytes = path.read_bytes()
+                previous = self._read_configuration(path)
+                candidate = self._deep_merge(previous, settings.common)
+                candidate = self._deep_merge(candidate, settings.nodes.get(node.id, {}))
+                if candidate != previous:
+                    updates.append((node, path, previous_bytes, candidate))
+
+            activation_result: dict[str, Any] = {}
+
+            def activate_revision() -> None:
+                nonlocal activation_result
+                activation_result = activate()
+
+            if not updates:
+                activate_revision()
+                return {
+                    "updated_nodes": [],
+                    "restarted_nodes": [],
+                    "revision": activation_result,
+                }
+            restarted_nodes = self._apply_configuration_update(
+                updates=updates,
+                event_node_id=None,
+                update_name="CaptureNode settings overlay",
+                success_event="node.config.settings_overlays_updated",
+                event_payload={"node_ids": [node.id for node, *_rest in updates]},
+                after_start=activate_revision,
+            )
+            return {
+                "updated_nodes": [node.id for node, *_rest in updates],
+                "restarted_nodes": restarted_nodes,
+                "revision": activation_result,
+            }
+
+    @classmethod
+    def _deep_merge(cls, base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
+        result = copy.deepcopy(base)
+        for key, value in overlay.items():
+            current = result.get(key)
+            if isinstance(current, dict) and isinstance(value, dict):
+                result[key] = cls._deep_merge(current, value)
+            else:
+                result[key] = copy.deepcopy(value)
+        return result
 
     def update_storages(
         self, node_id: str, settings: StorageSettingsDocument
@@ -165,7 +228,16 @@ class CaptureNodeProcessManager:
             names = {item.name for item in settings.items}
             maintenance = candidate.get("maintenance")
             removed_retention_targets: list[str] = []
-            if isinstance(maintenance, dict):
+            if settings.retention is not None:
+                maintenance = maintenance if isinstance(maintenance, dict) else {}
+                candidate["maintenance"] = {
+                    **maintenance,
+                    "interval_seconds": maintenance.get("interval_seconds", 86400),
+                    "retention": [
+                        item.model_dump(mode="json") for item in settings.retention
+                    ],
+                }
+            elif isinstance(maintenance, dict):
                 retention = maintenance.get("retention", [])
                 if isinstance(retention, list):
                     retained = []
@@ -201,6 +273,11 @@ class CaptureNodeProcessManager:
             if not self.nodes:
                 raise ValueError("there are no managed CaptureNodes")
             serialized = [item.model_dump(mode="json") for item in settings.items]
+            serialized_retention = (
+                [item.model_dump(mode="json") for item in settings.retention]
+                if settings.retention is not None
+                else None
+            )
             names = {item.name for item in settings.items}
             updates: list[tuple[NodeDefinition, Path, bytes, dict[str, Any]]] = []
             removed_by_node: dict[str, list[str]] = {}
@@ -228,7 +305,14 @@ class CaptureNodeProcessManager:
                 candidate = {**previous, "storages": node_storages}
                 removed: list[str] = []
                 maintenance = candidate.get("maintenance")
-                if isinstance(maintenance, dict):
+                if serialized_retention is not None:
+                    maintenance = maintenance if isinstance(maintenance, dict) else {}
+                    candidate["maintenance"] = {
+                        **maintenance,
+                        "interval_seconds": maintenance.get("interval_seconds", 86400),
+                        "retention": copy.deepcopy(serialized_retention),
+                    }
+                elif isinstance(maintenance, dict):
                     retention = maintenance.get("retention", [])
                     if isinstance(retention, list):
                         retained = []

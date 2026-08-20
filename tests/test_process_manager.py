@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from pi_node_supervisor.models import (
+    CaptureNodeSettings,
     CaptureScheduleSettings,
     NodeRegistryDocument,
     StorageSettingsDocument,
@@ -219,6 +220,55 @@ def test_storage_update_restarts_children_and_removes_orphan_retention(tmp_path:
     manager.stop()
 
 
+def test_storage_update_can_create_retention_configuration(tmp_path: Path):
+    executable = tmp_path / "capture-node-web"
+    executable.write_text("#!/bin/sh\n", encoding="utf-8")
+    executable.chmod(0o700)
+    config = tmp_path / "camera.json"
+    config.write_text(
+        json.dumps(
+            {
+                "camera": {"backend": "test"},
+                "storages": [
+                    {"type": "file", "name": "local", "directory": "old"}
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    manager = CaptureNodeProcessManager(
+        managed_registry(config),
+        executable,
+        RuntimeStore(tmp_path / "state.db"),
+        process_factory=lambda arguments, _cwd: FakeProcess(arguments),
+        health_check=lambda _node: {"status": "running"},
+    )
+    manager.start()
+
+    manager.update_storages(
+        "camera0",
+        StorageSettingsDocument.model_validate(
+            {
+                "items": [
+                    {
+                        "type": "file",
+                        "name": "local",
+                        "directory": "captures/camera0",
+                    }
+                ],
+                "retention": [{"target": "local", "max_age_days": 7}],
+            }
+        ),
+    )
+
+    updated = json.loads(config.read_text(encoding="utf-8"))
+    assert updated["maintenance"] == {
+        "interval_seconds": 86400,
+        "retention": [{"target": "local", "max_age_days": 7}],
+    }
+    manager.stop()
+
+
 def test_failed_storage_update_restores_previous_configuration(tmp_path: Path):
     executable = tmp_path / "capture-node-web"
     executable.write_text("#!/bin/sh\n", encoding="utf-8")
@@ -409,4 +459,70 @@ def test_common_storage_expands_camera_template_for_all_nodes(tmp_path: Path):
     assert result["scope"] == "common"
     assert result["restarted_nodes"] == ["camera0", "camera1"]
     assert len(processes) == 4
+    manager.stop()
+
+
+def test_capture_node_settings_merge_common_and_node_overlays(tmp_path: Path):
+    executable = tmp_path / "capture-node-web"
+    executable.write_text("#!/bin/sh\n", encoding="utf-8")
+    executable.chmod(0o700)
+    configs = [tmp_path / "camera0.json", tmp_path / "camera1.json"]
+    for index, path in enumerate(configs):
+        path.write_text(
+            json.dumps(
+                {
+                    "camera": {"camera_num": index},
+                    "capture": {"params": {"gain": index}},
+                }
+            ),
+            encoding="utf-8",
+        )
+    processes: list[FakeProcess] = []
+
+    def spawn(arguments: list[str], _working_directory: Path | None) -> FakeProcess:
+        process = FakeProcess(arguments)
+        processes.append(process)
+        return process
+
+    manager = CaptureNodeProcessManager(
+        dual_managed_registry(*configs),
+        executable,
+        RuntimeStore(tmp_path / "state.db"),
+        process_factory=spawn,
+        health_check=lambda _node: {"status": "running"},
+    )
+    manager.start()
+    result = manager.apply_settings_overlays(
+        CaptureNodeSettings.model_validate(
+            {
+                "common": {
+                    "capture": {
+                        "params": {
+                            "horizontal_flip": True,
+                            "vertical_flip": True,
+                        }
+                    }
+                },
+                "nodes": {
+                    "camera1": {"capture": {"params": {"vertical_flip": False}}}
+                },
+            }
+        ),
+        lambda: {"id": 9},
+    )
+
+    first = json.loads(configs[0].read_text(encoding="utf-8"))
+    second = json.loads(configs[1].read_text(encoding="utf-8"))
+    assert first["capture"]["params"] == {
+        "gain": 0,
+        "horizontal_flip": True,
+        "vertical_flip": True,
+    }
+    assert second["capture"]["params"] == {
+        "gain": 1,
+        "horizontal_flip": True,
+        "vertical_flip": False,
+    }
+    assert result["updated_nodes"] == ["camera0", "camera1"]
+    assert result["revision"] == {"id": 9}
     manager.stop()

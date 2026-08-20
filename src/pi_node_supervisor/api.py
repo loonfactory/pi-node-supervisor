@@ -23,6 +23,7 @@ from .adapters import PreviewByteStream
 from .errors import ApplyError, PersistenceError, PlanningError
 from .executor import ExecutionEngine, ExecutionWorker
 from .models import (
+    CaptureNodeSettings,
     CaptureScheduleSettings,
     CaptureScheduleUpdate,
     DataRecord,
@@ -74,6 +75,11 @@ class ProcessManager(Protocol):
     def apply_native_schedules(
         self,
         settings_by_node: dict[str, Any],
+        activate: Callable[[], dict[str, Any]],
+    ) -> dict[str, Any]: ...
+    def apply_settings_overlays(
+        self,
+        settings: CaptureNodeSettings,
         activate: Callable[[], dict[str, Any]],
     ) -> dict[str, Any]: ...
 
@@ -266,11 +272,40 @@ def create_app(
 
     @app.post("/api/revisions/apply", dependencies=[Depends(authenticated)])
     async def apply_draft() -> dict[str, Any]:
-        revision = service.apply_draft()
+        draft_document = service.draft()
+        if draft_document is None:
+            raise HTTPException(status_code=404, detail="draft does not exist")
+        settings = CaptureNodeSettings.model_validate(
+            draft_document.get("capture_node_settings", {})
+        )
+        applied = None
+        if settings.common or settings.nodes:
+            if process_manager is None:
+                raise HTTPException(
+                    status_code=503,
+                    detail="managed CaptureNode configuration is disabled",
+                )
+            try:
+                applied = process_manager.apply_settings_overlays(
+                    settings, service.apply_draft
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+            except CaptureProcessError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+            revision = applied["revision"]
+        else:
+            revision = service.apply_draft()
         if engine is not None:
             engine.runtime.append_event(
                 "configuration.revision_applied",
-                payload={"revision_id": revision["id"], "source": "advanced-json"},
+                payload={
+                    "revision_id": revision["id"],
+                    "source": "advanced-json",
+                    "capture_node_updates": (
+                        applied["updated_nodes"] if applied is not None else []
+                    ),
+                },
             )
             active_document = service.active() or {}
             empty_nodes = sorted(
@@ -289,6 +324,26 @@ def create_app(
                     },
                 )
         return revision
+
+    @app.get(
+        "/api/settings/capture-nodes",
+        dependencies=[Depends(authenticated)],
+    )
+    async def capture_node_settings_export() -> dict[str, Any]:
+        if process_manager is None:
+            raise HTTPException(status_code=503, detail="managed process configuration is disabled")
+        return {
+            "common": {},
+            "nodes": {
+                node.id: {
+                    key: value
+                    for key, value in process_manager.camera_configuration(node.id).items()
+                    if key != "node_id"
+                }
+                for node in service.registry
+                if node.managed_capture is not None
+            },
+        }
 
     @app.get("/api/revisions", dependencies=[Depends(authenticated)])
     async def revisions() -> dict[str, Any]:
@@ -353,6 +408,9 @@ def create_app(
     ) -> dict[str, Any]:
         if engine is None:
             return {"items": [], "total": 0, "limit": limit, "offset": offset}
+        # CaptureNode owns the timer and files. Refresh its catalog only when
+        # the user asks to view data instead of polling every node continuously.
+        engine.sync_data()
         records = engine.runtime.list_data(limit=limit, offset=offset)
         endpoints = {node.id: node.endpoint for node in service.registry}
         return {

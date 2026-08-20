@@ -167,6 +167,11 @@ if [[ "$enable_timer" == true ]]; then
   systemctl restart pi-power-manager-interlock.service
   systemctl start pi-power-manager.timer
   latched_mode=$(cat /run/pi-power-manager/gpio26-mode 2>/dev/null || printf 'blocked')
+  if [[ "$latched_mode" != enabled ]]; then
+    systemctl disable --now pi-power-manager.timer >/dev/null 2>&1 || true
+    printf 'GPIO26 startup interlock is %s; timer was disabled. Remove the jumper and rerun with --enable.\n' "$latched_mode" >&2
+    exit 1
+  fi
   printf 'pi-power-manager installed; timer enabled; startup mode=%s.\n' "$latched_mode"
 else
   systemctl disable --now pi-power-manager.timer >/dev/null 2>&1 || true

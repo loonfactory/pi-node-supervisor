@@ -1,15 +1,28 @@
 const state = { dashboard: null, runs: [], events: [], eventsTotal: 0, eventsOffset: 0, eventsPageSize: 25, data: [], dataTotal: 0, dataOffset: 0, dataPageSize: 25, nodes: [], preview: null, configuration: null, settingsLoaded: false, cameraConfigs: {}, storageDraft: [], captureSchedule: null };
 const previewUrls = new Map();
 const previewStreams = new Map();
+let dataViewUrl = null;
 const DEFAULT_CAPTURE_RANGE = { start: "09:00", intervalMinutes: 10, end: "18:00" };
 const $ = (selector) => document.querySelector(selector);
 const token = () => sessionStorage.getItem("supervisor-token") || "";
+
+function friendlyError(error) {
+  const message = error?.message || String(error);
+  return error instanceof TypeError && /fetch|network/i.test(message)
+    ? "장치 연결이 잠시 끊겼습니다. 잠시 후 다시 갱신해 주세요."
+    : message;
+}
 
 async function api(path, options = {}) {
   const headers = { ...(options.headers || {}) };
   if (token()) headers["X-Supervisor-Token"] = token();
   if (options.body && !headers["Content-Type"]) headers["Content-Type"] = "application/json";
-  const response = await fetch(path, { ...options, headers });
+  let response;
+  try {
+    response = await fetch(path, { ...options, headers });
+  } catch (error) {
+    throw new Error(friendlyError(error));
+  }
   let body = null;
   try { body = await response.json(); } catch { body = {}; }
   if (!response.ok) {
@@ -25,6 +38,7 @@ async function api(path, options = {}) {
 }
 
 function toast(message, error = false) {
+  if (error) console.warn("[Pi Node Supervisor]", message);
   const element = $("#toast");
   element.textContent = message;
   element.className = error ? "show error" : "show";
@@ -147,11 +161,13 @@ function renderDashboard() {
   if (!dashboard) return;
   const runtime = dashboard.runtime || { runs: 0, failed_runs: 0, events: 0, data: 0 };
   const active = dashboard.revision.active_revision;
+  const cameraNodes = (dashboard.nodes || []).filter(node => node.node_id?.startsWith("camera"));
+  const healthyCameras = cameraNodes.filter(node => node.healthy).length;
   $("#metric-grid").innerHTML = [
     ["적용 중인 설정", active ? `#${active.id}` : "없음", active ? "good" : "alert"],
-    ["전체 실행", runtime.runs, ""],
-    ["주의 실행", runtime.failed_runs, runtime.failed_runs ? "alert" : "good"],
-    ["색인 데이터", runtime.data, ""],
+    ["연결된 카메라", `${healthyCameras}/${cameraNodes.length}`, healthyCameras === cameraNodes.length ? "good" : "alert"],
+    ["수집 데이터", runtime.data, ""],
+    ["촬영 오류", runtime.failed_runs, runtime.failed_runs ? "alert" : "good"],
   ].map(([label, value, cls]) => `<article class="metric"><span>${label}</span><strong class="${cls}">${value}</strong></article>`).join("");
 
   const activePlan = dashboard.active_plan || { activities: [], power_windows: [] };
@@ -163,9 +179,17 @@ function renderDashboard() {
   renderRuns("#recent-runs", state.runs.slice(0, 5));
 }
 
-function renderRuns(target = "#runs-table", items = state.runs) {
-  const rows = items.map(run => `<tr><td>${status(run.status)}</td><td><strong>${safe(run.activity_id)}</strong><br><code>${safe(run.run_id.slice(0, 12))}</code></td><td>${safe(run.node_id)}</td><td>${fmt(run.scheduled_at)}</td><td>${safe(run.error || run.external_id || "—")}</td></tr>`);
-  $(target).innerHTML = table(["상태", "업무 / run", "노드", "예정 시각", "결과"], rows);
+function renderRuns(target, items) {
+  const rows = items.map(run => {
+    const nativeCapture = run.activity_id.startsWith("native-");
+    const label = nativeCapture ? "정기 촬영" : run.activity_id;
+    const indexed = run.result?.indexed_data_count;
+    const result = run.error || (run.status === "succeeded"
+      ? `촬영 완료${Number.isInteger(indexed) ? ` · 파일 ${indexed}개` : ""}`
+      : run.external_id || "—");
+    return `<tr><td>${status(run.status)}</td><td><strong>${safe(label)}</strong><br><code>${safe(run.run_id.slice(0, 12))}</code></td><td>${safe(run.node_id)}</td><td>${fmt(run.scheduled_at)}</td><td>${safe(result)}</td></tr>`;
+  });
+  $(target).innerHTML = table(["상태", "작업 / run", "노드", "실행 시각", "결과"], rows);
 }
 function renderEvents() {
   const labels = {
@@ -208,9 +232,10 @@ function renderData() {
   const kindLabels = { image: "이미지", "soil-moisture": "토양수분" };
   const rows = state.data.map(item => {
     const location = item.storage_location || item.summary || "—";
-    const kind = item.kind !== "image" ? `<small>${safe(kindLabels[item.kind] || item.kind)}</small>` : "";
+    const isDng = item.media_type === "image/x-adobe-dng" || /\.dng$/i.test(location);
+    const kind = isDng ? "<small>DNG RAW</small>" : item.kind !== "image" ? `<small>${safe(kindLabels[item.kind] || item.kind)}</small>` : "";
     const actions = item.original_available
-      ? `<div class="data-actions"><button type="button" class="ghost" data-view-data="${safe(item.data_id)}">보기</button><button type="button" class="ghost" data-download-data="${safe(item.data_id)}" data-data-name="${safe(location.split("/").at(-1) || "original")}">다운로드</button></div>`
+      ? `<div class="data-actions">${isDng ? "" : `<button type="button" class="ghost" data-view-data="${safe(item.data_id)}">보기</button>`}<button type="button" class="ghost" data-download-data="${safe(item.data_id)}" data-data-name="${safe(location.split("/").at(-1) || "original")}">다운로드</button></div>`
       : '<span class="help">접근 불가</span>';
     return `<tr><td>${fmt(item.captured_at)}</td><td><strong>${safe(item.node_id)}</strong>${kind}</td><td>${formatBytes(item.size)}</td><td><code class="data-location">${safe(location)}</code></td><td>${actions}</td></tr>`;
   });
@@ -247,7 +272,6 @@ async function loadData() {
 }
 
 async function accessDataOriginal(dataId, { download = false, filename = "original" } = {}) {
-  const popup = download ? null : window.open("about:blank", "_blank", "noopener");
   try {
     const response = await fetch(`/api/data/content?data_id=${encodeURIComponent(dataId)}&download=${download}`, {
       headers: { "X-Supervisor-Token": token() },
@@ -264,20 +288,23 @@ async function accessDataOriginal(dataId, { download = false, filename = "origin
       link.href = objectUrl;
       link.download = filename;
       link.click();
-    } else if (popup) {
-      popup.location = objectUrl;
     } else {
-      const link = document.createElement("a");
-      link.href = objectUrl;
-      link.target = "_blank";
-      link.rel = "noopener";
-      link.click();
+      if (dataViewUrl) URL.revokeObjectURL(dataViewUrl);
+      dataViewUrl = objectUrl;
+      $("#data-view-title").textContent = filename;
+      $("#data-view-image").src = objectUrl;
+      $("#data-view-dialog").showModal();
+      return;
     }
     setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
   } catch (error) {
-    if (popup) popup.close();
-    toast(error.message, true);
+    toast(friendlyError(error), true);
   }
+}
+
+function closeDataViewer() {
+  const dialog = $("#data-view-dialog");
+  if (dialog.open) dialog.close();
 }
 function renderNodes() {
   $("#node-grid").innerHTML = state.nodes.length ? state.nodes.map(node => `<article class="node-card"><div class="panel-title"><h2>${safe(node.id)}</h2>${status(node.health?.healthy ? "healthy" : "unhealthy")}</div><dl><dt>종류</dt><dd>${safe(node.kind)}</dd><dt>Endpoint</dt><dd>${safe(node.endpoint || "—")}</dd><dt>업무</dt><dd>${safe(node.activity_types.join(", "))}</dd><dt>프로필</dt><dd>${safe(node.profiles.join(", ") || "—")}</dd><dt>상태</dt><dd>${safe(node.health?.error || node.health?.status || "어댑터 없음")}</dd></dl></article>`).join("") : '<div class="empty">등록된 노드가 없습니다.</div>';
@@ -578,7 +605,11 @@ async function loadCameraConfiguration(nodeId = $("#storage-camera").value) {
     configurations.forEach(configuration => { state.cameraConfigs[configuration.node_id] = configuration; });
     if ($("#storage-camera").value !== nodeId) return;
     const first = configurations[0] || { storages: [] };
-    state.storageDraft = structuredClone(first.storages || []);
+    const withRetention = configuration => {
+      const retention = new Map((configuration.maintenance?.retention || []).map(rule => [rule.target, rule.max_age_days]));
+      return (configuration.storages || []).map(item => ({ ...item, retention_days: retention.get(item.name) || null }));
+    };
+    state.storageDraft = structuredClone(withRetention(first));
     if (nodeId === "common") {
       state.storageDraft = state.storageDraft.map(item => {
         const value = { ...item };
@@ -586,7 +617,7 @@ async function loadCameraConfiguration(nodeId = $("#storage-camera").value) {
         if (typeof value.remote_directory === "string") value.remote_directory = value.remote_directory.replaceAll(first.node_id, "{camera}");
         return value;
       });
-      const normalized = configuration => JSON.stringify((configuration.storages || []).map(item => {
+      const normalized = configuration => JSON.stringify(withRetention(configuration).map(item => {
         const value = { ...item };
         if (typeof value.directory === "string") value.directory = value.directory.replaceAll(configuration.node_id, "{camera}");
         if (typeof value.remote_directory === "string") value.remote_directory = value.remote_directory.replaceAll(configuration.node_id, "{camera}");
@@ -617,7 +648,7 @@ function renderStorageList() {
   $("#storage-list").innerHTML = state.storageDraft.length ? state.storageDraft.map((item, index) => `
     <div class="storage-item">
       <div class="storage-icon">${item.type === "file" ? "DIR" : item.type.toUpperCase()}</div>
-      <div><strong>${safe(item.name)}</strong><span>${safe(storageDescription(item))}</span><small>${item.layout === "daily" ? "날짜별 폴더" : "단일 폴더"}</small></div>
+      <div><strong>${safe(item.name)}</strong><span>${safe(storageDescription(item))}</span><small>${item.layout === "daily" ? "날짜별 폴더" : "단일 폴더"} · ${item.retention_days ? `${safe(item.retention_days)}일 후 자동 삭제` : "자동 삭제 사용 안 함"}</small></div>
       <div class="storage-item-actions"><button class="ghost" data-edit-storage="${index}">수정</button><button class="text-button danger-text" data-remove-storage="${index}">삭제</button></div>
     </div>`).join("") : '<div class="friendly-empty"><strong>저장소가 없습니다.</strong><span>촬영 결과는 저장되지 않습니다. 저장소를 하나 이상 추가하세요.</span></div>';
 }
@@ -629,18 +660,21 @@ function updateStorageFieldVisibility() {
   document.querySelectorAll(".storage-sftp-field").forEach(item => item.hidden = type !== "sftp");
   document.querySelectorAll(".storage-ftps-field").forEach(item => item.hidden = type !== "ftps");
   document.querySelectorAll(".storage-secret-field").forEach(item => item.hidden = type === "file");
+  $("#storage-retention-days").disabled = type !== "file" || !$("#storage-retention-enabled").checked;
   if (type === "sftp" && !$("#storage-port").value) $("#storage-port").value = "22";
   if (type === "ftps" && !$("#storage-port").value) $("#storage-port").value = "21";
 }
 
 function openStorageEditor(index = -1) {
   const target = $("#storage-camera").value;
-  const item = index >= 0 ? state.storageDraft[index] : { type: "file", name: "", directory: target === "common" ? "captures/{camera}" : `captures/${target}`, layout: "daily" };
+  const item = index >= 0 ? state.storageDraft[index] : { type: "file", name: "", directory: target === "common" ? "captures/{camera}" : `captures/${target}`, layout: "daily", retention_days: 7 };
   $("#storage-edit-index").value = String(index);
   $("#storage-type").value = item.type;
   $("#storage-name").value = item.name || "";
   $("#storage-layout").value = item.layout || "daily";
   $("#storage-directory").value = item.directory || "";
+  $("#storage-retention-enabled").checked = Number.isInteger(item.retention_days) && item.retention_days > 0;
+  $("#storage-retention-days").value = item.retention_days || 7;
   $("#storage-host").value = item.host || "";
   $("#storage-port").value = item.port || "";
   $("#storage-username").value = item.username || "";
@@ -663,7 +697,9 @@ function storageFromEditor() {
   if (type === "file") {
     const directory = $("#storage-directory").value.trim();
     if (!directory) throw new Error("저장 폴더를 입력해 주세요.");
-    return { ...current, type, name, directory, layout };
+    const retention_days = $("#storage-retention-enabled").checked ? Number($("#storage-retention-days").value) : null;
+    if (retention_days !== null && (!Number.isInteger(retention_days) || retention_days <= 0)) throw new Error("보존 기간은 1일 이상의 정수여야 합니다.");
+    return { ...current, type, name, directory, layout, retention_days };
   }
   const host = $("#storage-host").value.trim();
   const username = $("#storage-username").value.trim();
@@ -789,7 +825,8 @@ async function startCameraStream(nodeId) {
     }
   } catch (error) {
     if (error.name !== "AbortError") {
-      statusElement.textContent = `스트림 실패 · ${error.message}`;
+      console.warn(`[Pi Node Supervisor] ${nodeId} preview stream`, error);
+      statusElement.textContent = `스트림 실패 · ${friendlyError(error)}`;
       card.querySelector(".camera-placeholder").textContent = "카메라 스트림을 가져올 수 없습니다.";
     }
   } finally {
@@ -814,7 +851,7 @@ async function refresh() {
     loadConfigurationIntoForm(configuration);
     renderCaptureCameraOptions();
     renderStorageCameraOptions();
-    renderDashboard(); renderRuns(); renderEvents(); renderData(); renderNodes(); renderCameras(); startCameraStreams();
+    renderDashboard(); renderEvents(); renderData(); renderNodes(); renderCameras(); startCameraStreams();
   } catch (error) {
     $("#connection").textContent = "연결 실패"; $("#connection").className = "pill bad";
     toast(error.message, true);
@@ -825,6 +862,7 @@ document.querySelectorAll(".nav-item").forEach(button => button.addEventListener
   document.querySelectorAll(".nav-item, .view").forEach(item => item.classList.remove("active"));
   button.classList.add("active"); $(`#${button.dataset.view}`).classList.add("active");
   if (button.dataset.view === "cameras") startCameraStreams(); else stopCameraStreams();
+  if (["data", "events"].includes(button.dataset.view)) refresh();
   if (button.dataset.view === "settings") {
     renderCaptureCameraOptions();
     renderStorageCameraOptions();
@@ -839,9 +877,19 @@ $("#save-token").addEventListener("click", event => { event.preventDefault(); se
 $("#preview-plan").addEventListener("click", async () => { try { state.preview = await api("/api/plan/preview", { method: "POST", body: $("#config-editor").value }); toast("계획 검증이 완료되었습니다."); } catch (error) { toast(error.message, true); } });
 $("#save-draft").addEventListener("click", async () => { try { await api("/api/config/draft", { method: "PUT", body: $("#config-editor").value }); toast("Draft를 저장했습니다."); } catch (error) { toast(error.message, true); } });
 $("#load-draft").addEventListener("click", async () => { try { $("#config-editor").value = JSON.stringify(await api("/api/config/draft"), null, 2); } catch (error) { toast(error.message, true); } });
+$("#load-capture-node-settings").addEventListener("click", async () => {
+  try {
+    const configuration = JSON.parse($("#config-editor").value);
+    configuration.capture_node_settings = await api("/api/settings/capture-nodes");
+    $("#config-editor").value = JSON.stringify(configuration, null, 2);
+    toast("현재 CaptureNode 설정을 편집기에 가져왔습니다. 저장하거나 적용하기 전 내용을 확인하세요.");
+  } catch (error) {
+    toast(error instanceof SyntaxError ? "먼저 편집기의 JSON 형식을 확인하세요." : error.message, true);
+  }
+});
 $("#apply-draft").addEventListener("click", async () => { if (!confirm("검증된 Draft를 새 Active revision으로 적용할까요?")) return; try { const result = await api("/api/revisions/apply", { method: "POST" }); toast(`Revision #${result.id}을 적용했습니다.`); refresh(); } catch (error) { toast(error.message, true); } });
 $("#refresh-dashboard").addEventListener("click", async () => { await refresh(); toast("노드 상태를 갱신했습니다."); });
-$("#sync-data").addEventListener("click", async () => { try { const result = await api("/api/data/sync", { method: "POST" }); toast(`${result.indexed}개 메타데이터를 색인했습니다.`); refresh(); } catch (error) { toast(error.message, true); } });
+$("#sync-data").addEventListener("click", async () => { try { const result = await api("/api/data/sync", { method: "POST" }); toast(result.new_data ? `새 데이터 ${result.new_data}개를 반영했습니다.` : "이미 최신 상태입니다."); refresh(); } catch (error) { toast(error.message, true); } });
 $("#refresh-previews").addEventListener("click", startCameraStreams);
 $("#events-page-size").addEventListener("change", async event => {
   state.eventsPageSize = Number(event.target.value);
@@ -873,9 +921,23 @@ $("#data-next").addEventListener("click", async () => {
 });
 $("#data-table").addEventListener("click", event => {
   const view = event.target.closest("[data-view-data]");
-  if (view) { accessDataOriginal(view.dataset.viewData); return; }
+  if (view) {
+    const item = state.data.find(candidate => candidate.data_id === view.dataset.viewData);
+    const location = item?.storage_location || item?.summary || "원본 이미지";
+    accessDataOriginal(view.dataset.viewData, { filename: location.split("/").at(-1) || "원본 이미지" });
+    return;
+  }
   const download = event.target.closest("[data-download-data]");
   if (download) accessDataOriginal(download.dataset.downloadData, { download: true, filename: download.dataset.dataName });
+});
+$("#close-data-view").addEventListener("click", closeDataViewer);
+$("#data-view-dialog").addEventListener("click", event => {
+  if (event.target === event.currentTarget) closeDataViewer();
+});
+$("#data-view-dialog").addEventListener("close", () => {
+  $("#data-view-image").removeAttribute("src");
+  if (dataViewUrl) URL.revokeObjectURL(dataViewUrl);
+  dataViewUrl = null;
 });
 $("#camera-grid").addEventListener("click", event => {
   const button = event.target.closest("[data-preview-refresh]");
@@ -997,6 +1059,7 @@ $("#storage-type").addEventListener("change", () => {
   $("#storage-port").value = $("#storage-type").value === "sftp" ? "22" : $("#storage-type").value === "ftps" ? "21" : "";
   updateStorageFieldVisibility();
 });
+$("#storage-retention-enabled").addEventListener("change", updateStorageFieldVisibility);
 $("#cancel-storage").addEventListener("click", () => { $("#storage-editor").hidden = true; });
 $("#storage-editor").addEventListener("submit", event => {
   event.preventDefault();
@@ -1028,7 +1091,11 @@ $("#apply-storages").addEventListener("click", async () => {
   $("#storage-restart-note").textContent = "설정을 검증하고 카메라를 재시작하는 중입니다…";
   try {
     const path = nodeId === "common" ? "/api/settings/cameras/storages" : `/api/nodes/${encodeURIComponent(nodeId)}/storages`;
-    const result = await api(path, { method: "PUT", body: JSON.stringify({ items: state.storageDraft }) });
+    const items = state.storageDraft.map(({ retention_days, ...item }) => item);
+    const retention = state.storageDraft
+      .filter(item => item.type === "file" && item.retention_days)
+      .map(item => ({ target: item.name, max_age_days: item.retention_days }));
+    const result = await api(path, { method: "PUT", body: JSON.stringify({ items, retention }) });
     await loadCameraConfiguration(nodeId);
     $("#storage-restart-note").textContent = `적용 완료 · ${result.restarted_nodes.join(", ")} 정상 재시작`;
     toast(`${targetLabel} 저장소를 안전하게 적용했습니다.`);

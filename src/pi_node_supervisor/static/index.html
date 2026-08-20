@@ -24,7 +24,6 @@
         <button class="nav-item active" data-view="dashboard">대시보드</button>
         <button class="nav-item" data-view="cameras">카메라</button>
         <button class="nav-item" data-view="settings">설정</button>
-        <button class="nav-item" data-view="runs">실행 이력</button>
         <button class="nav-item" data-view="events">이벤트</button>
         <button class="nav-item" data-view="data">데이터</button>
         <button class="nav-item" data-view="nodes">노드</button>
@@ -38,7 +37,7 @@
             <article class="panel"><div class="panel-title"><h2>전원 타임라인</h2><span>Active revision</span></div><div id="power-timeline" class="timeline empty">활성 계획이 없습니다.</div></article>
             <article class="panel"><div class="panel-title"><h2>노드 상태</h2><span>Live</span></div><div id="node-summary" class="stack empty">등록된 실행 노드가 없습니다.</div></article>
           </div>
-          <article class="panel"><div class="panel-title"><h2>최근 실행</h2><button class="text-button" data-go="runs">전체 보기</button></div><div id="recent-runs"></div></article>
+          <article class="panel"><div class="panel-title"><h2>최근 촬영</h2><button class="text-button" data-go="data">저장 데이터 보기</button></div><div id="recent-runs"></div></article>
         </section>
 
         <section id="cameras" class="view">
@@ -112,6 +111,8 @@
                   <label class="field"><span>표시 이름</span><input id="storage-name" required placeholder="예: local 또는 archive" /></label>
                   <label class="field"><span>폴더 구성</span><select id="storage-layout"><option value="daily">날짜별 폴더</option><option value="flat">한 폴더에 저장</option></select></label>
                   <label class="field storage-file-field"><span>저장 폴더</span><input id="storage-directory" placeholder="예: captures/camera0" /></label>
+                  <label class="field storage-file-field checkbox-field"><input id="storage-retention-enabled" type="checkbox" /><span>기간이 지난 파일 자동 삭제</span></label>
+                  <label class="field storage-file-field"><span>보존 기간(일)</span><input id="storage-retention-days" type="number" min="1" max="36500" step="1" value="7" /></label>
                   <label class="field storage-remote-field"><span>서버 주소</span><input id="storage-host" placeholder="storage.example.local" /></label>
                   <label class="field storage-remote-field"><span>포트</span><input id="storage-port" type="number" min="1" max="65535" /></label>
                   <label class="field storage-remote-field"><span>사용자 이름</span><input id="storage-username" /></label>
@@ -120,6 +121,7 @@
                   <label class="field storage-secret-field"><span>비밀번호 환경변수 이름</span><input id="storage-password-env" placeholder="CAMERA_STORAGE_PASSWORD" /></label>
                   <label class="field storage-ftps-field checkbox-field"><input id="storage-verify-tls" type="checkbox" checked /><span>TLS 인증서 검증</span></label>
                 </div>
+                <p class="field-help storage-file-field">CaptureNode가 하루에 한 번 확인하여 보존 기간이 지난 파일을 자동으로 삭제합니다.</p>
                 <p class="field-help storage-secret-field">비밀번호 값은 화면이나 JSON에 저장하지 않습니다. 지정한 환경변수는 장치의 보호된 환경 파일에서 제공해야 합니다.</p>
                 <div class="settings-actions"><button id="cancel-storage" type="button" class="ghost">취소</button><button type="submit">목록에 저장</button></div>
               </form>
@@ -129,15 +131,14 @@
             <details class="panel advanced-settings">
               <summary>고급 설정 · JSON 직접 편집</summary>
               <p class="help">센서 업무나 유지보수 창처럼 일반 화면에 없는 기능이 필요할 때만 사용하세요.</p>
-              <div class="button-row"><button id="load-draft" class="ghost">저장된 초안</button><button id="preview-plan" class="ghost">JSON 검증</button><button id="save-draft" class="ghost">초안 저장</button><button id="apply-draft" class="danger">JSON 적용</button></div>
+              <div class="button-row"><button id="load-draft" class="ghost">저장된 초안</button><button id="load-capture-node-settings" class="ghost">현재 CaptureNode 설정 가져오기</button><button id="preview-plan" class="ghost">JSON 검증</button><button id="save-draft" class="ghost">초안 저장</button><button id="apply-draft" class="danger">JSON 적용</button></div>
               <textarea id="config-editor" spellcheck="false" aria-label="고급 업무 설정 JSON"></textarea>
             </details>
           </div>
         </section>
 
-        <section id="runs" class="view"><div class="page-heading"><div><p class="eyebrow">EXECUTION</p><h1>실행 이력</h1><p class="page-description">촬영 요청이 언제 실행됐고 정상 완료됐는지 확인하는 기록입니다.</p></div></div><article class="panel"><div id="runs-table"></div></article></section>
         <section id="events" class="view"><div class="page-heading"><div><p class="eyebrow">AUDIT LOG</p><h1>이벤트</h1><p class="page-description">카메라 재시작, 설정 변경, 오류처럼 장치에서 일어난 일을 시간순으로 보여줍니다.</p></div></div><article class="panel events-panel"><div id="events-table"></div><div id="events-pagination" class="pagination"><label>페이지당 <select id="events-page-size"><option value="25">25건</option><option value="50">50건</option><option value="100">100건</option></select></label><span id="events-page-info">0건</span><div class="pagination-actions"><button id="events-prev" type="button" class="ghost">이전</button><button id="events-next" type="button" class="ghost">다음</button></div></div></article></section>
-        <section id="data" class="view"><div class="page-heading"><div><p class="eyebrow">DATA CATALOG</p><h1>수집 데이터</h1><p class="page-description">촬영 파일과 센서 측정 기록을 시간순으로 확인합니다.</p></div><button id="sync-data">저장 데이터 다시 찾기</button></div><article class="panel data-panel"><div id="data-table"></div><div id="data-pagination" class="pagination"><label>페이지당 <select id="data-page-size"><option value="25">25건</option><option value="50">50건</option><option value="100">100건</option></select></label><span id="data-page-info">0건</span><div class="pagination-actions"><button id="data-prev" type="button" class="ghost">이전</button><button id="data-next" type="button" class="ghost">다음</button></div></div></article></section>
+        <section id="data" class="view"><div class="page-heading"><div><p class="eyebrow">DATA CATALOG</p><h1>수집 데이터</h1><p class="page-description">촬영 파일과 센서 측정 기록을 자동으로 반영합니다.</p></div><button id="sync-data" class="ghost">데이터 갱신</button></div><article class="panel data-panel"><div id="data-table"></div><div id="data-pagination" class="pagination"><label>페이지당 <select id="data-page-size"><option value="25">25건</option><option value="50">50건</option><option value="100">100건</option></select></label><span id="data-page-info">0건</span><div class="pagination-actions"><button id="data-prev" type="button" class="ghost">이전</button><button id="data-next" type="button" class="ghost">다음</button></div></div></article></section>
         <section id="nodes" class="view"><div class="page-heading"><div><p class="eyebrow">MANAGED NODES</p><h1>연결된 장치</h1><p class="page-description">Supervisor가 관리하는 카메라와 실행 기능의 연결 상태입니다.</p></div></div><div id="node-grid" class="node-grid"></div></section>
       </main>
     </div>
@@ -149,6 +150,15 @@
         <input id="token-input" type="password" autocomplete="current-password" placeholder="X-Supervisor-Token" />
         <div class="dialog-actions"><button value="cancel" class="ghost">취소</button><button id="save-token" value="default">연결</button></div>
       </form>
+    </dialog>
+    <dialog id="data-view-dialog" class="data-view-dialog" aria-labelledby="data-view-title">
+      <div class="data-view-heading">
+        <strong id="data-view-title">원본 이미지</strong>
+        <button id="close-data-view" type="button" class="ghost">닫기</button>
+      </div>
+      <div class="data-view-canvas">
+        <img id="data-view-image" alt="저장된 원본 이미지" />
+      </div>
     </dialog>
     <div id="toast" role="status" aria-live="polite"></div>
     <script type="module" src="/app.js"></script>

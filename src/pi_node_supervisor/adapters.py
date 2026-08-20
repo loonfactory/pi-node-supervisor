@@ -6,6 +6,7 @@ import json
 import mimetypes
 import time
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, BinaryIO, Iterator, Protocol
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
@@ -13,6 +14,8 @@ from urllib.request import Request, urlopen
 
 from .errors import SupervisorError
 from .models import ActivityPlan, DataRecord, NodeDefinition
+
+_MEDIA_TYPES = {".dng": "image/x-adobe-dng"}
 
 
 class AdapterError(SupervisorError):
@@ -288,7 +291,10 @@ class CaptureNodeClient:
                             kind="image",
                             captured_at=captured_at,
                             uri=f"{self.endpoint}/api/storage/files/{encoded_target}/{encoded_name}",
-                            media_type=mimetypes.guess_type(name)[0],
+                            media_type=(
+                                _MEDIA_TYPES.get(Path(name).suffix.lower())
+                                or mimetypes.guess_type(name)[0]
+                            ),
                             size=size if type(size) is int else None,
                             integrity="available",
                             summary=f"CaptureNode {target}/{name}",
@@ -337,6 +343,11 @@ class CaptureNodeAdapter:
             "terminal_event": terminal,
             "run_id": run_id,
         }
+
+    def capture_events(self) -> list[dict[str, Any]]:
+        """Return recent CaptureNode events for native-timer observation."""
+
+        return self.client.events(page_size=50)
 
     def preview_frame(self) -> tuple[bytes, str]:
         return self.client.preview_frame()

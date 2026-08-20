@@ -46,6 +46,37 @@ def test_configuration_rejects_unknown_keys():
         )
 
 
+def test_capture_node_settings_preserve_native_json_shape():
+    document = SupervisorConfiguration.model_validate(
+        {
+            "schema_version": 1,
+            "timezone": "Asia/Seoul",
+            "capture_node_settings": {
+                "common": {
+                    "capture": {
+                        "params": {
+                            "horizontal_flip": True,
+                            "vertical_flip": True,
+                        }
+                    }
+                },
+                "nodes": {
+                    "camera0": {
+                        "calibration": {
+                            "type": "checkerboard",
+                            "camera_matrix": [[1, 0, 2], [0, 1, 3], [0, 0, 1]],
+                        }
+                    }
+                },
+            },
+        }
+    )
+
+    settings = document.model_dump(mode="json")["capture_node_settings"]
+    assert settings["common"]["capture"]["params"]["horizontal_flip"] is True
+    assert settings["nodes"]["camera0"]["calibration"]["type"] == "checkerboard"
+
+
 def test_configuration_rejects_duplicate_activity_ids():
     activity = {
         "id": "capture",
@@ -169,6 +200,27 @@ def test_storage_settings_accept_supported_storage_types():
         }
     )
     assert [item.type for item in settings.items] == ["file", "sftp", "ftps"]
+
+
+def test_storage_settings_accept_and_validate_retention():
+    settings = StorageSettingsDocument.model_validate(
+        {
+            "items": [
+                {"type": "file", "name": "local", "directory": "captures"}
+            ],
+            "retention": [{"target": "local", "max_age_days": 7}],
+        }
+    )
+    assert settings.retention[0].max_age_days == 7
+    with pytest.raises(ValidationError, match="retention target is not configured"):
+        StorageSettingsDocument.model_validate(
+            {
+                "items": [
+                    {"type": "file", "name": "local", "directory": "captures"}
+                ],
+                "retention": [{"target": "missing", "max_age_days": 7}],
+            }
+        )
 
 
 def test_capture_schedule_supports_capture_node_modes():

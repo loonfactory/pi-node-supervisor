@@ -206,6 +206,26 @@ class RuntimeStore:
             raise PersistenceError(f"run does not exist: {run_id}")
         return self._run_record(row)
 
+    def find_run_by_external_id(
+        self, node_id: str, external_id: str
+    ) -> RunRecord | None:
+        """Return an imported node-owned run without tying it to a revision."""
+
+        try:
+            with self._connect() as connection:
+                row = connection.execute(
+                    """
+                    SELECT * FROM runs
+                    WHERE node_id = ? AND external_id = ?
+                    ORDER BY scheduled_at DESC, run_id DESC
+                    LIMIT 1
+                    """,
+                    (node_id, external_id),
+                ).fetchone()
+        except sqlite3.Error as exc:
+            raise PersistenceError(f"cannot read external run: {exc}") from exc
+        return self._run_record(row) if row is not None else None
+
     def list_runs(self, *, limit: int = 100, offset: int = 0) -> list[RunRecord]:
         if not 1 <= limit <= 500 or offset < 0:
             raise ValueError("invalid run pagination")

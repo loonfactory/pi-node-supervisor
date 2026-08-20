@@ -25,6 +25,8 @@ def test_run_claim_is_idempotent_per_revision_and_activity(tmp_path):
     assert second is None
     completed = store.complete_run(first.run_id, status="succeeded", external_id="cap-1")
     assert completed.status == "succeeded"
+    assert store.find_run_by_external_id("camera0", "cap-1") == completed
+    assert store.find_run_by_external_id("camera1", "cap-1") is None
 
 
 def test_restart_recovery_marks_running_without_replay(tmp_path):

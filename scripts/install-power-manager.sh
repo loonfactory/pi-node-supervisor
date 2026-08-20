@@ -5,7 +5,10 @@ script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 project_root=$(cd -- "$script_dir/.." && pwd)
 power_source=${POWER_MANAGER_SOURCE:-$project_root/../pi-power-manager}
 target=${TARGET:-huintech@192.168.12.7}
-remote_base=${REMOTE_BASE:-/home/huintech/pi-node-supervisor}
+remote_base=${REMOTE_BASE:-}
+nodes_file=${NODES_FILE:-}
+initial_config=${INITIAL_CONFIG:-}
+capture_node_executable=${CAPTURE_NODE_EXECUTABLE:-}
 enable_timer=false
 
 usage() {
@@ -15,8 +18,11 @@ usage() {
     "Installs the privileged RTC service. The timer stays disabled by default." \
     "" \
     "  --target USER@HOST       SSH destination (default: $target)" \
-    "  --remote-base PATH       Supervisor root (default: $remote_base)" \
+    "  --remote-base PATH       Supervisor root (default: /home/TARGET_USER/pi-node-supervisor)" \
     "  --power-source PATH      Local pi-power-manager source" \
+    "  --nodes FILE             Node registry passed to Supervisor deployment" \
+    "  --initial-config FILE    Initial Supervisor configuration" \
+    "  --capture-node-executable PATH  Target CaptureNode Web executable" \
     "  --enable                 Enable automatic shutdown after diagnostics" \
     "  -h, --help               Show this help"
 }
@@ -26,6 +32,9 @@ while (($#)); do
     --target) target=${2:?missing value for --target}; shift 2 ;;
     --remote-base) remote_base=${2:?missing value for --remote-base}; shift 2 ;;
     --power-source) power_source=${2:?missing value for --power-source}; shift 2 ;;
+    --nodes) nodes_file=${2:?missing value for --nodes}; shift 2 ;;
+    --initial-config) initial_config=${2:?missing value for --initial-config}; shift 2 ;;
+    --capture-node-executable) capture_node_executable=${2:?missing value for --capture-node-executable}; shift 2 ;;
     --enable) enable_timer=true; shift ;;
     -h|--help) usage; exit 0 ;;
     *) printf 'Unknown option: %s\n' "$1" >&2; usage >&2; exit 2 ;;
@@ -33,10 +42,14 @@ while (($#)); do
 done
 
 [[ "$target" =~ ^[A-Za-z0-9._-]+@[A-Za-z0-9._:-]+$ ]] || { printf 'Invalid SSH target.\n' >&2; exit 2; }
-[[ "$remote_base" == /* && "$remote_base" != / ]] || { printf 'Invalid remote base.\n' >&2; exit 2; }
 [[ -r "$power_source/pyproject.toml" ]] || { printf 'pi-power-manager source is unavailable.\n' >&2; exit 2; }
 
 operator=${target%@*}
+remote_base=${remote_base:-/home/$operator/pi-node-supervisor}
+[[ "$remote_base" == /* && "$remote_base" != / ]] || { printf 'Invalid remote base.\n' >&2; exit 2; }
+capture_node_executable=${capture_node_executable:-/home/$operator/capture-node/.venv/bin/capture-node-web}
+[[ -z "$nodes_file" || -r "$nodes_file" ]] || { printf 'Node registry is unreadable.\n' >&2; exit 2; }
+[[ -z "$initial_config" || -r "$initial_config" ]] || { printf 'Initial configuration is unreadable.\n' >&2; exit 2; }
 build_dir=$(mktemp -d /tmp/pi-power-manager-build.XXXXXX)
 remote_stage=''
 cleanup() {
@@ -73,9 +86,14 @@ ssh -tt -o ConnectTimeout=10 "$target" \
 
 # Point Supervisor at the protected configuration only after root preparation
 # succeeds. This deployment remains unprivileged.
-"$script_dir/deploy.sh" \
-  --target "$target" \
-  --remote-base "$remote_base" \
+deploy_arguments=(
+  --target "$target"
+  --remote-base "$remote_base"
   --power-config /etc/pi-power-manager/config.json
+  --capture-node-executable "$capture_node_executable"
+)
+[[ -z "$nodes_file" ]] || deploy_arguments+=(--nodes "$nodes_file")
+[[ -z "$initial_config" ]] || deploy_arguments+=(--initial-config "$initial_config")
+"$script_dir/deploy.sh" "${deploy_arguments[@]}"
 
 printf 'RTC integration complete. timer_enabled=%s\n' "$enable_timer"
