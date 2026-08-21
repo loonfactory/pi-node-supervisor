@@ -1,0 +1,16 @@
+[Unit]
+Description=CaptureNode headless image collector
+After=local-fs.target
+
+[Service]
+Type=simple
+ExecStart=/opt/capture-node/.venv/bin/capture-node --config /etc/capture-node/config.json
+Restart=on-failure
+RestartSec=5
+User=capture-node
+Group=capture-node
+WorkingDirectory=/var/lib/capture-node
+
+[Install]
+WantedBy=multi-user.target
+

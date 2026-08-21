@@ -1,0 +1,43 @@
+{
+  "camera": {
+    "type": "picamera2",
+    "camera_num": 0,
+    "width": 1920,
+    "height": 1080,
+    "preview_fps": 10,
+    "preview_quality": 75
+  },
+  "capture": {
+    "mode": "disabled",
+    "interval_seconds": null,
+    "daily_times": [],
+    "timezone": "Asia/Seoul",
+    "params": {}
+  },
+  "image": {
+    "format": "png",
+    "compression": 7,
+    "embed_metadata": true,
+    "raw": {
+      "enabled": true,
+      "format": "dng"
+    }
+  },
+  "storages": [
+    {
+      "type": "file",
+      "name": "local",
+      "directory": "./captures",
+      "layout": "daily"
+    }
+  ],
+  "maintenance": {
+    "interval_seconds": 86400,
+    "retention": [
+      {
+        "target": "local",
+        "max_age_days": 7
+      }
+    ]
+  }
+}
