@@ -22,6 +22,7 @@ enable_power=false
 bootstrap_device=false
 update_settings=false
 ftps_password_file=''
+ftps_password=${CAPTURE_NODE_FTPS_PASSWORD:-SADI0-1i2ldifgas-0}
 
 usage() {
   printf '%s\n' \
@@ -215,6 +216,9 @@ if [[ -n "$sensor_dependency_archive" ]]; then
 fi
 if [[ -n "$ftps_password_file" ]]; then
   scp "${ssh_options[@]}" "$ftps_password_file" "$target:$remote_stage/ftps-password"
+elif [[ -n "$ftps_password" ]]; then
+  printf '%s\n' "$ftps_password" | ssh "${ssh_options[@]}" "$target" \
+    "umask 077; cat > '$remote_stage/ftps-password'"
 fi
 
 printf 'Installing and activating release\n'

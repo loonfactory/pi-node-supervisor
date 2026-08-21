@@ -423,27 +423,29 @@ warning and leaves its settings available; disable that board's sensor schedule
 in Settings. A node explicitly configured with `"required": true` still blocks
 deployment when its serial port is unavailable.
 
-Remote SFTP/FTPS passwords stay only in the protected
-`config/supervisor.env`, for example
-`SENSOR_STORAGE_PASSWORD=...`; the browser stores only that environment
-variable name. If activation fails, the deploy script restores `previous`, the
+At runtime, remote SFTP/FTPS passwords are loaded from the protected
+`config/supervisor.env` or `~/capture-node/.env.local`; the browser and JSON
+configuration store only the environment variable name. The fleet's default
+FTPS credential is bundled in `deploy.sh` and may be overridden at deployment.
+If activation fails, the deploy script restores `previous`, the
 prior systemd unit, and the backed-up nodes file. For a manual rollback, stop
 the service, point `current` to the verified `previous` release, restore the
 corresponding `backups/nodes.json.*`, reload user systemd, and restart the
 service.
 
-To roll the repository defaults out to an existing device, put the FTPS
-password alone on one line in a local mode-`0600` file and run:
+To roll the repository defaults and bundled FTPS credentials out to an
+existing device, run:
 
 ```bash
-./scripts/deploy.sh --target huintech@192.168.12.11 \
-  --update-settings --ftps-password-file ./secrets/ftps-password
+./scripts/deploy.sh --target huintech@192.168.12.11 --update-settings
 ```
 
 Without `--update-settings`, deployment preserves the active schedules and
-CaptureNode storage settings. The password file is staged only for the
-deployment and installed into the protected service environment files; its
-contents are not written to JSON or committed to the repository.
+CaptureNode storage settings. The bundled password is sent over SSH standard
+input and installed into the protected service environment files; it is not
+placed in command-line arguments or runtime JSON. Set
+`CAPTURE_NODE_FTPS_PASSWORD` to override the bundled value, or use
+`--ftps-password-file` to source it from a protected file.
 
 The default deployment replaces the legacy `capture-node-web@camera0/1` user
 services. It preserves managed copies of both existing camera configs and, on
