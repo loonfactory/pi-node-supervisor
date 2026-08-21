@@ -417,6 +417,12 @@ id huintech
 test -r /dev/ttyAMA0 && test -w /dev/ttyAMA0
 ```
 
+The bundled `environment0` node is optional because some boards do not carry a
+sensor. A missing or inaccessible optional serial port produces a deployment
+warning and leaves its settings available; disable that board's sensor schedule
+in Settings. A node explicitly configured with `"required": true` still blocks
+deployment when its serial port is unavailable.
+
 Remote SFTP/FTPS passwords stay only in the protected
 `config/supervisor.env`, for example
 `SENSOR_STORAGE_PASSWORD=...`; the browser stores only that environment

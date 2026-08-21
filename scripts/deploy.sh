@@ -287,9 +287,8 @@ for node in json.load(open(sys.argv[1], encoding="utf-8"))["nodes"]:
 PYTHON_PREFLIGHT
 
 PYTHONPATH="$release/vendor${PYTHONPATH:+:$PYTHONPATH}" \
-  "$release/.venv/bin/python" - "$effective_nodes" "$base" <<'PYTHON_SENSOR_PREFLIGHT'
+  "$release/.venv/bin/python" - "$effective_nodes" <<'PYTHON_SENSOR_PREFLIGHT'
 import json
-import os
 import sys
 from pathlib import Path
 
@@ -297,33 +296,14 @@ sensor_nodes = [
     node for node in json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))["nodes"]
     if node.get("sensor_serial") is not None
 ]
-base = Path(sys.argv[2]).resolve()
 if sensor_nodes:
     from huintech.sensors.soil.cwt_soil_thc_s import CWTSoilTHCS  # noqa: F401
     import serial  # noqa: F401
-for node in sensor_nodes:
-    port = Path(node["sensor_serial"]["port"])
-    if not port.exists():
-        raise SystemExit(f"sensor port is unavailable: {port}")
-    if not os.access(port, os.R_OK | os.W_OK):
-        raise SystemExit(
-            f"sensor port requires read/write permission for {os.environ.get('USER', 'service user')}: {port}"
-        )
-    configured_root = Path(node["sensor_storage"]["local_directory"])
-    storage_root = (
-        configured_root if configured_root.is_absolute() else base / configured_root
-    ).resolve()
-    try:
-        storage_root.relative_to(base)
-        below_base = True
-    except ValueError:
-        below_base = False
-    if not storage_root.exists() and below_base:
-        storage_root.mkdir(parents=True, mode=0o700)
-    if not storage_root.is_dir() or not os.access(storage_root, os.R_OK | os.W_OK | os.X_OK):
-        raise SystemExit(f"sensor CSV directory requires service-user access: {storage_root}")
-    print(f"node={node['id']} sensor_port={port} permission=read-write")
 PYTHON_SENSOR_PREFLIGHT
+
+PYTHONPATH="$release/vendor${PYTHONPATH:+:$PYTHONPATH}" \
+  "$release/.venv/bin/python" -m pi_node_supervisor.deployment_preflight \
+  "$effective_nodes" "$base"
 
 nodes_backup=''
 if [[ "$effective_nodes" != "$config_dir/nodes.json" ]]; then
