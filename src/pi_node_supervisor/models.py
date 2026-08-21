@@ -253,6 +253,29 @@ class StorageSettingsDocument(StrictModel):
         return self
 
 
+class SensorStorageSettings(StrictModel):
+    local_directory: Path
+    mirrors: tuple[StorageSettings, ...] = ()
+    retry_base_seconds: int = Field(30, ge=1, le=3600)
+    retry_max_seconds: int = Field(3600, ge=1, le=86400)
+
+    @field_validator("local_directory")
+    @classmethod
+    def safe_local_directory(cls, value: Path) -> Path:
+        if ".." in value.parts or "\x00" in str(value):
+            raise ValueError("sensor local directory must not traverse parent directories")
+        return value
+
+    @model_validator(mode="after")
+    def valid_mirrors(self) -> "SensorStorageSettings":
+        names = [item.name for item in self.mirrors]
+        if len(names) != len(set(names)):
+            raise ValueError("sensor mirror names must be unique")
+        if self.retry_max_seconds < self.retry_base_seconds:
+            raise ValueError("retry_max_seconds must be at least retry_base_seconds")
+        return self
+
+
 class CaptureScheduleSettings(StrictModel):
     """CaptureNode-native automatic capture schedule."""
 
@@ -463,6 +486,7 @@ class NodeDefinition(StrictModel):
     completion_timeout_seconds: float = Field(60.0, gt=0, le=3600)
     managed_capture: ManagedCaptureProcess | None = None
     sensor_serial: SensorSerialSettings | None = None
+    sensor_storage: SensorStorageSettings | None = None
 
     @field_validator("endpoint")
     @classmethod
@@ -504,6 +528,11 @@ class NodeDefinition(StrictModel):
                 raise ValueError("CWT sensor requires temperature-humidity profile")
             if self.endpoint is not None:
                 raise ValueError("serial sensor-node cannot also configure an HTTP endpoint")
+        if self.sensor_storage is not None:
+            if self.kind != "sensor-node":
+                raise ValueError("sensor_storage is only valid for sensor-node")
+            if "sensor-collection" not in self.activity_types:
+                raise ValueError("sensor_storage requires sensor-collection capability")
         return self
 
 

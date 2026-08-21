@@ -370,14 +370,31 @@ class CaptureNodeAdapter:
         )
 
 
-def build_adapters(definitions) -> dict[str, ManagedNodeAdapter]:
+def build_adapters(
+    definitions,
+    *,
+    runtime=None,
+    timezone: str = "Asia/Seoul",
+) -> dict[str, ManagedNodeAdapter]:
     adapters: dict[str, ManagedNodeAdapter] = {}
     for definition in definitions:
         if definition.sensor_serial is not None:
             from .sensor_adapter import CwtSensorAdapter, HuintechCwtProvider
+            from .sensor_storage import SensorStorageCoordinator
 
             adapters[definition.id] = CwtSensorAdapter(
-                definition, HuintechCwtProvider(definition)
+                definition,
+                HuintechCwtProvider(definition),
+                (
+                    SensorStorageCoordinator(
+                        node_id=definition.id,
+                        timezone=timezone,
+                        settings=definition.sensor_storage,
+                        runtime=runtime,
+                    )
+                    if definition.sensor_storage is not None and runtime is not None
+                    else None
+                ),
             )
             continue
         if definition.kind != "capture-node" or definition.endpoint is None:

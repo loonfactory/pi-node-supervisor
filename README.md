@@ -32,7 +32,7 @@ Python 3.11 or newer is required.
 
 ```bash
 python -m venv .venv
-.venv/bin/pip install -e '.[web,sensor,dev]'
+.venv/bin/pip install -e '.[web,sensor,remote,dev]'
 .venv/bin/pytest
 ```
 
@@ -290,6 +290,23 @@ PYTHONPATH=src:/opt/huintech-device/src .venv/bin/python \
 The command prints only `observed_at`, `temperature_c`, and
 `humidity_percent`, then closes the port. It never invokes calibration,
 factor, offset, or slave-ID writes.
+
+Sensor measurements are committed to the local authoritative CSV configured
+by `sensor_storage.local_directory`. The relative path is
+`<node-id>/YYYY/MM/YYYY-MM-DD.csv`, and the public file has exactly
+`timestamp,temperature_c,humidity_percent`. `timestamp` is the scheduled slot
+with its UTC offset, so an execution delay or retry cannot create a new row.
+There is no fixed daily row limit; the number follows the stored schedule.
+
+Each configured file/SFTP/FTPS mirror receives the complete local CSV under
+the same relative path. Uploads use a temporary name in the destination
+directory and then rename it to the final name; the remote file is never
+appended. Delivery hashes, attempts, and exponential retry times are stored in
+Supervisor SQLite, while temperature and humidity values remain only in CSV.
+Remote failures leave the local collection successful and are retried on
+worker startup or data synchronization. `/api/sensor-storage` reports pending,
+failed, and successful deliveries. Passwords remain environment-variable
+references and are never written into state or events.
 
 Managed CaptureNode children emit structured JSON logs. Supervisor consumes
 that child-process log stream and stores `capture-node.*` records in its event

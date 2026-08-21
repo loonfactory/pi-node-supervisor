@@ -175,8 +175,15 @@ async def test_runtime_catalog_endpoints_and_static_ui(service: SupervisorServic
         assert dashboard.json()["runtime"] == {
             "runs": 0,
             "failed_runs": 0,
-            "events": 0,
-            "data": 0,
+                "events": 0,
+                "data": 0,
+                "sensor_delivery_backlog": 0,
+            }
+        sensor_storage = await browser.get("/api/sensor-storage", headers=headers)
+        assert sensor_storage.status_code == 200
+        assert sensor_storage.json() == {
+            "counts": {"pending": 0, "failed": 0, "succeeded": 0},
+            "items": [],
         }
         assert (await browser.get("/api/runs", headers=headers)).json() == {"items": []}
         assert (await browser.get("/api/events", headers=headers)).json() == {

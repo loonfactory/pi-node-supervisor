@@ -10,6 +10,7 @@ from typing import Any, Callable, Protocol
 
 from .adapters import AdapterError, PreviewByteStream
 from .models import ActivityPlan, DataRecord, NodeDefinition, SensorReading
+from .sensor_storage import SensorStorageCoordinator
 
 
 class SensorAdapterError(AdapterError):
@@ -195,10 +196,16 @@ class HuintechCwtProvider:
 
 
 class CwtSensorAdapter:
-    def __init__(self, definition: NodeDefinition, provider: CwtReadingProvider) -> None:
+    def __init__(
+        self,
+        definition: NodeDefinition,
+        provider: CwtReadingProvider,
+        storage: SensorStorageCoordinator | None = None,
+    ) -> None:
         self.definition = definition
         self.provider = provider
         self.node_id = definition.id
+        self.storage = storage
 
     def health(self) -> dict[str, Any]:
         settings = self.definition.sensor_serial
@@ -219,11 +226,22 @@ class CwtSensorAdapter:
                 f"CWT adapter cannot execute {activity.activity_type}"
             )
         reading = self.provider.read()
-        return {
-            **reading.model_dump(mode="json"),
+        result = {
             "scheduled_at": activity.requested_start.isoformat(),
+            "observed_at": reading.model_dump(mode="json")["observed_at"],
             "run_id": run_id,
         }
+        if self.storage is not None:
+            result.update(self.storage.commit(activity.requested_start, reading))
+            result["measurement_stored"] = True
+        else:
+            result.update(
+                {
+                    "temperature_c": reading.temperature_c,
+                    "humidity_percent": reading.humidity_percent,
+                }
+            )
+        return result
 
     def preview_frame(self) -> tuple[bytes, str]:
         raise SensorAdapterError("sensor node does not provide a preview")
@@ -238,6 +256,8 @@ class CwtSensorAdapter:
         run_id: str | None = None,
         capture_id: str | None = None,
     ) -> list[DataRecord]:
+        if self.storage is not None:
+            self.storage.sync_pending()
         return []
 
     def close(self) -> None:

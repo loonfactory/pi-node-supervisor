@@ -252,6 +252,12 @@ def create_app(
             ),
         }
 
+    @app.get("/api/sensor-storage", dependencies=[Depends(authenticated)])
+    async def sensor_storage_status() -> dict[str, Any]:
+        if engine is None:
+            raise HTTPException(status_code=503, detail="runtime store is unavailable")
+        return engine.runtime.sensor_delivery_status()
+
     @app.get("/api/config/draft", dependencies=[Depends(authenticated)])
     async def draft() -> dict[str, Any]:
         value = service.draft()

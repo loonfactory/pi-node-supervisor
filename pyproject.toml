@@ -20,6 +20,9 @@ web = [
 sensor = [
   "pyserial>=3.5",
 ]
+remote = [
+  "paramiko>=3.4",
+]
 dev = [
   "httpx>=0.27",
   "pytest>=8.0",

@@ -31,6 +31,12 @@
         "baudrate": 4800,
         "timeout_seconds": 1.0,
         "slave_id": 1
+      },
+      "sensor_storage": {
+        "local_directory": "/var/lib/pi-node-supervisor/sensors",
+        "mirrors": [],
+        "retry_base_seconds": 30,
+        "retry_max_seconds": 3600
       }
     }
   ]

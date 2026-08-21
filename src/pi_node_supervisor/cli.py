@@ -94,10 +94,16 @@ def _service(args: argparse.Namespace) -> SupervisorService:
 
 
 def _engine(args: argparse.Namespace, service: SupervisorService) -> ExecutionEngine:
+    runtime = RuntimeStore(service.store.database_path)
+    active = service.active() or {}
     return ExecutionEngine(
         service.store,
-        RuntimeStore(service.store.database_path),
-        build_adapters(service.registry),
+        runtime,
+        build_adapters(
+            service.registry,
+            runtime=runtime,
+            timezone=active.get("timezone", "Asia/Seoul"),
+        ),
         power_refresher=service.refresh_recurring_power,
     )
 

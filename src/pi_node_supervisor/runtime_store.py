@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -82,6 +82,21 @@ class RuntimeStore:
                     );
                     CREATE INDEX IF NOT EXISTS idx_data_captured ON data_catalog(captured_at DESC);
                     CREATE INDEX IF NOT EXISTS idx_data_run ON data_catalog(run_id);
+
+                    CREATE TABLE IF NOT EXISTS sensor_deliveries (
+                        node_id TEXT NOT NULL,
+                        target TEXT NOT NULL,
+                        relative_path TEXT NOT NULL,
+                        content_sha256 TEXT NOT NULL,
+                        status TEXT NOT NULL CHECK(status IN ('pending', 'succeeded', 'failed')),
+                        attempts INTEGER NOT NULL DEFAULT 0,
+                        next_attempt_at TEXT,
+                        last_error TEXT,
+                        updated_at TEXT NOT NULL,
+                        PRIMARY KEY(node_id, target, relative_path)
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_sensor_delivery_due
+                    ON sensor_deliveries(status, next_attempt_at);
                     """
                 )
         except sqlite3.Error as exc:
@@ -417,9 +432,139 @@ class RuntimeStore:
                     ).fetchone()[0],
                     "events": connection.execute("SELECT COUNT(*) FROM events").fetchone()[0],
                     "data": connection.execute("SELECT COUNT(*) FROM data_catalog").fetchone()[0],
+                    "sensor_delivery_backlog": connection.execute(
+                        "SELECT COUNT(*) FROM sensor_deliveries WHERE status != 'succeeded'"
+                    ).fetchone()[0],
                 }
         except sqlite3.Error as exc:
             raise PersistenceError(f"cannot count runtime records: {exc}") from exc
+
+    def queue_sensor_delivery(
+        self, *, node_id: str, target: str, relative_path: str, content_sha256: str
+    ) -> None:
+        now = format_utc(_now())
+        try:
+            with self._connect() as connection:
+                connection.execute(
+                    """
+                    INSERT INTO sensor_deliveries
+                        (node_id, target, relative_path, content_sha256, status,
+                         attempts, next_attempt_at, last_error, updated_at)
+                    VALUES (?, ?, ?, ?, 'pending', 0, ?, NULL, ?)
+                    ON CONFLICT(node_id, target, relative_path) DO UPDATE SET
+                        content_sha256 = excluded.content_sha256,
+                        status = CASE WHEN sensor_deliveries.content_sha256 = excluded.content_sha256
+                                      AND sensor_deliveries.status = 'succeeded'
+                                      THEN 'succeeded' ELSE 'pending' END,
+                        attempts = CASE WHEN sensor_deliveries.content_sha256 = excluded.content_sha256
+                                       THEN sensor_deliveries.attempts ELSE 0 END,
+                        next_attempt_at = CASE WHEN sensor_deliveries.content_sha256 = excluded.content_sha256
+                                               AND sensor_deliveries.status = 'succeeded'
+                                               THEN NULL ELSE excluded.next_attempt_at END,
+                        last_error = CASE WHEN sensor_deliveries.content_sha256 = excluded.content_sha256
+                                          THEN sensor_deliveries.last_error ELSE NULL END,
+                        updated_at = excluded.updated_at
+                    """,
+                    (node_id, target, relative_path, content_sha256, now, now),
+                )
+        except sqlite3.Error as exc:
+            raise PersistenceError(f"cannot queue sensor delivery: {exc}") from exc
+
+    def due_sensor_deliveries(self, now: datetime) -> list[dict[str, Any]]:
+        value = format_utc(now)
+        try:
+            with self._connect() as connection:
+                rows = connection.execute(
+                    """
+                    SELECT * FROM sensor_deliveries
+                    WHERE status != 'succeeded'
+                      AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
+                    ORDER BY updated_at, node_id, target, relative_path
+                    """,
+                    (value,),
+                ).fetchall()
+        except sqlite3.Error as exc:
+            raise PersistenceError(f"cannot read sensor delivery backlog: {exc}") from exc
+        return [dict(row) for row in rows]
+
+    def complete_sensor_delivery(
+        self, *, node_id: str, target: str, relative_path: str
+    ) -> None:
+        try:
+            with self._connect() as connection:
+                connection.execute(
+                    """
+                    UPDATE sensor_deliveries
+                    SET status = 'succeeded', next_attempt_at = NULL,
+                        last_error = NULL, updated_at = ?
+                    WHERE node_id = ? AND target = ? AND relative_path = ?
+                    """,
+                    (format_utc(_now()), node_id, target, relative_path),
+                )
+        except sqlite3.Error as exc:
+            raise PersistenceError(f"cannot complete sensor delivery: {exc}") from exc
+
+    def fail_sensor_delivery(
+        self,
+        *,
+        node_id: str,
+        target: str,
+        relative_path: str,
+        error: str,
+        retry_base_seconds: int,
+        retry_max_seconds: int,
+        now: datetime,
+    ) -> None:
+        try:
+            with self._connect() as connection:
+                row = connection.execute(
+                    """SELECT attempts FROM sensor_deliveries
+                       WHERE node_id = ? AND target = ? AND relative_path = ?""",
+                    (node_id, target, relative_path),
+                ).fetchone()
+                attempts = (int(row["attempts"]) if row else 0) + 1
+                delay = min(
+                    retry_max_seconds,
+                    retry_base_seconds * (2 ** min(attempts - 1, 30)),
+                )
+                connection.execute(
+                    """
+                    UPDATE sensor_deliveries
+                    SET status = 'failed', attempts = ?, next_attempt_at = ?,
+                        last_error = ?, updated_at = ?
+                    WHERE node_id = ? AND target = ? AND relative_path = ?
+                    """,
+                    (
+                        attempts,
+                        format_utc(now + timedelta(seconds=delay)),
+                        error[:2000],
+                        format_utc(now),
+                        node_id,
+                        target,
+                        relative_path,
+                    ),
+                )
+        except sqlite3.Error as exc:
+            raise PersistenceError(f"cannot fail sensor delivery: {exc}") from exc
+
+    def sensor_delivery_status(self) -> dict[str, Any]:
+        try:
+            with self._connect() as connection:
+                rows = connection.execute(
+                    """SELECT status, COUNT(*) AS count FROM sensor_deliveries
+                       GROUP BY status"""
+                ).fetchall()
+                recent = connection.execute(
+                    """SELECT * FROM sensor_deliveries
+                       ORDER BY updated_at DESC LIMIT 100"""
+                ).fetchall()
+        except sqlite3.Error as exc:
+            raise PersistenceError(f"cannot read sensor delivery status: {exc}") from exc
+        counts = {row["status"]: row["count"] for row in rows}
+        return {
+            "counts": {key: counts.get(key, 0) for key in ("pending", "failed", "succeeded")},
+            "items": [dict(row) for row in recent],
+        }
 
     @staticmethod
     def _run_record(row: sqlite3.Row) -> RunRecord:
