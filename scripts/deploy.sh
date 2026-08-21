@@ -8,17 +8,18 @@ target=${TARGET:-huintech@192.168.12.7}
 remote_base=${REMOTE_BASE:-/home/huintech/pi-node-supervisor}
 bind_host=${BIND_HOST:-0.0.0.0}
 port=${PORT:-8080}
-nodes_file=${NODES_FILE:-$project_root/examples/nodes.dual-camera.json}
+nodes_file=${NODES_FILE:-$project_root/examples/nodes.dual-camera-sensor.json}
 initial_config=${INITIAL_CONFIG:-$project_root/examples/config.empty.json}
 python_bin=${PYTHON_BIN:-python3}
 capture_node_executable=${CAPTURE_NODE_EXECUTABLE:-/home/huintech/capture-node/.venv/bin/capture-node-web}
 replace_capture_services=${REPLACE_CAPTURE_SERVICES:-true}
 preserve_existing_nodes=${PRESERVE_EXISTING_NODES:-false}
 power_config=${POWER_CONFIG:-/etc/pi-power-manager/config.json}
-huintech_device_source=${HUINTECHDEVICE_SOURCE:-}
-power_manager_source=${POWER_MANAGER_SOURCE:-}
+huintech_device_source=${HUINTECHDEVICE_SOURCE:-$project_root/components/huintech-device/python}
+power_manager_source=${POWER_MANAGER_SOURCE:-$project_root/components/pi-power-manager}
 install_power_manager=true
 enable_power=false
+bootstrap_device=false
 
 usage() {
   printf '%s\n' \
@@ -35,6 +36,7 @@ usage() {
     "  --power-config PATH      pi-power-manager config path" \
     "  --power-manager-source PATH  Local pi-power-manager source root" \
     "  --enable-power           Enable timer; boot-latched GPIO26 gates execution" \
+    "  --bootstrap              Provision OS, CaptureNode, Supervisor and power manager" \
     "  --without-power-manager  Skip privileged manager installation" \
     "  --huintech-device-source PATH  HUINTECHDEVICE python source root" \
     "  --preserve-existing-nodes  Keep and validate the target's existing nodes.json" \
@@ -54,6 +56,7 @@ while (($#)); do
     --power-config) power_config=${2:?missing value for --power-config}; shift 2 ;;
     --power-manager-source) power_manager_source=${2:?missing value for --power-manager-source}; shift 2 ;;
     --enable-power) enable_power=true; shift ;;
+    --bootstrap) bootstrap_device=true; shift ;;
     --without-power-manager) install_power_manager=false; shift ;;
     --huintech-device-source) huintech_device_source=${2:?missing value for --huintech-device-source}; shift 2 ;;
     --preserve-existing-nodes) preserve_existing_nodes=true; shift ;;
@@ -97,16 +100,8 @@ done
   exit 2
 }
 if [[ "$install_power_manager" == true ]]; then
-  if [[ -z "$power_manager_source" ]]; then
-    for candidate in "$project_root/../../pi-power-manager" "$project_root/../pi-power-manager"; do
-      if [[ -r "$candidate/pyproject.toml" ]]; then
-        power_manager_source=$candidate
-        break
-      fi
-    done
-  fi
   [[ -n "$power_manager_source" && -r "$power_manager_source/pyproject.toml" ]] || {
-    printf 'deploy.sh includes pi-power-manager; use --power-manager-source PATH when its source cannot be found\n' >&2
+    printf 'Bundled pi-power-manager source is unavailable: %s\n' "$power_manager_source" >&2
     exit 2
   }
   [[ "$power_config" == /etc/pi-power-manager/config.json ]] || {
@@ -119,20 +114,26 @@ sensor_count=$(
 )
 if ((sensor_count)); then
   command -v tar >/dev/null || { printf 'Local tar command is required for HUINTECHDEVICE staging\n' >&2; exit 2; }
-  if [[ -z "$huintech_device_source" ]]; then
-    for candidate in \
-      "$project_root/../huintech-device/huintech-device-main/python" \
-      "$project_root/../../../huintech-device/huintech-device-main/python"; do
-      if [[ -r "$candidate/huintech/sensors/soil/cwt_soil_thc_s.py" ]]; then
-        huintech_device_source=$candidate
-        break
-      fi
-    done
-  fi
   [[ -n "$huintech_device_source" && -r "$huintech_device_source/huintech/sensors/soil/cwt_soil_thc_s.py" ]] || {
-    printf 'Sensor nodes require --huintech-device-source pointing to the python source root\n' >&2
+    printf 'Bundled HUINTECHDEVICE Python source is unavailable: %s\n' "$huintech_device_source" >&2
     exit 2
   }
+fi
+
+if [[ "$bootstrap_device" == true ]]; then
+  bootstrap_arguments=(
+    --target "$target"
+    --nodes "$nodes_file"
+    --initial-config "$initial_config"
+    --port "$port"
+  )
+  bootstrap_arguments+=(--huintech-device-source "$huintech_device_source")
+  bootstrap_arguments+=(--power-manager-source "$power_manager_source")
+  if [[ "$enable_power" == true ]]; then
+    bootstrap_arguments+=(--enable-power)
+  fi
+  "$script_dir/bootstrap-device.sh" "${bootstrap_arguments[@]}"
+  exit 0
 fi
 
 ssh_options=(-o BatchMode=yes -o ConnectTimeout=10)

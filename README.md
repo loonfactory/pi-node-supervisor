@@ -367,6 +367,16 @@ on ports 8000 and 8001:
 scripts/deploy.sh
 ```
 
+CaptureNode, HUINTECHDEVICE, and pi-power-manager are versioned below
+`components/`, so deployment does not clone repositories or depend on sibling
+checkout paths. Provision a freshly installed Raspberry Pi, including OS
+prerequisites, both cameras, the sensor driver, Supervisor, and the privileged
+power boundary, with one command:
+
+```bash
+scripts/deploy.sh --bootstrap --target huintech@192.168.12.6
+```
+
 After hardware diagnostics and a supervised wake test, enable the automatic
 power timer as part of deployment with `scripts/deploy.sh --enable-power`.
 This option does not resample GPIO26. The interlock mode latched for the current
@@ -503,9 +513,3 @@ scripts/bootstrap-device.sh --enable-power scnu@192.168.12.8
 `--enable-power` enables the timer, while the GPIO26 mode latched at each boot
 independently permits or blocks actual power actions. Repeat `--camera` to
 select one or two Picamera2 or V4L2 devices.
-
-
-  ./scripts/deploy.sh \
-    --target huintech@192.168.12.6 \
-    --nodes examples/nodes.dual-camera-sensor.json \
-    --power-manager-source ../../pi-power-manager

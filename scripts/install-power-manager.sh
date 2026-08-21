@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 project_root=$(cd -- "$script_dir/.." && pwd)
-power_source=${POWER_MANAGER_SOURCE:-$project_root/../pi-power-manager}
+power_source=${POWER_MANAGER_SOURCE:-$project_root/components/pi-power-manager}
 target=${TARGET:-huintech@192.168.12.7}
 remote_base=${REMOTE_BASE:-}
 nodes_file=${NODES_FILE:-}
@@ -47,14 +47,6 @@ while (($#)); do
 done
 
 [[ "$target" =~ ^[A-Za-z0-9._-]+@[A-Za-z0-9._:-]+$ ]] || { printf 'Invalid SSH target.\n' >&2; exit 2; }
-if [[ ! -r "$power_source/pyproject.toml" ]]; then
-  for candidate in "$project_root/../../pi-power-manager" "$project_root/../pi-power-manager"; do
-    if [[ -r "$candidate/pyproject.toml" ]]; then
-      power_source=$candidate
-      break
-    fi
-  done
-fi
 [[ -r "$power_source/pyproject.toml" ]] || { printf 'pi-power-manager source is unavailable. Use --power-source PATH.\n' >&2; exit 2; }
 
 operator=${target%@*}

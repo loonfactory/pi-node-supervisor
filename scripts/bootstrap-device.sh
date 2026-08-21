@@ -3,12 +3,16 @@ set -Eeuo pipefail
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 project_root=$(cd -- "$script_dir/.." && pwd)
-capture_source=${CAPTURE_NODE_SOURCE:-$project_root/../capture-node}
+capture_source=${CAPTURE_NODE_SOURCE:-$project_root/components/capture-node}
 target=${TARGET:-}
 public_key=${PUBLIC_KEY:-$HOME/.ssh/id_ed25519.pub}
 timezone=${TIMEZONE:-Asia/Seoul}
 port=${PORT:-8080}
 enable_power=false
+nodes_file=${NODES_FILE:-$project_root/examples/nodes.dual-camera-sensor.json}
+initial_config=${INITIAL_CONFIG:-$project_root/examples/config.empty.json}
+huintech_device_source=${HUINTECHDEVICE_SOURCE:-$project_root/components/huintech-device/python}
+power_manager_source=${POWER_MANAGER_SOURCE:-$project_root/components/pi-power-manager}
 camera_specs=()
 
 usage() {
@@ -19,7 +23,12 @@ usage() {
     "Supervisor, and pi-power-manager. Automatic shutdown is disabled by default." \
     "" \
     "  --public-key FILE       SSH public key (default: $public_key)" \
+    "  --target USER@HOST      SSH destination (positional form is also accepted)" \
     "  --camera SPEC           picamera2[:N] or v4l2:/absolute/path; repeat for two" \
+    "  --nodes FILE            Node registry, including optional sensor nodes" \
+    "  --initial-config FILE   Initial Supervisor configuration" \
+    "  --huintech-device-source PATH  HUINTECHDEVICE python source root" \
+    "  --power-manager-source PATH    Local pi-power-manager source root" \
     "  --timezone ZONE         Device timezone (default: $timezone)" \
     "  --port PORT             Supervisor Web port (default: $port)" \
     "  --enable-power          Enable the timer; each boot's GPIO26 latch gates execution" \
@@ -29,7 +38,12 @@ usage() {
 while (($#)); do
   case "$1" in
     --public-key) public_key=${2:?missing value for --public-key}; shift 2 ;;
+    --target) target=${2:?missing value for --target}; shift 2 ;;
     --camera) camera_specs+=("${2:?missing value for --camera}"); shift 2 ;;
+    --nodes) nodes_file=${2:?missing value for --nodes}; shift 2 ;;
+    --initial-config) initial_config=${2:?missing value for --initial-config}; shift 2 ;;
+    --huintech-device-source) huintech_device_source=${2:?missing value for --huintech-device-source}; shift 2 ;;
+    --power-manager-source) power_manager_source=${2:?missing value for --power-manager-source}; shift 2 ;;
     --timezone) timezone=${2:?missing value for --timezone}; shift 2 ;;
     --port) port=${2:?missing value for --port}; shift 2 ;;
     --enable-power) enable_power=true; shift ;;
@@ -51,8 +65,9 @@ done
   printf 'Timezone must be an IANA name such as Asia/Seoul.\n' >&2
   exit 2
 }
-[[ -r "$capture_source/eng/deploy.sh" ]] || { printf 'CaptureNode source is unavailable.\n' >&2; exit 2; }
-[[ -r "$project_root/examples/nodes.dual-camera.json" ]] || { printf 'Node example is unavailable.\n' >&2; exit 2; }
+[[ -r "$capture_source/eng/deploy.sh" ]] || { printf 'CaptureNode source is unavailable. Set CAPTURE_NODE_SOURCE.\n' >&2; exit 2; }
+[[ -r "$nodes_file" ]] || { printf 'Node registry is unavailable: %s\n' "$nodes_file" >&2; exit 2; }
+[[ -r "$initial_config" ]] || { printf 'Initial configuration is unavailable: %s\n' "$initial_config" >&2; exit 2; }
 for command_name in scp ssh ssh-copy-id ssh-keygen; do
   command -v "$command_name" >/dev/null || { printf 'Missing local command: %s\n' "$command_name" >&2; exit 2; }
 done
@@ -126,8 +141,9 @@ done
 "$capture_source/eng/deploy.sh" "${capture_arguments[@]}" --skip-linger "$target"
 
 local_stage=$(mktemp -d /tmp/pi-node-bootstrap-local.XXXXXX)
-nodes_file="$local_stage/nodes.json"
-python3 - "$project_root/examples/nodes.dual-camera.json" "$nodes_file" "$operator" "${#camera_specs[@]}" <<'PYTHON'
+source_nodes_file=$nodes_file
+rendered_nodes_file="$local_stage/nodes.json"
+python3 - "$source_nodes_file" "$rendered_nodes_file" "$operator" "${#camera_specs[@]}" <<'PYTHON'
 import json
 from pathlib import Path
 import sys
@@ -136,7 +152,13 @@ source, destination = map(Path, sys.argv[1:3])
 operator = sys.argv[3]
 camera_count = int(sys.argv[4])
 document = json.loads(source.read_text(encoding="utf-8"))
-document["nodes"] = document["nodes"][:camera_count]
+camera_nodes = [node for node in document["nodes"] if node.get("managed_capture")]
+other_nodes = [node for node in document["nodes"] if not node.get("managed_capture")]
+if len(camera_nodes) < camera_count:
+    raise SystemExit(
+        f"node registry defines {len(camera_nodes)} managed cameras, but {camera_count} were requested"
+    )
+document["nodes"] = camera_nodes[:camera_count] + other_nodes
 old_home = "/home/huintech"
 new_home = f"/home/{operator}"
 for node in document["nodes"]:
@@ -147,6 +169,8 @@ for node in document["nodes"]:
 destination.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
 PYTHON
 
+nodes_file=$rendered_nodes_file
+
 remote_base="/home/$operator/pi-node-supervisor"
 capture_executable="/home/$operator/capture-node/.venv/bin/capture-node-web"
 supervisor_arguments=(
@@ -154,9 +178,12 @@ supervisor_arguments=(
   --remote-base "$remote_base" \
   --nodes "$nodes_file" \
   --capture-node-executable "$capture_executable" \
+  --initial-config "$initial_config" \
   --bind-host 0.0.0.0 \
   --port "$port"
 )
+supervisor_arguments+=(--huintech-device-source "$huintech_device_source")
+supervisor_arguments+=(--power-manager-source "$power_manager_source")
 if [[ "$enable_power" == true ]]; then
   supervisor_arguments+=(--enable-power)
 fi
