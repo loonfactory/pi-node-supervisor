@@ -120,6 +120,15 @@ function captureScheduleLines(schedule) {
   });
 }
 
+function sensorScheduleLines(schedule) {
+  if (!(schedule.daily_times || []).length) return ["수집 시각 없음 · 센서용 전원 계획 비활성화"];
+  return partitionCaptureTimes(schedule.daily_times || []).map(block => {
+    if (block.length === 1) return `${koreanClock(block[0])}에 수집`;
+    const interval = captureTimeSeconds(block[1]) - captureTimeSeconds(block[0]);
+    return `${koreanClock(block[0])}부터 ${koreanClock(block.at(-1))}까지, ${durationLabel(interval)} 간격으로 수집`;
+  });
+}
+
 function renderPowerTimeline(configuration, activePlan) {
   const schedules = (configuration?.capture_schedules || []).filter(schedule => schedule.mode !== "disabled");
   const groups = new Map();
@@ -137,8 +146,26 @@ function renderPowerTimeline(configuration, activePlan) {
       <div class="activity-tags">
         ${group.cameras.map(camera => `<span class="tag">${safe(camera)}</span>`).join("")}
         ${group.schedule.mode === "daily" && !(group.schedule.daily_times || []).length ? '<span class="tag warning-tag">촬영 계획 꺼짐</span>' : ""}
-        <span class="tag">워밍업 ${safe(durationLabel(policies["boot-lead-seconds"] || 0))}</span>
-        <span class="tag">정리 ${safe(durationLabel(policies["shutdown-grace-seconds"] || 0))}</span>
+        <span class="tag">작동 전 ${safe(durationLabel(policies["boot-lead-seconds"] || 0))}</span>
+        <span class="tag">작동 후 ${safe(durationLabel(policies["shutdown-grace-seconds"] || 0))}</span>
+      </div>
+    </div>`).join("");
+  const sensorGroups = new Map();
+  (configuration?.sensor_schedules || []).filter(schedule => schedule.mode !== "disabled").forEach(schedule => {
+    const key = JSON.stringify({ mode: schedule.mode, daily_times: schedule.daily_times, timezone: schedule.timezone });
+    const group = sensorGroups.get(key) || { schedule, sensors: [] };
+    group.sensors.push(schedule.node);
+    sensorGroups.set(key, group);
+  });
+  const sensorCards = [...sensorGroups.values()].map(group => `
+    <div class="window">
+      <strong>온습도 수집</strong>
+      ${sensorScheduleLines(group.schedule).map(line => `<small class="window-detail">${safe(line)}</small>`).join("")}
+      <div class="activity-tags">
+        ${group.sensors.map(sensor => `<span class="tag">${safe(sensor)}</span>`).join("")}
+        ${!(group.schedule.daily_times || []).length ? '<span class="tag warning-tag">수집 계획 꺼짐</span>' : ""}
+        <span class="tag">작동 전 ${safe(durationLabel(policies["boot-lead-seconds"] || 0))}</span>
+        <span class="tag">작동 후 ${safe(durationLabel(policies["shutdown-grace-seconds"] || 0))}</span>
       </div>
     </div>`).join("");
   const keepSchedules = configuration?.power_keep_schedules || [];
@@ -148,14 +175,20 @@ function renderPowerTimeline(configuration, activePlan) {
       ${keepSchedules.map(item => `<small class="window-detail">${safe(koreanClock(item.start))}부터 ${safe(koreanClock(item.end))}까지</small>`).join("")}
       <div class="activity-tags"><span class="tag">매일 반복</span></div>
     </div>` : "";
+  const recurringScheduleIds = [
+    ...(configuration?.capture_schedules || []),
+    ...(configuration?.sensor_schedules || []),
+    ...(configuration?.power_keep_schedules || []),
+  ].map(schedule => schedule.id);
   const oneShotWindows = (activePlan?.power_windows || []).filter(window => {
-    const byId = new Map((activePlan?.activities || []).map(item => [item.activity_id, item]));
-    return window.activity_ids.some(id => !["capture-schedule", "power-keep"].includes(byId.get(id)?.activity_type));
+    return window.activity_ids.some(activityId => !recurringScheduleIds.some(scheduleId =>
+      activityId === scheduleId || activityId.startsWith(`${scheduleId}-`)
+    ));
   }).map(window => `
     <div class="window"><strong>${fmt(window.power_on)} → ${fmt(window.power_down)}</strong>
     <small>${powerWindowStateLabel(window, activePlan.activities)}</small>
     <div class="activity-tags">${powerWindowLabels(window, activePlan.activities).map(label => `<span class="tag">${safe(label)}</span>`).join("")}</div></div>`).join("");
-  return captureCards + keepCard + oneShotWindows;
+  return captureCards + sensorCards + keepCard + oneShotWindows;
 }
 
 function renderDashboard() {
@@ -391,7 +424,7 @@ function powerSettingsFromForm() {
   const warmup_seconds = Number($("#power-warmup-seconds").value);
   const cleanup_seconds = Number($("#power-cleanup-seconds").value);
   if (![warmup_seconds, cleanup_seconds].every(value => Number.isInteger(value) && value >= 0 && value <= 86400)) {
-    throw new Error("워밍업과 정리 시간은 0~86400초 사이의 정수로 입력해 주세요.");
+    throw new Error("작동 전후 여유 시간은 0~86400초 사이의 정수로 입력해 주세요.");
   }
   const keep_schedules = [...$("#power-keep-list").querySelectorAll("[data-power-keep-id]")].map((row, index) => ({
     id: row.dataset.powerKeepId || `daily-power-keep-${index + 1}`,

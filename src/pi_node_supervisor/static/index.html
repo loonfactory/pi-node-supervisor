@@ -148,18 +148,18 @@
             </article>
 
             <article class="panel settings-card power-settings-card">
-              <div class="panel-title"><div><h2>전원 운용 설정</h2><span>촬영 일정에 따른 여유 시간과 별도 전원 유지 일정을 관리합니다.</span></div></div>
+              <div class="panel-title"><div><h2>전원 운용 설정</h2><span>촬영·센서 수집 일정에 따른 여유 시간과 별도 전원 유지 일정을 관리합니다.</span></div></div>
               <form id="power-settings-form">
                 <section class="power-settings-section">
-                  <div class="subsection-heading"><div><strong>촬영 전후 여유 시간</strong><span>촬영 일정이 있을 때 전원을 미리 켜고 나중에 끄기 위한 시간을 설정합니다.</span></div></div>
+                  <div class="subsection-heading"><div><strong>작동 전후 여유 시간</strong><span>촬영이나 센서 수집 전에 전원을 미리 켜고 작업 후에 유지할 시간을 설정합니다.</span></div></div>
                   <div class="form-grid">
-                    <label class="field"><span>촬영 전 워밍업(초)</span><input id="power-warmup-seconds" type="number" min="0" max="86400" step="1" required /></label>
-                    <label class="field"><span>촬영 후 정리 시간(초)</span><input id="power-cleanup-seconds" type="number" min="0" max="86400" step="1" required /></label>
+                    <label class="field"><span>작동 전 여유 시간(초)</span><input id="power-warmup-seconds" type="number" min="0" max="86400" step="1" required /></label>
+                    <label class="field"><span>작동 후 여유 시간(초)</span><input id="power-cleanup-seconds" type="number" min="0" max="86400" step="1" required /></label>
                   </div>
-                  <p class="field-help">워밍업은 촬영 전에 전원을 미리 켜 두는 시간이며, 정리 시간은 마지막 촬영 후 전원을 유지하는 시간입니다.</p>
+                  <p class="field-help">작동 전 여유 시간은 촬영이나 센서 수집 전에 전원을 미리 켜 두는 시간이며, 작동 후 여유 시간은 마지막 작업 후 전원을 유지하는 시간입니다.</p>
                 </section>
                 <section class="power-settings-section power-keep-section">
-                  <div class="subsection-heading power-keep-heading"><div><strong>전원 유지 시간</strong><span>촬영 일정이 없어도 매일 지정한 시간에는 장치 전원을 유지합니다.</span></div><button id="add-power-keep" type="button" class="ghost">+ 전원 유지 추가</button></div>
+                  <div class="subsection-heading power-keep-heading"><div><strong>전원 유지 시간</strong><span>촬영·센서 수집 일정과 별개로 매일 지정한 시간에는 장치 전원을 유지합니다.</span></div><button id="add-power-keep" type="button" class="ghost">+ 전원 유지 추가</button></div>
                   <div id="power-keep-list" class="power-keep-list"></div>
                 </section>
                 <div class="settings-actions storage-apply-actions"><span id="power-settings-note">전원 유지 일정은 촬영 일정과 독립적으로 매일 작동합니다.</span><button type="submit">전원 설정 적용</button></div>
