@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import ftplib
 import hashlib
+import logging
 import os
 import shutil
 import ssl
@@ -25,6 +26,7 @@ from .models import (
 from .runtime_store import RuntimeStore
 
 CSV_HEADER = ("timestamp", "temperature_c", "humidity_percent")
+LOGGER = logging.getLogger(__name__)
 
 
 class SensorMirror(Protocol):
@@ -282,6 +284,19 @@ class SensorStorageCoordinator:
         delivery = self.sync_pending()
         return {"csv_path": str(path), "relative_path": str(relative), "delivery": delivery}
 
+    def _safe_error(self, exc: Exception) -> str:
+        message = f"{type(exc).__name__}: {exc}"
+        for mirror in self.settings.mirrors:
+            environment_names = [getattr(mirror, "password_env", None)]
+            environment_names.append(
+                getattr(mirror, "private_key_passphrase_env", None)
+            )
+            for environment_name in environment_names:
+                secret = os.environ.get(environment_name) if environment_name else None
+                if secret:
+                    message = message.replace(secret, "***")
+        return message[:2000]
+
     def sync_pending(self) -> dict[str, int]:
         result = {"succeeded": 0, "failed": 0, "backlog": 0}
         now = self.clock().astimezone(UTC)
@@ -304,18 +319,26 @@ class SensorStorageCoordinator:
                 )
                 result["succeeded"] += 1
             except Exception as exc:
+                error = self._safe_error(exc)
                 self.runtime.fail_sensor_delivery(
                     node_id=self.node_id,
                     target=item["target"],
                     relative_path=str(relative),
-                    error=f"{type(exc).__name__}: {exc}",
+                    error=error,
                     retry_base_seconds=self.settings.retry_base_seconds,
                     retry_max_seconds=self.settings.retry_max_seconds,
                     now=now,
                 )
                 self.runtime.append_event(
                     "sensor.mirror_failed", severity="warning", node_id=self.node_id,
-                    payload={"target": item["target"], "relative_path": str(relative), "error": f"{type(exc).__name__}: {exc}"},
+                    payload={"target": item["target"], "relative_path": str(relative), "error": error},
+                )
+                LOGGER.warning(
+                    "sensor mirror failed node=%s target=%s relative_path=%s error=%s",
+                    self.node_id,
+                    item["target"],
+                    relative,
+                    error,
                 )
                 result["failed"] += 1
         status = self.runtime.sensor_delivery_status()["counts"]

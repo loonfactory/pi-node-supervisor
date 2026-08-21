@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import logging
 import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path, PurePosixPath
@@ -187,6 +188,120 @@ def test_remote_failure_keeps_local_csv_and_restart_retry_has_no_duplicate_rows(
         assert len(list(csv.DictReader(stream))) == 1
     event_types = {item.event_type for item in runtime.list_events()}
     assert {"sensor.csv_committed", "sensor.mirror_failed", "sensor.mirror_succeeded"} <= event_types
+
+
+@pytest.mark.parametrize("target", ["file", "sftp", "ftps"])
+def test_transport_failure_is_logged_visible_and_retryable_without_duplicate_rows(
+    tmp_path, caplog, target
+):
+    runtime = RuntimeStore(tmp_path / "state.db")
+    mirror_settings = {
+        "file": {"type": "file", "name": "file", "directory": tmp_path / "unused"},
+        "sftp": {
+            "type": "sftp", "name": "sftp", "host": "example.test",
+            "username": "sensor", "remote_directory": "/archive",
+            "password_env": "SFTP_PASSWORD",
+        },
+        "ftps": {
+            "type": "ftps", "name": "ftps", "host": "example.test",
+            "username": "sensor", "remote_directory": "/archive",
+            "password_env": "FTPS_PASSWORD",
+        },
+    }
+    settings = SensorStorageSettings.model_validate(
+        {
+            "local_directory": tmp_path / "local",
+            "mirrors": [mirror_settings[target]],
+            "retry_base_seconds": 1,
+            "retry_max_seconds": 1,
+        }
+    )
+
+    class FailingTransport:
+        name = target
+
+        def __init__(self):
+            self.fail = True
+            self.uploads = []
+
+        def upload_atomic(self, local_path, relative_path):
+            if self.fail:
+                raise OSError(f"{target} rename failed after temporary upload")
+            self.uploads.append((str(relative_path), local_path.read_bytes()))
+
+    transport = FailingTransport()
+    slot = datetime(2030, 1, 1, tzinfo=UTC)
+    coordinator = SensorStorageCoordinator(
+        node_id="environment0",
+        timezone="UTC",
+        settings=settings,
+        runtime=runtime,
+        mirrors={target: transport},
+        clock=lambda: slot,
+    )
+
+    with caplog.at_level(logging.WARNING, logger="pi_node_supervisor.sensor_storage"):
+        result = coordinator.commit(slot, reading(slot))
+
+    error = f"OSError: {target} rename failed after temporary upload"
+    status = runtime.sensor_delivery_status()
+    failed_events = [
+        event for event in runtime.list_events()
+        if event.event_type == "sensor.mirror_failed"
+    ]
+    assert result["delivery"] == {"succeeded": 0, "failed": 1, "backlog": 1}
+    assert status["counts"]["failed"] == 1
+    assert status["items"][0]["last_error"] == error
+    assert failed_events[0].payload["error"] == error
+    assert error in caplog.text
+
+    transport.fail = False
+    coordinator.clock = lambda: slot + timedelta(seconds=1)
+    assert coordinator.sync_pending() == {"succeeded": 1, "failed": 0, "backlog": 0}
+    assert len(transport.uploads) == 1
+    with Path(result["csv_path"]).open(encoding="utf-8", newline="") as stream:
+        assert len(list(csv.DictReader(stream))) == 1
+
+
+def test_transport_error_redacts_configured_secret(tmp_path, monkeypatch, caplog):
+    monkeypatch.setenv("FTPS_PASSWORD", "do-not-log-this")
+    runtime = RuntimeStore(tmp_path / "state.db")
+    settings = SensorStorageSettings.model_validate(
+        {
+            "local_directory": tmp_path / "local",
+            "mirrors": [{
+                "type": "ftps",
+                "name": "ftps",
+                "host": "example.test",
+                "username": "sensor",
+                "remote_directory": "/archive",
+                "password_env": "FTPS_PASSWORD",
+            }],
+        }
+    )
+
+    class Mirror:
+        name = "ftps"
+
+        def upload_atomic(self, _local_path, _relative_path):
+            raise OSError("server rejected do-not-log-this")
+
+    slot = datetime(2030, 1, 1, tzinfo=UTC)
+    coordinator = SensorStorageCoordinator(
+        node_id="environment0",
+        timezone="UTC",
+        settings=settings,
+        runtime=runtime,
+        mirrors={"ftps": Mirror()},
+        clock=lambda: slot,
+    )
+
+    with caplog.at_level(logging.WARNING, logger="pi_node_supervisor.sensor_storage"):
+        coordinator.commit(slot, reading(slot))
+
+    last_error = runtime.sensor_delivery_status()["items"][0]["last_error"]
+    assert last_error == "OSError: server rejected ***"
+    assert "do-not-log-this" not in caplog.text
 
 
 def test_sftp_uses_temporary_upload_then_atomic_posix_rename(tmp_path, monkeypatch):
