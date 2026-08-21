@@ -14,6 +14,7 @@ python_bin=${PYTHON_BIN:-python3}
 capture_node_executable=${CAPTURE_NODE_EXECUTABLE:-/home/huintech/capture-node/.venv/bin/capture-node-web}
 replace_capture_services=${REPLACE_CAPTURE_SERVICES:-true}
 power_config=${POWER_CONFIG:-$remote_base/generated/pi-power-manager.json}
+huintech_device_source=${HUINTECHDEVICE_SOURCE:-}
 
 usage() {
   printf '%s\n' \
@@ -28,6 +29,7 @@ usage() {
     "  --initial-config FILE    Initial configuration JSON" \
     "  --capture-node-executable PATH  Trusted CaptureNode runtime" \
     "  --power-config PATH      Generated pi-power-manager config path" \
+    "  --huintech-device-source PATH  HUINTECHDEVICE python source root" \
     "  --keep-external-capture-nodes   Do not disable legacy user services" \
     "  -h, --help               Show this help"
 }
@@ -42,6 +44,7 @@ while (($#)); do
     --initial-config) initial_config=${2:?missing value for --initial-config}; shift 2 ;;
     --capture-node-executable) capture_node_executable=${2:?missing value for --capture-node-executable}; shift 2 ;;
     --power-config) power_config=${2:?missing value for --power-config}; shift 2 ;;
+    --huintech-device-source) huintech_device_source=${2:?missing value for --huintech-device-source}; shift 2 ;;
     --keep-external-capture-nodes) replace_capture_services=false; shift ;;
     -h|--help) usage; exit 0 ;;
     *) printf 'Unknown option: %s\n' "$1" >&2; usage >&2; exit 2 ;;
@@ -81,10 +84,31 @@ done
   printf 'Node registry or initial configuration is unreadable\n' >&2
   exit 2
 }
+sensor_count=$(
+  "$python_bin" -c 'import json,sys; print(sum(node.get("sensor_serial") is not None for node in json.load(open(sys.argv[1], encoding="utf-8"))["nodes"]))' "$nodes_file"
+)
+if ((sensor_count)); then
+  command -v tar >/dev/null || { printf 'Local tar command is required for HUINTECHDEVICE staging\n' >&2; exit 2; }
+  if [[ -z "$huintech_device_source" ]]; then
+    for candidate in \
+      "$project_root/../huintech-device/huintech-device-main/python" \
+      "$project_root/../../../huintech-device/huintech-device-main/python"; do
+      if [[ -r "$candidate/huintech/sensors/soil/cwt_soil_thc_s.py" ]]; then
+        huintech_device_source=$candidate
+        break
+      fi
+    done
+  fi
+  [[ -n "$huintech_device_source" && -r "$huintech_device_source/huintech/sensors/soil/cwt_soil_thc_s.py" ]] || {
+    printf 'Sensor nodes require --huintech-device-source pointing to the python source root\n' >&2
+    exit 2
+  }
+fi
 
 ssh_options=(-o BatchMode=yes -o ConnectTimeout=10)
 build_dir=$(mktemp -d /tmp/pi-node-supervisor-build.XXXXXX)
 remote_stage=''
+sensor_dependency_archive=''
 
 cleanup() {
   local exit_code=$?
@@ -98,7 +122,7 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 printf 'Preflight: %s\n' "$target"
-ssh "${ssh_options[@]}" "$target" 'set -eu; command -v python3 >/dev/null; command -v systemctl >/dev/null; command -v curl >/dev/null; systemctl --user show-environment >/dev/null; printf "host=%s arch=%s python=%s\n" "$(hostname)" "$(uname -m)" "$(python3 -V 2>&1)"'
+ssh "${ssh_options[@]}" "$target" 'set -eu; command -v python3 >/dev/null; command -v systemctl >/dev/null; command -v curl >/dev/null; command -v tar >/dev/null; systemctl --user show-environment >/dev/null; printf "host=%s arch=%s python=%s\n" "$(hostname)" "$(uname -m)" "$(python3 -V 2>&1)"'
 
 printf 'Building wheel\n'
 if "$python_bin" -c 'import build' >/dev/null 2>&1; then
@@ -121,6 +145,11 @@ wheel_path=$(find "$build_dir" -maxdepth 1 -type f -name 'pi_node_supervisor-*.w
 }
 wheel_hash=$(sha256sum "$wheel_path" | awk '{print $1}')
 release_id="$(date -u +%Y%m%dT%H%M%SZ)-${wheel_hash:0:12}"
+if ((sensor_count)); then
+  sensor_dependency_archive="$build_dir/huintech-device-python.tar.gz"
+  tar --exclude='__pycache__' --exclude='*.pyc' \
+    -C "$huintech_device_source" -czf "$sensor_dependency_archive" huintech
+fi
 
 remote_stage=$(ssh "${ssh_options[@]}" "$target" mktemp -d /tmp/pi-node-supervisor-deploy.XXXXXX)
 [[ "$remote_stage" == /tmp/pi-node-supervisor-deploy.* ]] || {
@@ -135,6 +164,9 @@ scp "${ssh_options[@]}" \
   "$initial_config" \
   "$project_root/systemd/pi-node-supervisor.user.service.in" \
   "$target:$remote_stage/"
+if [[ -n "$sensor_dependency_archive" ]]; then
+  scp "${ssh_options[@]}" "$sensor_dependency_archive" "$target:$remote_stage/"
+fi
 
 printf 'Installing and activating release\n'
 ssh "${ssh_options[@]}" "$target" bash -s -- \
@@ -183,7 +215,13 @@ stamp=$(date -u +%Y%m%dT%H%M%SZ)
 
 install -d -m 700 "$base" "$base/releases" "$release" "$config_dir" "$state_dir" "$generated_dir" "$backup_dir" "$unit_dir"
 python3 -m venv "$release/.venv"
-"$release/.venv/bin/python" -m pip install "$wheel[web]"
+"$release/.venv/bin/python" -m pip install "$wheel[web,sensor,remote]"
+if [[ -r "$stage/huintech-device-python.tar.gz" ]]; then
+  install -d -m 700 "$release/vendor"
+  tar -xzf "$stage/huintech-device-python.tar.gz" -C "$release/vendor"
+  PYTHONPATH="$release/vendor" "$release/.venv/bin/python" -c \
+    'from huintech.sensors.soil.cwt_soil_thc_s import CWTSoilTHCS'
+fi
 
 "$release/.venv/bin/pi-node-supervisor" \
   --nodes "$nodes" \
@@ -207,6 +245,45 @@ for node in json.load(open(sys.argv[1], encoding="utf-8"))["nodes"]:
         raise SystemExit(f"{node['id']} is not running")
     print(f"node={node['id']} status=running")
 PYTHON_PREFLIGHT
+
+PYTHONPATH="$release/vendor${PYTHONPATH:+:$PYTHONPATH}" \
+  "$release/.venv/bin/python" - "$nodes" "$base" <<'PYTHON_SENSOR_PREFLIGHT'
+import json
+import os
+import sys
+from pathlib import Path
+
+sensor_nodes = [
+    node for node in json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))["nodes"]
+    if node.get("sensor_serial") is not None
+]
+base = Path(sys.argv[2]).resolve()
+if sensor_nodes:
+    from huintech.sensors.soil.cwt_soil_thc_s import CWTSoilTHCS  # noqa: F401
+    import serial  # noqa: F401
+for node in sensor_nodes:
+    port = Path(node["sensor_serial"]["port"])
+    if not port.exists():
+        raise SystemExit(f"sensor port is unavailable: {port}")
+    if not os.access(port, os.R_OK | os.W_OK):
+        raise SystemExit(
+            f"sensor port requires read/write permission for {os.environ.get('USER', 'service user')}: {port}"
+        )
+    configured_root = Path(node["sensor_storage"]["local_directory"])
+    storage_root = (
+        configured_root if configured_root.is_absolute() else base / configured_root
+    ).resolve()
+    try:
+        storage_root.relative_to(base)
+        below_base = True
+    except ValueError:
+        below_base = False
+    if not storage_root.exists() and below_base:
+        storage_root.mkdir(parents=True, mode=0o700)
+    if not storage_root.is_dir() or not os.access(storage_root, os.R_OK | os.W_OK | os.X_OK):
+        raise SystemExit(f"sensor CSV directory requires service-user access: {storage_root}")
+    print(f"node={node['id']} sensor_port={port} permission=read-write")
+PYTHON_SENSOR_PREFLIGHT
 
 nodes_backup=''
 if [[ -f "$config_dir/nodes.json" ]] && ! cmp -s "$config_dir/nodes.json" "$nodes"; then

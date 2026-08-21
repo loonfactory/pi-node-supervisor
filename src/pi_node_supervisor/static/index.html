@@ -23,6 +23,7 @@
       <nav class="sidebar" aria-label="주 메뉴">
         <button class="nav-item active" data-view="dashboard">대시보드</button>
         <button class="nav-item" data-view="cameras">카메라</button>
+        <button class="nav-item" data-view="sensors">센서</button>
         <button class="nav-item" data-view="settings">설정</button>
         <button class="nav-item" data-view="events">이벤트</button>
         <button class="nav-item" data-view="data">데이터</button>
@@ -44,6 +45,13 @@
           <div class="page-heading"><div><p class="eyebrow">LIVE CAMERA CHECK</p><h1>카메라 프리뷰</h1></div><button id="refresh-previews">스트림 재연결</button></div>
           <p class="camera-help">카메라 상태를 실시간으로 확인합니다.</p>
           <div id="camera-grid" class="camera-grid"></div>
+        </section>
+
+        <section id="sensors" class="view">
+          <div class="page-heading"><div><p class="eyebrow">TEMPERATURE · HUMIDITY</p><h1>센서 데이터</h1><p class="page-description">로컬 CSV 원본과 file/SFTP/FTPS 복제 상태를 함께 확인합니다.</p></div><div class="button-row"><button id="sync-sensor-storage" class="ghost">원격 재시도</button><button id="refresh-sensors">갱신</button></div></div>
+          <div id="sensor-metric-grid" class="metric-grid"></div>
+          <article class="panel sensor-data-panel"><div class="panel-title"><div><h2>온·습도 측정값</h2><span>CSV의 timestamp, temperature_c, humidity_percent</span></div></div><div id="sensor-data-table" class="empty">센서 데이터를 불러오는 중입니다.</div></article>
+          <article class="panel sensor-delivery-panel"><div class="panel-title"><div><h2>원격 동기화 상태</h2><span>로컬 CSV 전체 파일의 원자적 복제 결과</span></div></div><div id="sensor-delivery-table" class="empty">동기화 상태를 불러오는 중입니다.</div></article>
         </section>
 
         <section id="settings" class="view">
@@ -77,6 +85,44 @@
                 <p id="capture-schedule-summary" class="field-help"></p>
                 <p id="capture-schedule-warning" class="settings-warning" hidden>촬영 시각이 없습니다. 촬영과 자동 전원 계획이 모두 비활성화됩니다.</p>
                 <div class="settings-actions storage-apply-actions"><span id="capture-schedule-note">촬영 일정을 불러오는 중입니다.</span><button id="apply-capture-schedule" type="submit">촬영 일정 적용</button></div>
+              </form>
+            </article>
+
+            <article class="panel settings-card sensor-storage-card">
+              <div class="panel-title"><div><h2>센서 및 CSV 저장소</h2><span>CWT 직렬 연결과 로컬 원본·원격 복제 대상을 설정합니다.</span></div></div>
+              <label class="field compact-field"><span>적용 대상</span><select id="sensor-settings-node"></select></label>
+              <form id="sensor-settings-form">
+                <div class="form-grid">
+                  <label class="field"><span>드라이버</span><input id="sensor-driver" value="cwt-soil-thc-s" readonly /></label>
+                  <label class="field"><span>직렬 포트</span><input id="sensor-port" required placeholder="/dev/ttyAMA0" /></label>
+                  <label class="field"><span>Baudrate</span><select id="sensor-baudrate"><option>1200</option><option>2400</option><option selected>4800</option><option>9600</option><option>19200</option><option>38400</option><option>57600</option><option>115200</option></select></label>
+                  <label class="field"><span>Slave ID</span><input id="sensor-slave-id" type="number" min="1" max="254" step="1" required /></label>
+                  <label class="field"><span>응답 제한(초)</span><input id="sensor-timeout" type="number" min="0.1" max="30" step="0.1" required /></label>
+                  <label class="field"><span>로컬 CSV 원본 폴더</span><input id="sensor-local-directory" required placeholder="/var/lib/pi-node-supervisor/sensors" /></label>
+                  <label class="field"><span>재시도 시작(초)</span><input id="sensor-retry-base" type="number" min="1" max="3600" step="1" required /></label>
+                  <label class="field"><span>재시도 최대(초)</span><input id="sensor-retry-max" type="number" min="1" max="86400" step="1" required /></label>
+                </div>
+                <div class="subsection-heading sensor-mirror-heading"><div><strong>CSV 복제 대상</strong><span>remote append 없이 동일 상대 경로의 전체 CSV를 교체합니다.</span></div><button id="add-sensor-mirror" type="button" class="ghost">+ 복제 대상 추가</button></div>
+                <div id="sensor-mirror-list" class="storage-list empty"></div>
+                <div id="sensor-mirror-editor" class="storage-editor" hidden>
+                  <input id="sensor-mirror-edit-index" type="hidden" value="-1" />
+                  <div class="form-grid">
+                    <label class="field"><span>방식</span><select id="sensor-mirror-type"><option value="file">이 장치의 폴더</option><option value="sftp">SFTP 서버</option><option value="ftps">FTPS 서버</option></select></label>
+                    <label class="field"><span>표시 이름</span><input id="sensor-mirror-name" placeholder="예: backup" /></label>
+                    <label class="field sensor-mirror-file-field"><span>복제 폴더</span><input id="sensor-mirror-directory" placeholder="/mnt/sensor-backup" /></label>
+                    <label class="field sensor-mirror-remote-field"><span>서버 주소</span><input id="sensor-mirror-host" /></label>
+                    <label class="field sensor-mirror-remote-field"><span>포트</span><input id="sensor-mirror-port" type="number" min="1" max="65535" /></label>
+                    <label class="field sensor-mirror-remote-field"><span>사용자 이름</span><input id="sensor-mirror-username" /></label>
+                    <label class="field sensor-mirror-remote-field"><span>원격 폴더</span><input id="sensor-mirror-remote-directory" placeholder="/sensors" /></label>
+                    <label class="field sensor-mirror-sftp-field"><span>SSH 개인 키 경로</span><input id="sensor-mirror-private-key" /></label>
+                    <label class="field sensor-mirror-sftp-field"><span>known_hosts 경로</span><input id="sensor-mirror-known-hosts" placeholder="~/.ssh/known_hosts" /></label>
+                    <label class="field sensor-mirror-secret-field"><span>비밀번호 환경변수 이름</span><input id="sensor-mirror-password-env" placeholder="SENSOR_STORAGE_PASSWORD" /></label>
+                    <label class="field sensor-mirror-ftps-field checkbox-field"><input id="sensor-mirror-verify-tls" type="checkbox" checked /><span>TLS 인증서 검증</span></label>
+                  </div>
+                  <p class="field-help">비밀번호 값은 브라우저나 nodes.json에 저장하지 않고 환경변수 이름만 저장합니다.</p>
+                  <div class="settings-actions"><button id="cancel-sensor-mirror" type="button" class="ghost">취소</button><button id="save-sensor-mirror" type="button">목록에 저장</button></div>
+                </div>
+                <div class="settings-actions storage-apply-actions"><span id="sensor-settings-note">센서 설정을 불러오는 중입니다.</span><button id="apply-sensor-settings" type="submit">센서 설정 저장</button></div>
               </form>
             </article>
 

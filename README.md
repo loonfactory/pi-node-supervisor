@@ -37,7 +37,7 @@ python -m venv .venv
 ```
 
 The `sensor` extra installs `pyserial`. HUINTECHDEVICE is currently a
-source-only Python library, so its `src` directory must also be present on
+source-only Python library, so its `python` directory must also be present on
 `PYTHONPATH` (or be packaged by that project) when the CWT adapter runs. The
 Supervisor imports only its public CWT driver API and does not run a separate
 HUINTECHDEVICE service.
@@ -54,7 +54,7 @@ Without installing the project, the planner can be run directly:
 
 ```bash
 PYTHONPATH=src python3 -m pi_node_supervisor \
-  --nodes examples/nodes.json \
+  --nodes examples/nodes.dual-camera-sensor.json \
   plan examples/config.json
 ```
 
@@ -178,6 +178,13 @@ Authenticated endpoints:
 - `GET /api/events`
 - `GET /api/data`
 - `POST /api/data/sync`
+- `GET /api/sensor-data`
+- `GET /api/sensor-storage`
+- `POST /api/sensor-storage/sync`
+- `GET /api/sensor-settings`
+- `PUT /api/sensor-settings/{node_id}`
+- `GET /api/sensor-schedules`
+- `PUT /api/sensor-schedules`
 - `GET /api/nodes`
 - `GET /api/nodes/{node_id}/configuration`
 - `GET /api/capture-schedules`
@@ -280,10 +287,11 @@ keeps one serial handle for the Supervisor lifecycle and requests only
 all write APIs are outside this boundary.
 
 A read-only hardware smoke check is available after granting the service user
-serial-port access:
+serial-port access. HUINTECHDEVICE keeps its Python package below `python/`,
+so use that directory on `PYTHONPATH`:
 
 ```bash
-PYTHONPATH=src:/opt/huintech-device/src .venv/bin/python \
+PYTHONPATH=src:../huintech-device/huintech-device-main/python .venv/bin/python \
   scripts/read_cwt_sensor.py --port /dev/ttyAMA0 --slave-id 1
 ```
 
@@ -307,6 +315,13 @@ Remote failures leave the local collection successful and are retried on
 worker startup or data synchronization. `/api/sensor-storage` reports pending,
 failed, and successful deliveries. Passwords remain environment-variable
 references and are never written into state or events.
+
+The Sensor Web screen reads values directly from the authoritative CSV through
+`/api/sensor-data`; measurements are not copied into SQLite. It displays only
+the scheduled timestamp, temperature, humidity, local path, and file-level
+mirror state. The Settings screen stages strict CWT serial and sensor storage
+changes in `nodes.json`, first preserving `nodes.json.previous`. A running
+adapter continues using the previous settings until the service is restarted.
 
 Managed CaptureNode children emit structured JSON logs. Supervisor consumes
 that child-process log stream and stores `capture-node.*` records in its event
@@ -347,11 +362,34 @@ Override values without editing the script:
 ```bash
 scripts/deploy.sh \
   --target huintech@192.168.12.7 \
-  --nodes examples/nodes.dual-camera.json \
+  --nodes examples/nodes.json \
   --initial-config examples/config.empty.json \
+  --huintech-device-source ../huintech-device/huintech-device-main/python \
   --bind-host 0.0.0.0 \
   --port 8080
 ```
+
+When the registry contains a CWT sensor, deployment packages the public
+HUINTECHDEVICE Python source into the versioned release, installs the
+`sensor`/`remote` extras, verifies the driver import, and confirms that the
+service user can read and write the configured serial device before switching
+`current`. Grant serial access once, then start a new login session before
+deploying:
+
+```bash
+sudo usermod -aG dialout huintech
+id huintech
+test -r /dev/ttyAMA0 && test -w /dev/ttyAMA0
+```
+
+Remote SFTP/FTPS passwords stay only in the protected
+`config/supervisor.env`, for example
+`SENSOR_STORAGE_PASSWORD=...`; the browser stores only that environment
+variable name. If activation fails, the deploy script restores `previous`, the
+prior systemd unit, and the backed-up nodes file. For a manual rollback, stop
+the service, point `current` to the verified `previous` release, restore the
+corresponding `backups/nodes.json.*`, reload user systemd, and restart the
+service.
 
 The default deployment replaces the legacy `capture-node-web@camera0/1` user
 services. It preserves managed copies of both existing camera configs and, on
@@ -408,10 +446,10 @@ is explicitly invoked with `--enable`.
 ## Remaining boundary
 
 RTC alarm writes and actual system shutdown remain exclusively owned by
-`pi-power-manager`. Sensor-specific execution adapters, role-based user
-accounts, HTTPS termination, retention/deletion workflows, and multi-Pi
-control remain later work. The current API token gives one local operator
-identity rather than the planned Viewer/Operator/Administrator split.
+`pi-power-manager`. Role-based user accounts, HTTPS termination,
+retention/deletion workflows, and multi-Pi control remain later work. The
+current API token gives one local operator identity rather than the planned
+Viewer/Operator/Administrator split.
 
 The Web UI camera view consumes authenticated MJPEG streams from managed
 CaptureNodes. The browser opens each stream with `X-Supervisor-Token`, parses

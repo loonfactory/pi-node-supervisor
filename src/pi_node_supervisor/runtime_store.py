@@ -547,7 +547,9 @@ class RuntimeStore:
         except sqlite3.Error as exc:
             raise PersistenceError(f"cannot fail sensor delivery: {exc}") from exc
 
-    def sensor_delivery_status(self) -> dict[str, Any]:
+    def sensor_delivery_status(self, *, limit: int = 100) -> dict[str, Any]:
+        if limit < 1 or limit > 10000:
+            raise ValueError("sensor delivery status limit must be between 1 and 10000")
         try:
             with self._connect() as connection:
                 rows = connection.execute(
@@ -556,7 +558,8 @@ class RuntimeStore:
                 ).fetchall()
                 recent = connection.execute(
                     """SELECT * FROM sensor_deliveries
-                       ORDER BY updated_at DESC LIMIT 100"""
+                       ORDER BY updated_at DESC LIMIT ?""",
+                    (limit,),
                 ).fetchall()
         except sqlite3.Error as exc:
             raise PersistenceError(f"cannot read sensor delivery status: {exc}") from exc

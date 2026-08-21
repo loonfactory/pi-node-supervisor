@@ -438,6 +438,11 @@ class SensorSerialSettings(StrictModel):
         return value
 
 
+class SensorNodeSettingsUpdate(StrictModel):
+    sensor_serial: SensorSerialSettings
+    sensor_storage: SensorStorageSettings
+
+
 class SupervisorConfiguration(StrictModel):
     schema_version: Literal[1] = 1
     timezone: str

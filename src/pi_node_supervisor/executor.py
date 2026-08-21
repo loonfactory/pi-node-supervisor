@@ -220,6 +220,30 @@ class ExecutionEngine:
             if callable(closer):
                 closer()
 
+    def sync_sensor_storage(self, node_id: str | None = None) -> dict[str, Any]:
+        selected = {
+            current_node: getattr(adapter, "storage", None)
+            for current_node, adapter in self.adapters.items()
+            if node_id is None or current_node == node_id
+        }
+        coordinators = {
+            current_node: storage
+            for current_node, storage in selected.items()
+            if storage is not None and callable(getattr(storage, "sync_pending", None))
+        }
+        if node_id is not None and node_id not in coordinators:
+            raise ValueError(f"node has no sensor storage adapter: {node_id}")
+        results = {}
+        failures = []
+        for current_node, storage in coordinators.items():
+            try:
+                results[current_node] = storage.sync_pending()
+            except Exception as exc:
+                failures.append(
+                    {"node_id": current_node, "error": f"{type(exc).__name__}: {exc}"}
+                )
+        return {"nodes": results, "failures": failures}
+
     def sync_data(self, node_id: str | None = None) -> dict[str, Any]:
         with self._native_sync_lock:
             return self._sync_data(node_id)

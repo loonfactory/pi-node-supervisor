@@ -1,4 +1,4 @@
-const state = { dashboard: null, runs: [], events: [], eventsTotal: 0, eventsOffset: 0, eventsPageSize: 25, data: [], dataTotal: 0, dataOffset: 0, dataPageSize: 25, nodes: [], preview: null, configuration: null, settingsLoaded: false, cameraConfigs: {}, storageDraft: [], captureSchedule: null, sensorSchedule: null };
+const state = { dashboard: null, runs: [], events: [], eventsTotal: 0, eventsOffset: 0, eventsPageSize: 25, data: [], dataTotal: 0, dataOffset: 0, dataPageSize: 25, sensorData: [], sensorDelivery: { counts: {}, items: [] }, sensorSettings: [], sensorMirrorDraft: [], nodes: [], preview: null, configuration: null, settingsLoaded: false, cameraConfigs: {}, storageDraft: [], captureSchedule: null, sensorSchedule: null };
 const previewUrls = new Map();
 const previewStreams = new Map();
 let dataViewUrl = null;
@@ -58,7 +58,8 @@ function status(value) {
   const labels = {
     healthy: "정상", unhealthy: "확인 필요", running: "실행 중", succeeded: "완료",
     failed: "실패", interrupted: "중단됨", missed: "놓침", info: "안내",
-    warning: "주의", error: "오류",
+    warning: "주의", error: "오류", pending: "대기", not_queued: "미전송",
+    synchronized: "동기화", "local-only": "로컬만",
   };
   return `<span class="status ${value}">${safe(labels[value] || value)}</span>`;
 }
@@ -270,6 +271,42 @@ async function loadData() {
     return loadData();
   }
   renderData();
+}
+
+function renderSensors() {
+  const counts = state.sensorDelivery.counts || {};
+  const latest = state.sensorData[0];
+  const sensorNodes = state.nodes.filter(node => node.kind === "sensor-node");
+  $("#sensor-metric-grid").innerHTML = [
+    ["등록 센서", sensorNodes.length, sensorNodes.length ? "good" : "alert"],
+    ["최근 온도", latest ? `${latest.temperature_c.toLocaleString()} °C` : "—", latest ? "good" : ""],
+    ["최근 습도", latest ? `${latest.humidity_percent.toLocaleString()} %` : "—", latest ? "good" : ""],
+    ["원격 재시도", (counts.pending || 0) + (counts.failed || 0), counts.failed ? "alert" : "good"],
+  ].map(([label, value, cls]) => `<article class="metric"><span>${label}</span><strong class="${cls}">${value}</strong></article>`).join("");
+
+  const measurementRows = state.sensorData.map(item => `<tr><td>${fmt(item.timestamp)}</td><td><strong>${safe(item.node_id)}</strong></td><td>${safe(item.temperature_c)}</td><td>${safe(item.humidity_percent)}</td><td>${status(item.sync_status)}<br><code>${safe(item.relative_path)}</code></td></tr>`);
+  $("#sensor-data-table").innerHTML = measurementRows.length
+    ? `<table class="sensor-data-table"><thead><tr><th>예약 시각</th><th>센서</th><th>온도 °C</th><th>습도 %</th><th>저장 상태</th></tr></thead><tbody>${measurementRows.join("")}</tbody></table>`
+    : '<div class="empty">로컬 CSV에 저장된 온·습도 측정값이 없습니다.</div>';
+
+  const deliveryRows = (state.sensorDelivery.items || []).map(item => `<tr><td>${fmt(item.updated_at)}</td><td><strong>${safe(item.node_id)}</strong><br><small>${safe(item.target)}</small></td><td>${status(item.status)}</td><td>${safe(item.attempts)}</td><td>${item.next_attempt_at ? fmt(item.next_attempt_at) : "—"}</td><td><code>${safe(item.relative_path)}</code>${item.last_error ? `<br><small class="danger-text">${safe(item.last_error)}</small>` : ""}</td></tr>`);
+  $("#sensor-delivery-table").innerHTML = deliveryRows.length
+    ? `<table class="sensor-delivery-table"><thead><tr><th>갱신 시각</th><th>센서 / 대상</th><th>상태</th><th>시도</th><th>다음 재시도</th><th>CSV / 오류</th></tr></thead><tbody>${deliveryRows.join("")}</tbody></table>`
+    : '<div class="empty">설정된 원격 복제 이력이 없습니다. 로컬 CSV 수집은 독립적으로 계속됩니다.</div>';
+}
+
+async function loadSensors() {
+  const [data, delivery, settings] = await Promise.all([
+    api("/api/sensor-data?limit=100"),
+    api("/api/sensor-storage"),
+    api("/api/sensor-settings"),
+  ]);
+  state.sensorData = data.items;
+  state.sensorDelivery = delivery;
+  state.sensorSettings = settings.items;
+  state.sensorRestartRequired = settings.restart_required;
+  renderSensors();
+  renderSensorSettingsNodeOptions();
 }
 
 async function accessDataOriginal(dataId, { download = false, filename = "original" } = {}) {
@@ -705,6 +742,139 @@ function sensorScheduleFromForm() {
   return { mode, daily_times, timezone };
 }
 
+function renderSensorSettingsNodeOptions() {
+  const select = $("#sensor-settings-node");
+  const previous = select.value;
+  select.innerHTML = state.sensorSettings.map(item => `<option value="${safe(item.node_id)}">${safe(item.node_id)}</option>`).join("");
+  if (state.sensorSettings.some(item => item.node_id === previous)) select.value = previous;
+  if (select.value) loadSensorSettingsIntoForm(select.value);
+}
+
+function loadSensorSettingsIntoForm(nodeId = $("#sensor-settings-node").value) {
+  const item = state.sensorSettings.find(candidate => candidate.node_id === nodeId);
+  if (!item) {
+    $("#sensor-settings-note").textContent = "설정 가능한 CWT 센서가 없습니다.";
+    return;
+  }
+  const serial = item.sensor_serial;
+  const storage = item.sensor_storage;
+  $("#sensor-driver").value = serial.driver;
+  $("#sensor-port").value = serial.port;
+  $("#sensor-baudrate").value = String(serial.baudrate);
+  $("#sensor-slave-id").value = String(serial.slave_id);
+  $("#sensor-timeout").value = String(serial.timeout_seconds);
+  $("#sensor-local-directory").value = storage.local_directory;
+  $("#sensor-retry-base").value = String(storage.retry_base_seconds);
+  $("#sensor-retry-max").value = String(storage.retry_max_seconds);
+  state.sensorMirrorDraft = structuredClone(storage.mirrors || []);
+  $("#sensor-mirror-editor").hidden = true;
+  renderSensorMirrorList();
+  const health = item.health?.healthy ? "직렬 연결 정상" : item.health?.error || "재시작 후 연결 상태를 확인하세요.";
+  $("#sensor-settings-note").textContent = state.sensorRestartRequired
+    ? "nodes.json 저장 완료 · 서비스 재시작 전까지 기존 설정으로 실행됩니다."
+    : `${health} · 온도와 습도만 수집합니다.`;
+}
+
+function sensorMirrorDescription(item) {
+  return item.type === "file"
+    ? item.directory
+    : `${item.username}@${item.host}:${item.port}${item.remote_directory}`;
+}
+
+function renderSensorMirrorList() {
+  const list = $("#sensor-mirror-list");
+  list.className = `storage-list${state.sensorMirrorDraft.length ? "" : " empty"}`;
+  list.innerHTML = state.sensorMirrorDraft.length ? state.sensorMirrorDraft.map((item, index) => `
+    <div class="storage-item">
+      <div class="storage-icon">${safe(item.type.toUpperCase())}</div>
+      <div><strong>${safe(item.name)}</strong><span>${safe(sensorMirrorDescription(item))}</span><small>전체 CSV 임시 업로드 후 최종 파일 교체</small></div>
+      <div class="storage-item-actions"><button type="button" class="ghost" data-edit-sensor-mirror="${index}">수정</button><button type="button" class="text-button danger-text" data-remove-sensor-mirror="${index}">삭제</button></div>
+    </div>`).join("") : '<div class="friendly-empty"><strong>원격 복제 대상이 없습니다.</strong><span>로컬 CSV만 원본으로 저장됩니다.</span></div>';
+}
+
+function updateSensorMirrorFields() {
+  const type = $("#sensor-mirror-type").value;
+  document.querySelectorAll(".sensor-mirror-file-field").forEach(item => item.hidden = type !== "file");
+  document.querySelectorAll(".sensor-mirror-remote-field").forEach(item => item.hidden = type === "file");
+  document.querySelectorAll(".sensor-mirror-sftp-field").forEach(item => item.hidden = type !== "sftp");
+  document.querySelectorAll(".sensor-mirror-secret-field").forEach(item => item.hidden = type === "file");
+  document.querySelectorAll(".sensor-mirror-ftps-field").forEach(item => item.hidden = type !== "ftps");
+}
+
+function openSensorMirrorEditor(index = -1) {
+  const item = index >= 0 ? state.sensorMirrorDraft[index] : { type: "file", name: "", directory: "" };
+  $("#sensor-mirror-edit-index").value = String(index);
+  $("#sensor-mirror-type").value = item.type;
+  $("#sensor-mirror-name").value = item.name || "";
+  $("#sensor-mirror-directory").value = item.directory || "";
+  $("#sensor-mirror-host").value = item.host || "";
+  $("#sensor-mirror-port").value = item.port || (item.type === "ftps" ? 21 : 22);
+  $("#sensor-mirror-username").value = item.username || "";
+  $("#sensor-mirror-remote-directory").value = item.remote_directory || "";
+  $("#sensor-mirror-private-key").value = item.private_key || "";
+  $("#sensor-mirror-known-hosts").value = item.known_hosts || "~/.ssh/known_hosts";
+  $("#sensor-mirror-password-env").value = item.password_env || "";
+  $("#sensor-mirror-verify-tls").checked = item.verify_tls !== false;
+  $("#sensor-mirror-editor").hidden = false;
+  updateSensorMirrorFields();
+}
+
+function sensorMirrorFromEditor() {
+  const type = $("#sensor-mirror-type").value;
+  const name = $("#sensor-mirror-name").value.trim();
+  const index = Number($("#sensor-mirror-edit-index").value);
+  const current = index >= 0 && state.sensorMirrorDraft[index]?.type === type ? state.sensorMirrorDraft[index] : {};
+  if (!name) throw new Error("복제 대상 이름을 입력해 주세요.");
+  if (type === "file") {
+    const directory = $("#sensor-mirror-directory").value.trim();
+    if (!directory) throw new Error("복제 폴더를 입력해 주세요.");
+    return { ...current, type, name, directory, layout: "daily" };
+  }
+  const host = $("#sensor-mirror-host").value.trim();
+  const username = $("#sensor-mirror-username").value.trim();
+  const remote_directory = $("#sensor-mirror-remote-directory").value.trim();
+  const password_env = $("#sensor-mirror-password-env").value.trim();
+  if (!host || !username || !remote_directory) throw new Error("서버 주소, 사용자 이름, 원격 폴더를 입력해 주세요.");
+  const common = {
+    ...current, type, name, host, port: Number($("#sensor-mirror-port").value), username,
+    remote_directory, layout: "daily",
+    connect_timeout_seconds: current.connect_timeout_seconds || 10,
+    operation_timeout_seconds: current.operation_timeout_seconds || 30,
+  };
+  if (type === "sftp") {
+    const private_key = $("#sensor-mirror-private-key").value.trim();
+    if (!private_key && !password_env) throw new Error("SSH 개인 키 또는 비밀번호 환경변수 이름이 필요합니다.");
+    return {
+      ...common,
+      private_key: private_key || undefined,
+      password_env: password_env || undefined,
+      known_hosts: $("#sensor-mirror-known-hosts").value.trim() || "~/.ssh/known_hosts",
+      private_key_passphrase_env: private_key ? current.private_key_passphrase_env : undefined,
+    };
+  }
+  if (!password_env) throw new Error("FTPS 비밀번호 환경변수 이름이 필요합니다.");
+  return { ...common, password_env, verify_tls: $("#sensor-mirror-verify-tls").checked, ca_file: current.ca_file };
+}
+
+function sensorSettingsFromForm() {
+  const serial = {
+    driver: "cwt-soil-thc-s",
+    port: $("#sensor-port").value.trim(),
+    baudrate: Number($("#sensor-baudrate").value),
+    timeout_seconds: Number($("#sensor-timeout").value),
+    slave_id: Number($("#sensor-slave-id").value),
+  };
+  const storage = {
+    local_directory: $("#sensor-local-directory").value.trim(),
+    mirrors: state.sensorMirrorDraft,
+    retry_base_seconds: Number($("#sensor-retry-base").value),
+    retry_max_seconds: Number($("#sensor-retry-max").value),
+  };
+  if (!serial.port || !storage.local_directory) throw new Error("직렬 포트와 로컬 CSV 폴더를 입력해 주세요.");
+  if (storage.retry_max_seconds < storage.retry_base_seconds) throw new Error("재시도 최대 시간은 시작 시간보다 작을 수 없습니다.");
+  return { sensor_serial: serial, sensor_storage: storage };
+}
+
 function renderStorageCameraOptions() {
   const cameras = state.nodes.filter(node => node.kind === "capture-node");
   const previous = $("#storage-camera").value || "common";
@@ -970,6 +1140,10 @@ async function refresh() {
     renderSensorNodeOptions();
     renderStorageCameraOptions();
     renderDashboard(); renderEvents(); renderData(); renderNodes(); renderCameras(); startCameraStreams();
+    try { await loadSensors(); } catch (error) {
+      $("#sensor-data-table").innerHTML = `<div class="friendly-empty error-copy"><strong>센서 데이터를 불러오지 못했습니다.</strong><span>${safe(error.message)}</span></div>`;
+      $("#sensor-delivery-table").innerHTML = '<div class="empty">동기화 상태를 확인할 수 없습니다.</div>';
+    }
   } catch (error) {
     $("#connection").textContent = "연결 실패"; $("#connection").className = "pill bad";
     toast(error.message, true);
@@ -981,9 +1155,11 @@ document.querySelectorAll(".nav-item").forEach(button => button.addEventListener
   button.classList.add("active"); $(`#${button.dataset.view}`).classList.add("active");
   if (button.dataset.view === "cameras") startCameraStreams(); else stopCameraStreams();
   if (["data", "events"].includes(button.dataset.view)) refresh();
+  if (button.dataset.view === "sensors") loadSensors().catch(error => toast(error.message, true));
   if (button.dataset.view === "settings") {
     renderCaptureCameraOptions();
     renderSensorNodeOptions();
+    renderSensorSettingsNodeOptions();
     renderStorageCameraOptions();
     loadCaptureSchedule();
     loadSensorSchedule();
@@ -1228,6 +1404,66 @@ $("#power-settings-form").addEventListener("submit", async event => {
     await refresh();
   } catch (error) {
     $("#power-settings-note").textContent = "적용하지 못했습니다. 기존 전원 설정은 유지됩니다.";
+    toast(error.message, true);
+  } finally { button.disabled = false; }
+});
+
+$("#refresh-sensors").addEventListener("click", async () => {
+  try { await loadSensors(); toast("센서 상태를 갱신했습니다."); } catch (error) { toast(error.message, true); }
+});
+$("#sync-sensor-storage").addEventListener("click", async event => {
+  const button = event.currentTarget;
+  button.disabled = true;
+  try {
+    await api("/api/sensor-storage/sync", { method: "POST" });
+    await loadSensors();
+    toast("전송 가능한 CSV의 원격 복제를 다시 시도했습니다.");
+  } catch (error) { toast(error.message, true); }
+  finally { button.disabled = false; }
+});
+$("#sensor-settings-node").addEventListener("change", () => loadSensorSettingsIntoForm());
+$("#add-sensor-mirror").addEventListener("click", () => openSensorMirrorEditor());
+$("#sensor-mirror-type").addEventListener("change", () => {
+  $("#sensor-mirror-port").value = $("#sensor-mirror-type").value === "ftps" ? "21" : $("#sensor-mirror-type").value === "sftp" ? "22" : "";
+  updateSensorMirrorFields();
+});
+$("#cancel-sensor-mirror").addEventListener("click", () => { $("#sensor-mirror-editor").hidden = true; });
+$("#save-sensor-mirror").addEventListener("click", () => {
+  try {
+    const item = sensorMirrorFromEditor();
+    const index = Number($("#sensor-mirror-edit-index").value);
+    if (state.sensorMirrorDraft.some((stored, storedIndex) => stored.name === item.name && storedIndex !== index)) throw new Error("같은 이름의 복제 대상이 이미 있습니다.");
+    if (index >= 0) state.sensorMirrorDraft[index] = item; else state.sensorMirrorDraft.push(item);
+    $("#sensor-mirror-editor").hidden = true;
+    renderSensorMirrorList();
+  } catch (error) { toast(error.message, true); }
+});
+$("#sensor-mirror-list").addEventListener("click", event => {
+  const edit = event.target.closest("[data-edit-sensor-mirror]");
+  if (edit) { openSensorMirrorEditor(Number(edit.dataset.editSensorMirror)); return; }
+  const remove = event.target.closest("[data-remove-sensor-mirror]");
+  if (!remove) return;
+  const item = state.sensorMirrorDraft[Number(remove.dataset.removeSensorMirror)];
+  if (!confirm(`‘${item.name}’ 복제 대상을 삭제할까요?`)) return;
+  state.sensorMirrorDraft.splice(Number(remove.dataset.removeSensorMirror), 1);
+  renderSensorMirrorList();
+});
+$("#sensor-settings-form").addEventListener("submit", async event => {
+  event.preventDefault();
+  const nodeId = $("#sensor-settings-node").value;
+  let document;
+  try { document = sensorSettingsFromForm(); } catch (error) { toast(error.message, true); return; }
+  if (!nodeId || !confirm(`${nodeId}의 CWT·CSV 설정을 저장할까요?\n현재 수집 프로세스에는 서비스 재시작 후 반영됩니다.`)) return;
+  const button = $("#apply-sensor-settings");
+  button.disabled = true;
+  $("#sensor-settings-note").textContent = "설정을 검증하고 nodes.json에 원자적으로 저장하는 중입니다…";
+  try {
+    const result = await api(`/api/sensor-settings/${encodeURIComponent(nodeId)}`, { method: "PUT", body: JSON.stringify(document) });
+    await loadSensors();
+    $("#sensor-settings-note").textContent = `저장 완료 · ${result.backup}에서 복구 가능 · 서비스 재시작 필요`;
+    toast("센서 설정을 저장했습니다. 운영 확인 후 서비스를 재시작하세요.");
+  } catch (error) {
+    $("#sensor-settings-note").textContent = "저장하지 못했습니다. 기존 nodes.json은 유지됩니다.";
     toast(error.message, true);
   } finally { button.disabled = false; }
 });

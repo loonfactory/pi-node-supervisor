@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import csv
 import hashlib
 import hmac
+import math
 import threading
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
@@ -28,6 +30,7 @@ from .models import (
     CaptureScheduleUpdate,
     DataRecord,
     PowerSettingsUpdate,
+    SensorNodeSettingsUpdate,
     SensorScheduleUpdate,
     StorageSettingsDocument,
 )
@@ -36,6 +39,7 @@ from .service import SupervisorService
 
 
 _MAX_CATALOG_FILE_BYTES = 128 * 1024 * 1024
+_SENSOR_CSV_HEADER = ("timestamp", "temperature_c", "humidity_percent")
 
 
 def _catalog_storage_location(record: DataRecord) -> str:
@@ -60,6 +64,102 @@ def _catalog_uri_allowed(record: DataRecord, endpoint: str | None) -> bool:
         and not actual.query
         and not actual.fragment
     )
+
+
+def _sensor_data_rows(
+    service: SupervisorService,
+    delivery_items: list[dict[str, Any]],
+    *,
+    node_id: str | None = None,
+) -> list[dict[str, Any]]:
+    deliveries = {
+        (item["node_id"], item["target"], item["relative_path"]): item
+        for item in delivery_items
+    }
+    rows: list[dict[str, Any]] = []
+    selected = [
+        node
+        for node in service.registry
+        if node.kind == "sensor-node"
+        and node.sensor_storage is not None
+        and (node_id is None or node.id == node_id)
+    ]
+    if node_id is not None and not selected:
+        raise HTTPException(status_code=404, detail=f"sensor node does not exist: {node_id}")
+    for node in selected:
+        assert node.sensor_storage is not None
+        root = node.sensor_storage.local_directory.expanduser().resolve()
+        node_root = root / node.id
+        if not node_root.is_dir():
+            continue
+        for path in node_root.glob("[0-9][0-9][0-9][0-9]/[0-9][0-9]/*.csv"):
+            try:
+                resolved = path.resolve(strict=True)
+                relative = resolved.relative_to(root)
+            except (OSError, ValueError):
+                continue
+            if path.is_symlink() or relative.parts[0] != node.id or len(relative.parts) != 4:
+                continue
+            try:
+                with resolved.open("r", encoding="utf-8", newline="") as stream:
+                    reader = csv.DictReader(stream)
+                    if tuple(reader.fieldnames or ()) != _SENSOR_CSV_HEADER:
+                        raise PersistenceError(f"sensor CSV has an invalid header: {resolved}")
+                    csv_rows = list(reader)
+            except OSError as exc:
+                raise PersistenceError(f"cannot read sensor CSV {resolved}: {exc}") from exc
+            relative_text = relative.as_posix()
+            target_states = []
+            for target in node.sensor_storage.mirrors:
+                delivery = deliveries.get((node.id, target.name, relative_text))
+                target_states.append(
+                    {
+                        "target": target.name,
+                        "type": target.type,
+                        "status": delivery["status"] if delivery else "not_queued",
+                        "attempts": delivery["attempts"] if delivery else 0,
+                        "next_attempt_at": delivery["next_attempt_at"] if delivery else None,
+                        "last_error": delivery["last_error"] if delivery else None,
+                        "updated_at": delivery["updated_at"] if delivery else None,
+                    }
+                )
+            statuses = {item["status"] for item in target_states}
+            sync_status = (
+                "failed" if "failed" in statuses
+                else "pending" if statuses.intersection({"pending", "not_queued"})
+                else "synchronized" if target_states
+                else "local-only"
+            )
+            for row in csv_rows:
+                if set(row) != set(_SENSOR_CSV_HEADER):
+                    raise PersistenceError(f"sensor CSV has an invalid row: {resolved}")
+                try:
+                    timestamp = datetime.fromisoformat(row["timestamp"])
+                    temperature = float(row["temperature_c"])
+                    humidity = float(row["humidity_percent"])
+                except (TypeError, ValueError) as exc:
+                    raise PersistenceError(f"sensor CSV has invalid values: {resolved}") from exc
+                if (
+                    timestamp.tzinfo is None
+                    or timestamp.utcoffset() is None
+                    or not math.isfinite(temperature)
+                    or not math.isfinite(humidity)
+                    or not 0 <= humidity <= 100
+                ):
+                    raise PersistenceError(f"sensor CSV has invalid values: {resolved}")
+                rows.append(
+                    {
+                        "node_id": node.id,
+                        "relative_path": relative_text,
+                        "timestamp": row["timestamp"],
+                        "temperature_c": temperature,
+                        "humidity_percent": humidity,
+                        "local_status": "stored",
+                        "sync_status": sync_status,
+                        "targets": target_states,
+                    }
+                )
+    return sorted(rows, key=lambda item: (item["timestamp"], item["node_id"]), reverse=True)
 
 
 class ProcessManager(Protocol):
@@ -257,6 +357,101 @@ def create_app(
         if engine is None:
             raise HTTPException(status_code=503, detail="runtime store is unavailable")
         return engine.runtime.sensor_delivery_status()
+
+    @app.post("/api/sensor-storage/sync", dependencies=[Depends(authenticated)])
+    async def sync_sensor_storage(node_id: str | None = None) -> dict[str, Any]:
+        if engine is None:
+            raise HTTPException(status_code=503, detail="execution engine is disabled")
+        try:
+            sync = engine.sync_sensor_storage(node_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return {"sync": sync, **engine.runtime.sensor_delivery_status()}
+
+    @app.get("/api/sensor-data", dependencies=[Depends(authenticated)])
+    async def sensor_data(
+        node_id: str | None = None,
+        limit: int = Query(100, ge=1, le=500),
+        offset: int = Query(0, ge=0),
+    ) -> dict[str, Any]:
+        if engine is None:
+            raise HTTPException(status_code=503, detail="runtime store is unavailable")
+        delivery = engine.runtime.sensor_delivery_status(limit=10000)
+        rows = _sensor_data_rows(service, delivery["items"], node_id=node_id)
+        return {
+            "items": rows[offset:offset + limit],
+            "total": len(rows),
+            "limit": limit,
+            "offset": offset,
+        }
+
+    @app.get("/api/sensor-settings", dependencies=[Depends(authenticated)])
+    async def sensor_settings() -> dict[str, Any]:
+        active = service.active() or {}
+        scheduled = {
+            item.get("node")
+            for item in active.get("sensor_schedules", [])
+            if isinstance(item, dict)
+        }
+        health = {
+            item["node_id"]: item
+            for item in (engine.node_health() if engine is not None else [])
+        }
+        return {
+            "restart_required": service.registry.restart_required,
+            "items": [
+                {
+                    "node_id": node.id,
+                    "enabled": node.id in scheduled,
+                    "profile": "temperature-humidity",
+                    "sensor_serial": node.sensor_serial.model_dump(mode="json"),
+                    "sensor_storage": node.sensor_storage.model_dump(mode="json"),
+                    "health": health.get(node.id),
+                }
+                for node in service.registry
+                if node.kind == "sensor-node"
+                and node.sensor_serial is not None
+                and node.sensor_storage is not None
+            ],
+        }
+
+    @app.put(
+        "/api/sensor-settings/{node_id}",
+        dependencies=[Depends(authenticated)],
+    )
+    async def update_sensor_settings(
+        node_id: str,
+        document: SensorNodeSettingsUpdate,
+    ) -> dict[str, Any]:
+        updated = service.registry.update_sensor_settings(
+            node_id,
+            serial=document.sensor_serial,
+            storage=document.sensor_storage,
+        )
+        if engine is not None:
+            engine.runtime.append_event(
+                "configuration.sensor_settings_staged",
+                node_id=node_id,
+                payload={
+                    "driver": document.sensor_serial.driver,
+                    "port": document.sensor_serial.port,
+                    "mirror_targets": [
+                        item.name for item in document.sensor_storage.mirrors
+                    ],
+                    "restart_required": True,
+                },
+            )
+        return {
+            "node_id": node_id,
+            "sensor_serial": updated.sensor_serial.model_dump(mode="json"),
+            "sensor_storage": updated.sensor_storage.model_dump(mode="json"),
+            "restart_required": True,
+            "backup": (
+                f"{service.registry.source_path.name}.previous"
+                if service.registry.source_path is not None
+                else None
+            ),
+        }
 
     @app.get("/api/config/draft", dependencies=[Depends(authenticated)])
     async def draft() -> dict[str, Any]:
