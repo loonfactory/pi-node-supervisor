@@ -170,8 +170,11 @@ printf 'Preflight: %s\n' "$target"
 ssh "${ssh_options[@]}" "$target" 'set -eu; command -v python3 >/dev/null; command -v systemctl >/dev/null; command -v curl >/dev/null; command -v tar >/dev/null; systemctl --user show-environment >/dev/null; printf "host=%s arch=%s python=%s\n" "$(hostname)" "$(uname -m)" "$(python3 -V 2>&1)"'
 
 deployment_power_config=$power_config
-if [[ "$install_power_manager" == true ]] && \
-   ! ssh "${ssh_options[@]}" "$target" test -r /etc/pi-power-manager/config.json; then
+if [[ "$power_config" == /etc/pi-power-manager/config.json ]] && \
+   ! ssh "${ssh_options[@]}" "$target" test -r "$power_config"; then
+  # A board without the privileged manager must keep using the Supervisor-owned
+  # generated plan. This is also the staging path before an integrated manager
+  # installation switches the service to /etc/pi-power-manager/config.json.
   deployment_power_config="$remote_base/generated/pi-power-manager.json"
 fi
 
@@ -587,12 +590,12 @@ if [[ -z "$api_token" ]]; then
 fi
 if [[ "$first_install" == true || "$update_settings" == true ]]; then
   printf 'Applying deployment settings through Supervisor API\n'
-  curl --fail --silent --show-error \
+  curl --fail-with-body --silent --show-error \
     -H "X-Supervisor-Token: $api_token" \
     -H 'Content-Type: application/json' \
     --request PUT --data-binary "@$bootstrap" \
     "http://127.0.0.1:$port/api/config/draft" >/dev/null
-  curl --fail --silent --show-error \
+  curl --fail-with-body --silent --show-error \
     -H "X-Supervisor-Token: $api_token" \
     --request POST \
     "http://127.0.0.1:$port/api/revisions/apply" >/dev/null
