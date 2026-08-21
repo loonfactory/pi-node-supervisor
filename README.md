@@ -362,12 +362,17 @@ Override values without editing the script:
 ```bash
 scripts/deploy.sh \
   --target huintech@192.168.12.7 \
+  --preserve-existing-nodes \
   --nodes examples/nodes.json \
   --initial-config examples/config.empty.json \
   --huintech-device-source ../huintech-device/huintech-device-main/python \
   --bind-host 0.0.0.0 \
   --port 8080
 ```
+
+Use `--preserve-existing-nodes` for an in-place upgrade when the target's
+`config/nodes.json` is already authoritative. The file stays on the target,
+is validated by the new release, and is neither uploaded nor overwritten.
 
 When the registry contains a CWT sensor, deployment packages the public
 HUINTECHDEVICE Python source into the versioned release, installs the

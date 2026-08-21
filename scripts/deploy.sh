@@ -13,6 +13,7 @@ initial_config=${INITIAL_CONFIG:-$project_root/examples/config.empty.json}
 python_bin=${PYTHON_BIN:-python3}
 capture_node_executable=${CAPTURE_NODE_EXECUTABLE:-/home/huintech/capture-node/.venv/bin/capture-node-web}
 replace_capture_services=${REPLACE_CAPTURE_SERVICES:-true}
+preserve_existing_nodes=${PRESERVE_EXISTING_NODES:-false}
 power_config=${POWER_CONFIG:-$remote_base/generated/pi-power-manager.json}
 huintech_device_source=${HUINTECHDEVICE_SOURCE:-}
 
@@ -30,6 +31,7 @@ usage() {
     "  --capture-node-executable PATH  Trusted CaptureNode runtime" \
     "  --power-config PATH      Generated pi-power-manager config path" \
     "  --huintech-device-source PATH  HUINTECHDEVICE python source root" \
+    "  --preserve-existing-nodes  Keep and validate the target's existing nodes.json" \
     "  --keep-external-capture-nodes   Do not disable legacy user services" \
     "  -h, --help               Show this help"
 }
@@ -45,6 +47,7 @@ while (($#)); do
     --capture-node-executable) capture_node_executable=${2:?missing value for --capture-node-executable}; shift 2 ;;
     --power-config) power_config=${2:?missing value for --power-config}; shift 2 ;;
     --huintech-device-source) huintech_device_source=${2:?missing value for --huintech-device-source}; shift 2 ;;
+    --preserve-existing-nodes) preserve_existing_nodes=true; shift ;;
     --keep-external-capture-nodes) replace_capture_services=false; shift ;;
     -h|--help) usage; exit 0 ;;
     *) printf 'Unknown option: %s\n' "$1" >&2; usage >&2; exit 2 ;;
@@ -171,7 +174,8 @@ fi
 printf 'Installing and activating release\n'
 ssh "${ssh_options[@]}" "$target" bash -s -- \
   "$remote_base" "$remote_stage" "$release_id" "$bind_host" "$port" \
-  "$capture_node_executable" "$replace_capture_services" "$power_config" <<'REMOTE_INSTALL'
+  "$capture_node_executable" "$replace_capture_services" "$power_config" \
+  "$preserve_existing_nodes" <<'REMOTE_INSTALL'
 set -Eeuo pipefail
 
 base=$1
@@ -182,6 +186,7 @@ port=$5
 capture_node_executable=$6
 replace_capture_services=$7
 power_config=$8
+preserve_existing_nodes=$9
 
 case "$base" in
   "$HOME"/*) ;;
@@ -197,6 +202,11 @@ nodes=$(find "$stage" -maxdepth 1 -type f -name 'nodes*.json' -print -quit)
 initial=$(find "$stage" -maxdepth 1 -type f -name 'config*.json' -print -quit)
 unit_template="$stage/pi-node-supervisor.user.service.in"
 [[ -r "$wheel" && -r "$nodes" && -r "$initial" && -r "$unit_template" ]]
+effective_nodes=$nodes
+if [[ "$preserve_existing_nodes" == true && -f "$base/config/nodes.json" ]]; then
+  effective_nodes="$base/config/nodes.json"
+  printf 'Preserving existing node registry: %s\n' "$effective_nodes"
+fi
 if [[ "$replace_capture_services" == true ]]; then
   [[ -x "$capture_node_executable" ]] || {
     printf 'CaptureNode executable is unavailable: %s\n' "$capture_node_executable" >&2
@@ -224,13 +234,13 @@ if [[ -r "$stage/huintech-device-python.tar.gz" ]]; then
 fi
 
 "$release/.venv/bin/pi-node-supervisor" \
-  --nodes "$nodes" \
+  --nodes "$effective_nodes" \
   --state-dir "$state_dir" \
   --active-config "$config_dir/config.json" \
   --power-config "$power_config" \
   validate-config "$initial"
 
-python3 - "$nodes" <<'PYTHON_PREFLIGHT'
+python3 - "$effective_nodes" <<'PYTHON_PREFLIGHT'
 import json
 import sys
 import urllib.request
@@ -247,7 +257,7 @@ for node in json.load(open(sys.argv[1], encoding="utf-8"))["nodes"]:
 PYTHON_PREFLIGHT
 
 PYTHONPATH="$release/vendor${PYTHONPATH:+:$PYTHONPATH}" \
-  "$release/.venv/bin/python" - "$nodes" "$base" <<'PYTHON_SENSOR_PREFLIGHT'
+  "$release/.venv/bin/python" - "$effective_nodes" "$base" <<'PYTHON_SENSOR_PREFLIGHT'
 import json
 import os
 import sys
@@ -286,11 +296,13 @@ for node in sensor_nodes:
 PYTHON_SENSOR_PREFLIGHT
 
 nodes_backup=''
-if [[ -f "$config_dir/nodes.json" ]] && ! cmp -s "$config_dir/nodes.json" "$nodes"; then
-  nodes_backup="$backup_dir/nodes.json.$stamp"
-  cp -p "$config_dir/nodes.json" "$nodes_backup"
+if [[ "$effective_nodes" != "$config_dir/nodes.json" ]]; then
+  if [[ -f "$config_dir/nodes.json" ]] && ! cmp -s "$config_dir/nodes.json" "$nodes"; then
+    nodes_backup="$backup_dir/nodes.json.$stamp"
+    cp -p "$config_dir/nodes.json" "$nodes_backup"
+  fi
+  install -m 600 "$nodes" "$config_dir/nodes.json"
 fi
-install -m 600 "$nodes" "$config_dir/nodes.json"
 install -m 600 "$initial" "$config_dir/initial-config.json"
 
 python3 - "$config_dir/nodes.json" "$HOME/capture-node" <<'PYTHON_MANAGED_CONFIGS'
