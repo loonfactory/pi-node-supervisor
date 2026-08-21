@@ -48,6 +48,22 @@ def test_capture_node_client_uses_documented_capture_contract():
     ]
 
 
+def test_capture_request_uses_completion_timeout():
+    transport = FakeTransport(
+        [{"capture_id": "cap-1", "captured_at": "2030-01-01T00:00:00Z"}]
+    )
+    client = CaptureNodeClient(
+        "http://127.0.0.1:8000",
+        request_timeout_seconds=3,
+        completion_timeout_seconds=45,
+        transport=transport,
+    )
+
+    client.capture()
+
+    assert transport.calls[0][2] == 45
+
+
 def test_capture_parameters_are_applied_through_config_contract():
     current = {
         "camera": {"type": "picamera2"},

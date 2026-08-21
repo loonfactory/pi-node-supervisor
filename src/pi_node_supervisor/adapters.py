@@ -121,11 +121,13 @@ class CaptureNodeClient:
         method: str,
         path: str,
         document: dict[str, Any] | None = None,
+        *,
+        timeout: float | None = None,
     ) -> dict[str, Any]:
         return self.transport.request(
             method,
             f"{self.endpoint}{path}",
-            timeout=self.request_timeout_seconds,
+            timeout=self.request_timeout_seconds if timeout is None else timeout,
             document=document,
         )
 
@@ -140,7 +142,9 @@ class CaptureNodeClient:
         return value
 
     def capture(self) -> dict[str, Any]:
-        value = self._request("POST", "/api/capture")
+        value = self._request(
+            "POST", "/api/capture", timeout=self.completion_timeout_seconds
+        )
         if not isinstance(value.get("capture_id"), str) or not value["capture_id"]:
             raise AdapterError("CaptureNode capture response has no capture_id")
         if not isinstance(value.get("captured_at"), str):
