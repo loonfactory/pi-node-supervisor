@@ -21,6 +21,7 @@ from .models import (
     PowerManagerWindow,
     PowerWindowPlan,
     SensorActivity,
+    SensorScheduleDefinition,
     SupervisorConfiguration,
 )
 from .registry import NodeRegistry
@@ -48,16 +49,29 @@ class Planner:
                 key=lambda item: (item.requested_start, item.activity_id),
             )
         )
-        schedule_plans: tuple[ActivityPlan, ...] = ()
+        capture_schedule_plans: tuple[ActivityPlan, ...] = ()
         if configuration.capture_schedules:
             planning_start = (now or datetime.now(UTC)).astimezone(UTC)
             planning_end = planning_start + timedelta(
                 hours=configuration.policies.recurrence_horizon_hours
             )
-            schedule_plans = tuple(
+            capture_schedule_plans = tuple(
                 item
                 for schedule in configuration.capture_schedules
                 for item in self._plan_capture_schedule(
+                    configuration, schedule, planning_start, planning_end
+                )
+            )
+        sensor_schedule_plans: tuple[ActivityPlan, ...] = ()
+        if configuration.sensor_schedules:
+            planning_start = (now or datetime.now(UTC)).astimezone(UTC)
+            planning_end = planning_start + timedelta(
+                hours=configuration.policies.recurrence_horizon_hours
+            )
+            sensor_schedule_plans = tuple(
+                item
+                for schedule in configuration.sensor_schedules
+                for item in self._plan_sensor_schedule(
                     configuration, schedule, planning_start, planning_end
                 )
             )
@@ -76,7 +90,12 @@ class Planner:
             )
         activity_plans = tuple(
             sorted(
-                (*one_shot_plans, *schedule_plans, *power_keep_plans),
+                (
+                    *one_shot_plans,
+                    *capture_schedule_plans,
+                    *sensor_schedule_plans,
+                    *power_keep_plans,
+                ),
                 key=lambda item: (item.requested_start, item.activity_id),
             )
         )
@@ -199,6 +218,64 @@ class Planner:
                 ),
             )
         return tuple(plans)
+
+    def _plan_sensor_schedule(
+        self,
+        configuration: SupervisorConfiguration,
+        schedule: SensorScheduleDefinition,
+        window_start: datetime,
+        window_end: datetime,
+    ) -> tuple[ActivityPlan, ...]:
+        if schedule.mode == "disabled" or not schedule.daily_times:
+            return ()
+        node = self._validate_node_activity(
+            schedule.node, "sensor-collection", schedule.profile
+        )
+        runtime = schedule.duration_seconds or node.default_runtime_seconds
+        footprint = timedelta(
+            seconds=(
+                configuration.policies.boot_lead_seconds
+                + node.boot_ready_seconds
+                + node.prepare_seconds
+                + runtime
+                + node.cleanup_seconds
+                + configuration.policies.shutdown_grace_seconds
+            )
+        )
+        search_start = window_start - footprint
+        zone = ZoneInfo(schedule.timezone)
+        date = search_start.astimezone(zone).date()
+        final_date = window_end.astimezone(zone).date()
+        occurrences: list[datetime] = []
+        while date <= final_date:
+            for daily_time in schedule.daily_times:
+                occurrences.append(
+                    parse_activity_time(
+                        f"{date.isoformat()}T{daily_time.isoformat()}",
+                        schedule.timezone,
+                        f"sensor schedule {schedule.id}",
+                    )
+                )
+            date += timedelta(days=1)
+
+        plans = (
+            self._build_plan(
+                configuration,
+                activity_id=self._occurrence_id(schedule.id, occurrence),
+                activity_type="sensor-collection",
+                node=node,
+                profile=schedule.profile,
+                parameters=schedule.parameters,
+                requested_start=occurrence,
+                requested_end=occurrence + timedelta(seconds=runtime),
+            )
+            for occurrence in sorted(set(occurrences))
+        )
+        return tuple(
+            plan
+            for plan in plans
+            if plan.power_down >= window_start and plan.power_on <= window_end
+        )
 
     def _plan_power_keep_schedule(
         self,

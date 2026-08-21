@@ -115,7 +115,8 @@ PYTHONPATH=src python3 -m pi_node_supervisor \
 
 Open `http://127.0.0.1:8080/`, enter the same token, and use the dashboard to
 configure CaptureNode-compatible interval/daily shooting through the
-operator-friendly Settings screen, preview the derived RTC power windows,
+operator-friendly Settings screen, generate and edit daily sensor collection
+times with a default 00:00–23:30/30-minute range, preview the derived RTC power windows,
 configure each camera's file/SFTP/FTPS storage, evaluate due work, inspect node
 health, browse run/event history, and reindex node data. Advanced JSON editing
 remains available behind a disclosure for activity types that do not yet have
@@ -256,6 +257,14 @@ process-relative timer restarts when the child process restarts. The finite
 168-hour RTC schedule is refreshed hourly, and a refresh failure leaves the
 final window unable to shut down rather than risk missing the next wake-up.
 One-shot dated work remains available under the advanced disclosure.
+
+Sensor collection schedules store the generated wall-clock `daily_times` as
+their execution source. The 30-minute interval is only the initial form value;
+operators may generate any number of times or edit individual seconds. Each
+occurrence receives a deterministic ID, is claimed once per revision, and is
+marked missed instead of being measured retroactively after the lateness
+limit. The same rolling refresh updates both the executable occurrence plan
+and the RTC power file.
 
 Managed CaptureNode children emit structured JSON logs. Supervisor consumes
 that child-process log stream and stores `capture-node.*` records in its event

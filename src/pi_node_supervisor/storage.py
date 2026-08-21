@@ -127,6 +127,62 @@ class RevisionStore:
         except OSError as exc:
             raise PersistenceError(f"cannot refresh power configuration: {exc}") from exc
 
+    def refresh_active_plan(
+        self,
+        plan: DerivedPlan,
+        power_configuration: PowerManagerConfiguration,
+        *,
+        power_manager_configuration_path: Path,
+    ) -> None:
+        """Replace the rolling plan without creating a new user revision."""
+
+        plan_json = _json_text(plan)
+        power_json = _json_text(power_configuration)
+        try:
+            with self._connect() as connection:
+                row = connection.execute(
+                    "SELECT id FROM revisions WHERE status = 'active' ORDER BY id DESC LIMIT 1"
+                ).fetchone()
+        except sqlite3.Error as exc:
+            raise PersistenceError(f"cannot find active revision: {exc}") from exc
+        if row is None:
+            return
+
+        revision_id = int(row["id"])
+        revision_directory = self.revisions_directory / f"{revision_id:08d}"
+        targets = (
+            (revision_directory / "plan.json", plan_json.encode("utf-8")),
+            (revision_directory / "pi-power-manager.json", power_json.encode("utf-8")),
+            (power_manager_configuration_path, power_json.encode("utf-8")),
+        )
+        snapshots = {path: _snapshot(path) for path, _content in targets}
+        try:
+            for path, content in targets:
+                _atomic_write(path, content)
+            with self._connect() as connection:
+                cursor = connection.execute(
+                    """
+                    UPDATE revisions SET plan_json = ?, power_json = ?
+                    WHERE id = ? AND status = 'active'
+                    """,
+                    (plan_json, power_json, revision_id),
+                )
+                if cursor.rowcount != 1:
+                    raise PersistenceError("active revision changed during plan refresh")
+        except BaseException as exc:
+            rollback_errors = []
+            for path, snapshot in snapshots.items():
+                try:
+                    _restore(path, snapshot)
+                except OSError as rollback_exc:
+                    rollback_errors.append(f"{path}: {rollback_exc}")
+            detail = str(exc)
+            if rollback_errors:
+                detail += "; rollback errors: " + "; ".join(rollback_errors)
+            if isinstance(exc, PersistenceError):
+                raise PersistenceError(detail) from exc
+            raise PersistenceError(f"cannot refresh active plan: {detail}") from exc
+
     def activate(
         self,
         configuration: SupervisorConfiguration,

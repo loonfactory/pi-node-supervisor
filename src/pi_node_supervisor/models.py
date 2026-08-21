@@ -37,7 +37,7 @@ class Policies(StrictModel):
     boot_lead_seconds: int = Field(120, ge=0, alias="boot-lead-seconds")
     shutdown_grace_seconds: int = Field(60, ge=0, alias="shutdown-grace-seconds")
     merge_power_gaps_shorter_than_seconds: int = Field(
-        1800, ge=0, alias="merge-power-gaps-shorter-than-seconds"
+        300, ge=0, alias="merge-power-gaps-shorter-than-seconds"
     )
     minimum_lead_seconds: int = Field(60, ge=1, alias="minimum-lead-seconds")
     clock_tolerance_seconds: int = Field(5, ge=0, alias="clock-tolerance-seconds")
@@ -288,6 +288,44 @@ class CaptureScheduleUpdate(StrictModel):
     settings: CaptureScheduleSettings
 
 
+class SensorScheduleSettings(StrictModel):
+    """Supervisor-owned daily wall-clock sensor collection schedule."""
+
+    mode: Literal["daily", "disabled"]
+    daily_times: tuple[Time, ...] = ()
+    timezone: str = "Asia/Seoul"
+
+    @field_validator("timezone")
+    @classmethod
+    def valid_timezone(cls, value: str) -> str:
+        return validate_timezone(value)
+
+    @model_validator(mode="after")
+    def valid_schedule(self) -> "SensorScheduleSettings":
+        if len(self.daily_times) != len(set(self.daily_times)):
+            raise ValueError("daily sensor times must be unique")
+        if any(value.tzinfo is not None for value in self.daily_times):
+            raise ValueError("daily sensor times must not include an offset")
+        if self.mode == "disabled" and self.daily_times:
+            raise ValueError("disabled mode cannot contain a sensor schedule")
+        return self
+
+
+class SensorScheduleDefinition(SensorScheduleSettings):
+    """Recurring sensor collection expanded and executed by the Supervisor."""
+
+    id: Identifier
+    node: Identifier
+    profile: Identifier = "default"
+    duration_seconds: int | None = Field(None, gt=0)
+    parameters: dict[str, Any] = Field(default_factory=dict)
+
+
+class SensorScheduleUpdate(StrictModel):
+    target: Identifier
+    settings: SensorScheduleSettings
+
+
 class DailyPowerKeepSchedule(StrictModel):
     """Daily wall-clock window that keeps the device powered independently."""
 
@@ -336,6 +374,7 @@ class SupervisorConfiguration(StrictModel):
     policies: Policies = Field(default_factory=Policies)
     activities: tuple[Activity, ...] = ()
     capture_schedules: tuple[CaptureScheduleDefinition, ...] = ()
+    sensor_schedules: tuple[SensorScheduleDefinition, ...] = ()
     power_keep_schedules: tuple[DailyPowerKeepSchedule, ...] = ()
     capture_node_settings: CaptureNodeSettings = Field(default_factory=CaptureNodeSettings)
 
@@ -348,12 +387,17 @@ class SupervisorConfiguration(StrictModel):
     def unique_activity_ids(self) -> "SupervisorConfiguration":
         ids = [activity.id for activity in self.activities] + [
             schedule.id for schedule in self.capture_schedules
-        ] + [schedule.id for schedule in self.power_keep_schedules]
+        ] + [schedule.id for schedule in self.sensor_schedules] + [
+            schedule.id for schedule in self.power_keep_schedules
+        ]
         if len(ids) != len(set(ids)):
-            raise ValueError("activity ids must be unique across activities and capture schedules")
-        nodes = [schedule.node for schedule in self.capture_schedules]
-        if len(nodes) != len(set(nodes)):
+            raise ValueError("activity ids must be unique across activities and schedules")
+        capture_nodes = [schedule.node for schedule in self.capture_schedules]
+        if len(capture_nodes) != len(set(capture_nodes)):
             raise ValueError("each node can have only one capture schedule")
+        sensor_nodes = [schedule.node for schedule in self.sensor_schedules]
+        if len(sensor_nodes) != len(set(sensor_nodes)):
+            raise ValueError("each node can have only one sensor schedule")
         return self
 
 

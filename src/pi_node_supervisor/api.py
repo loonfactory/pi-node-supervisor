@@ -28,6 +28,7 @@ from .models import (
     CaptureScheduleUpdate,
     DataRecord,
     PowerSettingsUpdate,
+    SensorScheduleUpdate,
     StorageSettingsDocument,
 )
 from .process_manager import CaptureProcessError
@@ -698,6 +699,102 @@ def create_app(
             "native_capture": coordinated,
             "power_linked": True,
             "power_plan_disabled": power_plan_disabled,
+        }
+
+    @app.get(
+        "/api/sensor-schedules",
+        dependencies=[Depends(authenticated)],
+    )
+    async def sensor_schedules() -> dict[str, Any]:
+        configuration = service.active()
+        if configuration is None:
+            raise HTTPException(status_code=404, detail="active configuration does not exist")
+        sensor_ids = [
+            node.id
+            for node in service.registry
+            if "sensor-collection" in node.activity_types
+        ]
+        return {
+            "items": configuration.get("sensor_schedules", []),
+            "sensor_ids": sensor_ids,
+            "power_linked": True,
+        }
+
+    @app.put(
+        "/api/sensor-schedules",
+        dependencies=[Depends(authenticated)],
+    )
+    async def update_sensor_schedules(
+        document: SensorScheduleUpdate,
+    ) -> dict[str, Any]:
+        active = service.active()
+        if active is None:
+            raise HTTPException(status_code=404, detail="active configuration does not exist")
+        sensors = [
+            node
+            for node in service.registry
+            if "sensor-collection" in node.activity_types
+        ]
+        if document.target == "common":
+            selected = sensors
+        else:
+            selected = [node for node in sensors if node.id == document.target]
+            if not selected:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"sensor node does not exist: {document.target}",
+                )
+        selected_ids = {node.id for node in selected}
+        existing = {
+            item["node"]: item
+            for item in active.get("sensor_schedules", [])
+            if isinstance(item, dict) and isinstance(item.get("node"), str)
+        }
+        retained = [
+            item
+            for item in active.get("sensor_schedules", [])
+            if not isinstance(item, dict) or item.get("node") not in selected_ids
+        ]
+        settings = document.settings.model_dump(mode="json")
+        replacements = []
+        if document.settings.mode != "disabled":
+            for node in selected:
+                previous = existing.get(node.id, {})
+                digest = hashlib.sha256(node.id.encode("utf-8")).hexdigest()[:8]
+                replacements.append(
+                    {
+                        **settings,
+                        "id": previous.get(
+                            "id", f"auto-sensor-{node.id[:63]}-{digest}"
+                        ),
+                        "node": node.id,
+                        "profile": previous.get(
+                            "profile", node.profiles[0] if node.profiles else "default"
+                        ),
+                        "duration_seconds": previous.get("duration_seconds"),
+                        "parameters": previous.get("parameters", {}),
+                    }
+                )
+        candidate = {**active, "sensor_schedules": [*retained, *replacements]}
+        try:
+            revision = service.apply_document(candidate)
+        except (ApplyError, PersistenceError, PlanningError, ValidationError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if engine is not None:
+            engine.runtime.append_event(
+                "configuration.sensor_schedule_updated",
+                payload={
+                    "node_ids": sorted(selected_ids),
+                    "mode": document.settings.mode,
+                    "daily_time_count": len(document.settings.daily_times),
+                    "revision_id": revision["id"],
+                },
+            )
+        return {
+            "target": document.target,
+            "items": replacements,
+            "revision": revision,
+            "power_linked": True,
         }
 
     @app.get(

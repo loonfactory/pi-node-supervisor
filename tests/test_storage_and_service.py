@@ -97,6 +97,7 @@ def test_recurring_power_plan_is_refreshed_on_a_rolling_horizon(service: Supervi
     refreshed = json.loads(service.power_manager_configuration_path.read_text())
     assert refreshed["power_schedule"][0]["power-on"].startswith("2030-01-")
     assert len(refreshed["power_schedule"]) >= 7
+    assert service.store.active_bundle()[2].power_windows[0].power_on.year == 2030
 
 
 def test_failed_activation_restores_power_file_and_keeps_no_active_revision(

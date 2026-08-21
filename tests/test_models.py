@@ -7,6 +7,7 @@ from pi_node_supervisor.models import (
     CaptureScheduleSettings,
     DailyPowerKeepSchedule,
     NodeRegistryDocument,
+    SensorScheduleSettings,
     StorageSettingsDocument,
     SupervisorConfiguration,
 )
@@ -42,6 +43,38 @@ def test_configuration_rejects_unknown_keys():
                 "timezone": "UTC",
                 "activities": [],
                 "surprise": True,
+            }
+        )
+
+
+def test_default_power_gap_merge_threshold_is_five_minutes():
+    configuration = SupervisorConfiguration.model_validate(
+        {"schema_version": 1, "timezone": "Asia/Seoul"}
+    )
+
+    assert configuration.policies.merge_power_gaps_shorter_than_seconds == 300
+
+
+def test_sensor_schedule_uses_unique_stored_wall_clock_times():
+    schedule = SensorScheduleSettings.model_validate(
+        {
+            "mode": "daily",
+            "daily_times": ["00:00:00", "00:30:00", "23:30:00"],
+            "timezone": "Asia/Seoul",
+        }
+    )
+    assert [value.isoformat() for value in schedule.daily_times] == [
+        "00:00:00",
+        "00:30:00",
+        "23:30:00",
+    ]
+
+    with pytest.raises(ValidationError, match="daily sensor times must be unique"):
+        SensorScheduleSettings.model_validate(
+            {
+                "mode": "daily",
+                "daily_times": ["00:00:00", "00:00:00"],
+                "timezone": "Asia/Seoul",
             }
         )
 

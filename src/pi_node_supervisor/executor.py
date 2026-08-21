@@ -43,10 +43,7 @@ class ExecutionEngine:
     def tick(self, now: datetime | None = None) -> list[RunRecord]:
         evaluation_time = (now or self.clock()).astimezone(UTC)
         with self._tick_lock:
-            bundle = self.revisions.active_bundle()
-            if bundle is None:
-                return []
-            revision_id, _configuration, plan = bundle
+            previous_bundle = self.revisions.active_bundle()
             if self.power_refresher is not None:
                 try:
                     self.power_refresher(evaluation_time)
@@ -56,9 +53,17 @@ class ExecutionEngine:
                         severity="error",
                         payload={"error": f"{type(exc).__name__}: {exc}"},
                     )
+            bundle = self.revisions.active_bundle()
+            if bundle is None:
+                return []
+            revision_id, _configuration, plan = bundle
+            plans = {activity.activity_id: activity for activity in plan.activities}
+            if previous_bundle is not None and previous_bundle[0] == revision_id:
+                for activity in previous_bundle[2].activities:
+                    plans.setdefault(activity.activity_id, activity)
             activities = [
                 activity
-                for activity in plan.activities
+                for activity in plans.values()
                 if activity.activity_type not in {"capture-schedule", "power-keep"}
             ]
             outcomes: list[RunRecord] = []

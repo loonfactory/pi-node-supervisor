@@ -481,6 +481,44 @@ async def test_managed_camera_storage_configuration_api(service: SupervisorServi
 
 
 @pytest.mark.anyio
+async def test_sensor_schedule_api_persists_arbitrary_stored_times(service: SupervisorService):
+    service.apply_document(document())
+    runtime = RuntimeStore(service.store.database_path)
+    engine = ExecutionEngine(service.store, runtime, {})
+    app = create_app(service, api_token="secret", engine=engine)
+    headers = {"X-Supervisor-Token": "secret"}
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as browser:
+        initial = await browser.get("/api/sensor-schedules", headers=headers)
+        updated = await browser.put(
+            "/api/sensor-schedules",
+            headers=headers,
+            json={
+                "target": "environment0",
+                "settings": {
+                    "mode": "daily",
+                    "daily_times": ["00:00:00", "00:30:00", "23:17:45"],
+                    "timezone": "Asia/Seoul",
+                },
+            },
+        )
+        loaded = await browser.get("/api/sensor-schedules", headers=headers)
+
+    assert initial.status_code == 200
+    assert initial.json()["sensor_ids"] == ["environment0"]
+    assert updated.status_code == 200
+    assert updated.json()["items"][0]["daily_times"] == [
+        "00:00:00",
+        "00:30:00",
+        "23:17:45",
+    ]
+    assert loaded.json()["items"] == service.active()["sensor_schedules"]
+    assert service.active()["sensor_schedules"][0]["profile"] == "temperature-humidity"
+    assert runtime.list_events()[0].event_type == "configuration.sensor_schedule_updated"
+
+
+@pytest.mark.anyio
 async def test_power_settings_update_warmup_cleanup_and_daily_keep(service: SupervisorService):
     service.apply_document(document())
     runtime = RuntimeStore(service.store.database_path)

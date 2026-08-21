@@ -98,7 +98,7 @@ class SupervisorService:
         return PowerManagerConfiguration.model_validate(value)
 
     def refresh_recurring_power(self, now: datetime) -> None:
-        """Keep the finite RTC plan ahead of recurring capture schedules."""
+        """Keep finite recurring execution and RTC plans ahead of the clock."""
 
         evaluation_time = now.astimezone(UTC)
         with self._power_refresh_lock:
@@ -113,13 +113,16 @@ class SupervisorService:
             configuration = self.parse_configuration(document)
             if not (
                 configuration.capture_schedules
+                or configuration.sensor_schedules
                 or configuration.power_keep_schedules
             ):
                 self._last_power_refresh = evaluation_time
                 return
             plan = self.planner.plan(configuration, now=evaluation_time)
             power = self.planner.power_manager_configuration(configuration, plan)
-            self.store.write_power_configuration(
-                self.power_manager_configuration_path, power
+            self.store.refresh_active_plan(
+                plan,
+                power,
+                power_manager_configuration_path=self.power_manager_configuration_path,
             )
             self._last_power_refresh = evaluation_time

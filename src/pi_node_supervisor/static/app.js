@@ -1,8 +1,9 @@
-const state = { dashboard: null, runs: [], events: [], eventsTotal: 0, eventsOffset: 0, eventsPageSize: 25, data: [], dataTotal: 0, dataOffset: 0, dataPageSize: 25, nodes: [], preview: null, configuration: null, settingsLoaded: false, cameraConfigs: {}, storageDraft: [], captureSchedule: null };
+const state = { dashboard: null, runs: [], events: [], eventsTotal: 0, eventsOffset: 0, eventsPageSize: 25, data: [], dataTotal: 0, dataOffset: 0, dataPageSize: 25, nodes: [], preview: null, configuration: null, settingsLoaded: false, cameraConfigs: {}, storageDraft: [], captureSchedule: null, sensorSchedule: null };
 const previewUrls = new Map();
 const previewStreams = new Map();
 let dataViewUrl = null;
 const DEFAULT_CAPTURE_RANGE = { start: "09:00", intervalMinutes: 10, end: "18:00" };
+const DEFAULT_SENSOR_RANGE = { start: "00:00", intervalMinutes: 30, end: "23:30" };
 const $ = (selector) => document.querySelector(selector);
 const token = () => sessionStorage.getItem("supervisor-token") || "";
 
@@ -415,7 +416,7 @@ function captureTimeSeconds(value) {
   const parts = String(value).split(":").map(Number);
   const hours = parts[0], minutes = parts[1], seconds = parts[2] ?? 0;
   if (![hours, minutes, seconds].every(Number.isInteger) || hours < 0 || hours > 23 || minutes < 0 || minutes > 59 || seconds < 0 || seconds > 59) {
-    throw new Error("올바른 촬영 시각을 입력해 주세요.");
+    throw new Error("올바른 시각을 입력해 주세요.");
   }
   return hours * 3600 + minutes * 60 + seconds;
 }
@@ -586,6 +587,122 @@ function captureScheduleFromForm() {
   const daily_times = [...$("#daily-time-list").querySelectorAll('input[type="time"]')].map(input => input.value).filter(Boolean);
   if (new Set(daily_times).size !== daily_times.length) throw new Error("같은 촬영 시각을 두 번 등록할 수 없습니다.");
   return { mode, interval_seconds: null, daily_times, timezone };
+}
+
+function renderSensorNodeOptions() {
+  const sensors = state.nodes.filter(node => (node.activity_types || []).includes("sensor-collection"));
+  const previous = $("#sensor-schedule-node").value || "common";
+  $("#sensor-schedule-node").innerHTML = `<option value="common">모든 센서 · 공통</option>${sensors.map(node => `<option value="${safe(node.id)}">${safe(node.id)} · 개별</option>`).join("")}`;
+  if (previous === "common" || sensors.some(node => node.id === previous)) $("#sensor-schedule-node").value = previous;
+}
+
+function updateSensorScheduleVisibility() {
+  const daily = $("#sensor-schedule-mode").value === "daily";
+  document.querySelectorAll(".sensor-daily-field").forEach(item => item.hidden = !daily);
+  const hasTimes = $("#sensor-time-list").querySelector('input[type="time"]') !== null;
+  $("#sensor-schedule-warning").hidden = !daily || hasTimes;
+}
+
+function sensorRangesFromTimes(times) {
+  if (!times?.length) return [DEFAULT_SENSOR_RANGE];
+  const ranges = partitionCaptureTimes(times).map(block => {
+    const start = captureTimeSeconds(block[0]);
+    const end = captureTimeSeconds(block.at(-1));
+    const interval = block.length > 1 ? captureTimeSeconds(block[1]) - start : null;
+    if (block.length < 2 || start % 60 !== 0 || end % 60 !== 0 || interval % 60 !== 0) return null;
+    return { start: secondsToCaptureTime(start, false), intervalMinutes: interval / 60, end: secondsToCaptureTime(end, false) };
+  });
+  return ranges.every(Boolean) ? ranges : [DEFAULT_SENSOR_RANGE];
+}
+
+function renderSensorRanges(ranges) {
+  $("#sensor-range-list").innerHTML = ranges.map((range, index) => `
+    <div class="capture-range-block">
+      <div class="capture-range-heading"><span>블록 ${index + 1}</span><button type="button" class="text-button danger-text" data-remove-sensor-range="${index}" ${ranges.length === 1 ? "disabled" : ""}>삭제</button></div>
+      <div class="capture-range-grid">
+        <label class="field"><input type="time" value="${safe(range.start)}" required /><span>시작</span></label>
+        <label class="field"><input type="number" min="1" max="1440" step="1" value="${safe(range.intervalMinutes)}" required /><span>간격(분)</span></label>
+        <label class="field"><input type="time" value="${safe(range.end)}" required /><span>종료</span></label>
+      </div>
+    </div>`).join("");
+}
+
+function readSensorRanges() {
+  return [...$("#sensor-range-list").querySelectorAll(".capture-range-block")].map(block => {
+    const inputs = block.querySelectorAll("input");
+    return { start: inputs[0].value, intervalMinutes: Number(inputs[1].value), end: inputs[2].value };
+  });
+}
+
+function generateSensorTimes(range) {
+  const start = captureTimeMinutes(range.start), end = captureTimeMinutes(range.end), interval = Number(range.intervalMinutes);
+  if (!Number.isInteger(interval) || interval <= 0) throw new Error("수집 간격은 1분 이상의 정수여야 합니다.");
+  if (end < start) throw new Error("종료 시각은 시작 시각보다 빠를 수 없습니다.");
+  const times = [];
+  for (let minute = start; minute <= end; minute += interval) times.push(`${minutesToCaptureTime(minute)}:00`);
+  return times;
+}
+
+function renderSensorTimes(times = []) {
+  $("#sensor-time-list").innerHTML = times.length ? times.map((value, index) => `
+    <div class="daily-time-row">
+      <input type="time" step="1" value="${safe(value)}" aria-label="매일 센서 수집 시각 ${index + 1}" />
+      <button type="button" class="text-button danger-text" data-remove-sensor-time="${index}">삭제</button>
+    </div>`).join("") : '<div class="friendly-empty"><strong>등록된 시각이 없습니다.</strong><span>‘시각 추가’를 눌러 매일 수집할 시각을 입력하세요.</span></div>';
+  updateSensorScheduleVisibility();
+}
+
+function formatSensorSchedule(schedule) {
+  if (!schedule || schedule.mode === "disabled") return "자동 센서 수집 사용 안 함";
+  if (!schedule.daily_times?.length) return `수집 시각 없음 · ${schedule.timezone}`;
+  return `${schedule.daily_times.length}개 저장 시각 · ${schedule.timezone}`;
+}
+
+function loadSensorScheduleIntoForm(value) {
+  const defaultTimes = generateSensorTimes(DEFAULT_SENSOR_RANGE);
+  const schedule = value || { mode: "daily", daily_times: defaultTimes, timezone: "Asia/Seoul" };
+  state.sensorSchedule = structuredClone(schedule);
+  $("#sensor-schedule-mode").value = schedule.mode || "daily";
+  $("#sensor-schedule-timezone").value = schedule.timezone || "Asia/Seoul";
+  renderSensorRanges(sensorRangesFromTimes(schedule.daily_times || []));
+  renderSensorTimes(schedule.daily_times || []);
+  $("#sensor-schedule-summary").textContent = formatSensorSchedule(schedule);
+  updateSensorScheduleVisibility();
+}
+
+async function loadSensorSchedule(nodeId = $("#sensor-schedule-node").value) {
+  if (!nodeId) return;
+  $("#sensor-schedule-note").textContent = "센서 일정을 불러오는 중입니다…";
+  try {
+    const response = await api("/api/sensor-schedules");
+    if ($("#sensor-schedule-node").value !== nodeId) return;
+    const schedules = new Map(response.items.map(item => [item.node, item]));
+    let schedule = schedules.get(nodeId);
+    let mixed = false;
+    if (nodeId === "common") {
+      const values = response.sensor_ids.map(sensorId => schedules.get(sensorId));
+      schedule = values[0];
+      const comparable = value => JSON.stringify({ mode: value?.mode || "daily", daily_times: value?.daily_times || generateSensorTimes(DEFAULT_SENSOR_RANGE), timezone: value?.timezone || "Asia/Seoul" });
+      mixed = values.some(value => comparable(value) !== comparable(schedule));
+    }
+    loadSensorScheduleIntoForm(schedule);
+    $("#sensor-schedule-note").textContent = mixed
+      ? "개별 설정이 서로 다릅니다. 적용하면 모든 센서가 공통 설정으로 통일됩니다."
+      : nodeId === "common"
+        ? "모든 센서에 같은 저장 시각을 적용합니다."
+        : `${nodeId}에만 이 수집 일정을 적용합니다.`;
+  } catch (error) {
+    if ($("#sensor-schedule-node").value === nodeId) $("#sensor-schedule-note").textContent = `설정을 불러오지 못했습니다: ${error.message}`;
+  }
+}
+
+function sensorScheduleFromForm() {
+  const mode = $("#sensor-schedule-mode").value;
+  const timezone = $("#sensor-schedule-timezone").value.trim() || "Asia/Seoul";
+  if (mode === "disabled") return { mode, daily_times: [], timezone };
+  const daily_times = [...$("#sensor-time-list").querySelectorAll('input[type="time"]')].map(input => input.value).filter(Boolean);
+  if (new Set(daily_times).size !== daily_times.length) throw new Error("같은 센서 수집 시각을 두 번 등록할 수 없습니다.");
+  return { mode, daily_times, timezone };
 }
 
 function renderStorageCameraOptions() {
@@ -850,6 +967,7 @@ async function refresh() {
     Object.assign(state, { dashboard, runs: runs.items, events: events.items, eventsTotal: events.total ?? events.items.length, data: data.items, dataTotal: data.total ?? data.items.length, nodes: nodes.items });
     loadConfigurationIntoForm(configuration);
     renderCaptureCameraOptions();
+    renderSensorNodeOptions();
     renderStorageCameraOptions();
     renderDashboard(); renderEvents(); renderData(); renderNodes(); renderCameras(); startCameraStreams();
   } catch (error) {
@@ -865,8 +983,10 @@ document.querySelectorAll(".nav-item").forEach(button => button.addEventListener
   if (["data", "events"].includes(button.dataset.view)) refresh();
   if (button.dataset.view === "settings") {
     renderCaptureCameraOptions();
+    renderSensorNodeOptions();
     renderStorageCameraOptions();
     loadCaptureSchedule();
+    loadSensorSchedule();
     loadCameraConfiguration();
   }
 }));
@@ -1005,6 +1125,68 @@ $("#capture-schedule-form").addEventListener("submit", async event => {
   } finally { button.disabled = false; }
 });
 
+$("#sensor-schedule-node").addEventListener("change", () => loadSensorSchedule());
+$("#sensor-schedule-mode").addEventListener("change", updateSensorScheduleVisibility);
+$("#add-sensor-range").addEventListener("click", () => {
+  const ranges = readSensorRanges();
+  const previous = ranges.at(-1) || DEFAULT_SENSOR_RANGE;
+  const start = Math.min(captureTimeMinutes(previous.end) + 30, 1439);
+  const end = Math.min(start + 30, 1439);
+  ranges.push({ start: minutesToCaptureTime(start), intervalMinutes: Number(previous.intervalMinutes) || 30, end: minutesToCaptureTime(end) });
+  renderSensorRanges(ranges);
+});
+$("#sensor-range-list").addEventListener("click", event => {
+  const button = event.target.closest("[data-remove-sensor-range]");
+  if (!button) return;
+  const ranges = readSensorRanges();
+  ranges.splice(Number(button.dataset.removeSensorRange), 1);
+  renderSensorRanges(ranges.length ? ranges : [DEFAULT_SENSOR_RANGE]);
+});
+$("#generate-sensor-times").addEventListener("click", () => {
+  try {
+    const times = [...new Set(readSensorRanges().flatMap(generateSensorTimes))]
+      .sort((left, right) => captureTimeSeconds(left) - captureTimeSeconds(right));
+    renderSensorTimes(times);
+  } catch (error) { toast(error.message, true); }
+});
+$("#clear-sensor-times").addEventListener("click", () => renderSensorTimes([]));
+$("#add-sensor-time").addEventListener("click", () => {
+  const values = [...$("#sensor-time-list").querySelectorAll('input[type="time"]')].map(input => input.value);
+  values.push("00:00:00");
+  renderSensorTimes(values);
+});
+$("#sensor-time-list").addEventListener("click", event => {
+  const button = event.target.closest("[data-remove-sensor-time]");
+  if (!button) return;
+  const values = [...$("#sensor-time-list").querySelectorAll('input[type="time"]')].map(input => input.value);
+  values.splice(Number(button.dataset.removeSensorTime), 1);
+  renderSensorTimes(values);
+});
+$("#sensor-schedule-form").addEventListener("submit", async event => {
+  event.preventDefault();
+  const nodeId = $("#sensor-schedule-node").value;
+  let schedule;
+  try { schedule = sensorScheduleFromForm(); } catch (error) { toast(error.message, true); return; }
+  const targetLabel = nodeId === "common" ? "모든 센서" : nodeId;
+  const empty = schedule.mode === "daily" && schedule.daily_times.length === 0;
+  const confirmation = empty
+    ? "수집 시각이 비어 있습니다. 센서 수집과 해당 전원 계획이 비활성화됩니다. 계속할까요?"
+    : `${targetLabel}의 온·습도 수집 일정을 적용할까요?`;
+  if (!nodeId || !confirm(confirmation)) return;
+  const button = $("#apply-sensor-schedule");
+  button.disabled = true;
+  $("#sensor-schedule-note").textContent = "센서 일정을 확인하는 중입니다…";
+  try {
+    const result = await api("/api/sensor-schedules", { method: "PUT", body: JSON.stringify({ target: nodeId, settings: schedule }) });
+    $("#sensor-schedule-note").textContent = `센서 일정 적용 완료 · 설정 #${result.revision.id}`;
+    toast(`${targetLabel} 수집 일정을 적용했습니다.`);
+    await refresh();
+  } catch (error) {
+    $("#sensor-schedule-note").textContent = "적용하지 못했습니다. 기존 센서 일정은 유지됩니다.";
+    toast(error.message, true);
+  } finally { button.disabled = false; }
+});
+
 $("#add-power-keep").addEventListener("click", () => {
   const items = [...$("#power-keep-list").querySelectorAll("[data-power-keep-id]")].map(row => ({
     id: row.dataset.powerKeepId,
@@ -1106,6 +1288,6 @@ $("#apply-storages").addEventListener("click", async () => {
   } finally { button.disabled = false; }
 });
 
-$("#config-editor").value = JSON.stringify({ schema_version: 1, timezone: "Asia/Seoul", policies: { "boot-lead-seconds": 120, "shutdown-grace-seconds": 60, "merge-power-gaps-shorter-than-seconds": 1800 }, activities: [] }, null, 2);
+$("#config-editor").value = JSON.stringify({ schema_version: 1, timezone: "Asia/Seoul", policies: { "boot-lead-seconds": 120, "shutdown-grace-seconds": 60, "merge-power-gaps-shorter-than-seconds": 300 }, activities: [] }, null, 2);
 updateCaptureScheduleVisibility();
 refresh();

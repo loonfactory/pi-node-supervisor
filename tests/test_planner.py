@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -261,6 +262,86 @@ def test_empty_daily_capture_schedule_disables_automatic_power_plan(registry):
     assert plan.activities == ()
     assert plan.power_windows == ()
     assert planner.power_manager_configuration(config, plan).power_schedule == ()
+
+
+def test_daily_sensor_schedule_expands_default_48_stored_slots_without_drift(registry):
+    daily_times = [f"{hour:02d}:{minute:02d}:00" for hour in range(24) for minute in (0, 30)]
+    config = SupervisorConfiguration.model_validate(
+        {
+            "schema_version": 1,
+            "timezone": "Asia/Seoul",
+            "policies": {
+                "merge-power-gaps-shorter-than-seconds": 300,
+                "recurrence-horizon-hours": 24,
+            },
+            "sensor_schedules": [
+                {
+                    "id": "environment0-daily",
+                    "node": "environment0",
+                    "profile": "temperature-humidity",
+                    "mode": "daily",
+                    "daily_times": daily_times,
+                    "timezone": "Asia/Seoul",
+                }
+            ],
+        }
+    )
+    start = datetime(2030, 1, 1, tzinfo=ZoneInfo("Asia/Seoul")).astimezone(UTC)
+    plan = Planner(registry).plan(config, now=start)
+    slots = [
+        item
+        for item in plan.activities
+        if start <= item.requested_start < start + timedelta(days=1)
+    ]
+
+    assert len(slots) == 48
+    assert all(item.activity_type == "sensor-collection" for item in slots)
+    assert [item.requested_start for item in slots] == [
+        start + timedelta(minutes=30 * index) for index in range(48)
+    ]
+    assert len({item.activity_id for item in slots}) == 48
+    assert [item.activity_id for item in slots] == [
+        item.activity_id
+        for item in Planner(registry).plan(config, now=start).activities
+        if start <= item.requested_start < start + timedelta(days=1)
+    ]
+
+
+def test_sensor_schedule_executes_arbitrary_stored_times_and_keeps_exact_threshold_separate(registry):
+    config = SupervisorConfiguration.model_validate(
+        {
+            "schema_version": 1,
+            "timezone": "UTC",
+            "policies": {
+                "boot-lead-seconds": 0,
+                "shutdown-grace-seconds": 0,
+                "merge-power-gaps-shorter-than-seconds": 300,
+                "recurrence-horizon-hours": 24,
+            },
+            "sensor_schedules": [
+                {
+                    "id": "environment0-custom",
+                    "node": "environment0",
+                    "profile": "temperature-humidity",
+                    "mode": "daily",
+                    "daily_times": ["08:01:00", "12:34:00", "12:39:25"],
+                    "timezone": "UTC",
+                    "duration_seconds": 10,
+                }
+            ],
+        }
+    )
+    plan = Planner(registry).plan(config, now=datetime(2030, 1, 1, tzinfo=UTC))
+    day = [item for item in plan.activities if item.requested_start.day == 1]
+
+    assert [item.requested_start.time().isoformat() for item in day] == [
+        "08:01:00",
+        "12:34:00",
+        "12:39:25",
+    ]
+    # environment0 release is slot + 15s and the next power-on is slot - 10s,
+    # making this gap exactly 300s; equality must remain unmerged.
+    assert len(plan.power_windows) >= 3
 
 
 def test_daily_power_keep_schedule_uses_exact_wall_clock_window(registry):

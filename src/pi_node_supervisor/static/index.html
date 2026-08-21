@@ -47,7 +47,7 @@
         </section>
 
         <section id="settings" class="view">
-          <div class="page-heading"><div><p class="eyebrow">DEVICE SETTINGS</p><h1>설정</h1><p class="page-description">촬영 시각과 카메라 저장 위치를 한곳에서 관리합니다.</p></div></div>
+          <div class="page-heading"><div><p class="eyebrow">DEVICE SETTINGS</p><h1>설정</h1><p class="page-description">촬영·센서 수집 시각과 저장 위치를 한곳에서 관리합니다.</p></div></div>
 
           <div class="settings-grid">
             <article class="panel settings-card capture-schedule-card">
@@ -77,6 +77,27 @@
                 <p id="capture-schedule-summary" class="field-help"></p>
                 <p id="capture-schedule-warning" class="settings-warning" hidden>촬영 시각이 없습니다. 촬영과 자동 전원 계획이 모두 비활성화됩니다.</p>
                 <div class="settings-actions storage-apply-actions"><span id="capture-schedule-note">촬영 일정을 불러오는 중입니다.</span><button id="apply-capture-schedule" type="submit">촬영 일정 적용</button></div>
+              </form>
+            </article>
+
+            <article class="panel settings-card capture-schedule-card">
+              <div class="panel-title"><div><h2>온·습도 수집 일정</h2><span>저장된 시각마다 센서 값을 읽고 전원 계획에 반영합니다.</span></div></div>
+              <form id="sensor-schedule-form">
+                <input id="sensor-schedule-timezone" type="hidden" value="Asia/Seoul" />
+                <div class="form-grid schedule-mode-grid">
+                  <label class="field"><span>적용 대상</span><select id="sensor-schedule-node"></select></label>
+                  <label class="field"><span>자동 수집 방식</span><select id="sensor-schedule-mode"><option value="disabled">사용 안 함</option><option value="daily">매일 지정한 시각</option></select></label>
+                </div>
+                <div class="capture-daily-field sensor-daily-field">
+                  <div class="subsection-heading"><div><strong>수집 시간 블록</strong><span>기본값은 00:00부터 23:30까지 30분 간격이며 자유롭게 변경할 수 있습니다.</span></div><button id="add-sensor-range" type="button" class="ghost">+ 블록 추가</button></div>
+                  <div id="sensor-range-list" class="capture-range-list"></div>
+                  <button id="generate-sensor-times" type="button" class="ghost generate-times-button">수집 시각 생성</button>
+                  <div class="subsection-heading generated-times-heading"><div><strong>저장될 수집 시각</strong><span>실제 측정은 아래 시각 목록을 기준으로 실행됩니다.</span></div><div class="inline-actions"><button id="clear-sensor-times" type="button" class="text-button danger-text">모두 지우기</button><button id="add-sensor-time" type="button" class="ghost">+ 시각 추가</button></div></div>
+                  <div id="sensor-time-list" class="daily-time-list"></div>
+                </div>
+                <p id="sensor-schedule-summary" class="field-help"></p>
+                <p id="sensor-schedule-warning" class="settings-warning" hidden>수집 시각이 없습니다. 센서 수집과 해당 전원 계획이 비활성화됩니다.</p>
+                <div class="settings-actions storage-apply-actions"><span id="sensor-schedule-note">센서 일정을 불러오는 중입니다.</span><button id="apply-sensor-schedule" type="submit">센서 일정 적용</button></div>
               </form>
             </article>
 

@@ -208,6 +208,78 @@ def test_power_linked_recurring_capture_is_not_executed_by_supervisor(service):
     assert adapter.executions == []
 
 
+def test_recurring_sensor_occurrence_executes_once_at_stored_slot(service):
+    service.apply_document(
+        {
+            "schema_version": 1,
+            "timezone": "UTC",
+            "activities": [],
+            "sensor_schedules": [
+                {
+                    "id": "environment0-daily",
+                    "node": "environment0",
+                    "profile": "temperature-humidity",
+                    "mode": "daily",
+                    "daily_times": ["00:00:00", "12:34:00"],
+                    "timezone": "UTC",
+                }
+            ],
+        }
+    )
+    runtime = RuntimeStore(service.store.database_path)
+    adapter = FakeCaptureAdapter()
+    adapter.node_id = "environment0"
+    engine = ExecutionEngine(service.store, runtime, {"environment0": adapter})
+    occurrence = next(
+        item
+        for item in service.store.active_bundle()[2].activities
+        if item.activity_type == "sensor-collection"
+    )
+
+    first = engine.tick(occurrence.requested_start)
+    second = engine.tick(occurrence.requested_start)
+
+    assert len(first) == 1
+    assert first[0].scheduled_at == occurrence.requested_start
+    assert second == []
+    assert len(adapter.executions) == 1
+
+
+def test_late_recurring_sensor_slot_is_missed_without_backfill(service):
+    service.apply_document(
+        {
+            "schema_version": 1,
+            "timezone": "UTC",
+            "activities": [],
+            "sensor_schedules": [
+                {
+                    "id": "environment0-daily",
+                    "node": "environment0",
+                    "profile": "temperature-humidity",
+                    "mode": "daily",
+                    "daily_times": ["06:15:00"],
+                    "timezone": "UTC",
+                }
+            ],
+        }
+    )
+    runtime = RuntimeStore(service.store.database_path)
+    adapter = FakeCaptureAdapter()
+    adapter.node_id = "environment0"
+    engine = ExecutionEngine(service.store, runtime, {"environment0": adapter})
+    occurrence = next(
+        item
+        for item in service.store.active_bundle()[2].activities
+        if item.activity_type == "sensor-collection"
+    )
+
+    result = engine.tick(occurrence.requested_start + timedelta(seconds=61))
+
+    assert result[0].status == "missed"
+    assert result[0].scheduled_at == occurrence.requested_start
+    assert adapter.executions == []
+
+
 def test_storage_sync_reconstructs_native_timer_run_and_links_data(service):
     scheduled = datetime(2030, 1, 1, tzinfo=UTC)
     runtime = apply_at(service, scheduled)

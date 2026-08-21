@@ -4,7 +4,7 @@
   "policies": {
     "boot-lead-seconds": 120,
     "shutdown-grace-seconds": 60,
-    "merge-power-gaps-shorter-than-seconds": 1800,
+    "merge-power-gaps-shorter-than-seconds": 300,
     "minimum-lead-seconds": 60,
     "clock-tolerance-seconds": 5
   },
