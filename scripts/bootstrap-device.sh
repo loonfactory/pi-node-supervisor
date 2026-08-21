@@ -138,7 +138,11 @@ capture_arguments=()
 for camera_spec in "${camera_specs[@]}"; do
   capture_arguments+=(--camera "$camera_spec")
 done
-"$capture_source/eng/deploy.sh" "${capture_arguments[@]}" --skip-linger "$target"
+"$capture_source/eng/deploy.sh" \
+  "${capture_arguments[@]}" \
+  --skip-tests \
+  --skip-linger \
+  "$target"
 
 local_stage=$(mktemp -d /tmp/pi-node-bootstrap-local.XXXXXX)
 source_nodes_file=$nodes_file

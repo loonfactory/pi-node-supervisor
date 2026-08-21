@@ -74,8 +74,9 @@ if "$python_bin" -c 'import build' >/dev/null 2>&1; then
 elif "$python_bin" -c 'import hatchling' >/dev/null 2>&1; then
   "$python_bin" -m pip wheel --no-deps --no-build-isolation --wheel-dir "$build_dir" "$power_source"
 else
-  "$project_root/../capture-node/.venv/bin/python" -m pip wheel \
-    --no-deps --no-build-isolation --wheel-dir "$build_dir" "$power_source"
+  "$python_bin" -m venv "$build_dir/builder"
+  "$build_dir/builder/bin/python" -m pip install build
+  "$build_dir/builder/bin/python" -m build --wheel --outdir "$build_dir" "$power_source"
 fi
 wheel=$(find "$build_dir" -maxdepth 1 -type f -name 'pi_power_manager-*.whl' -print -quit)
 [[ -n "$wheel" ]] || { printf 'Wheel build failed.\n' >&2; exit 1; }

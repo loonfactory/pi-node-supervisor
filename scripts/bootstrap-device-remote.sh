@@ -37,6 +37,7 @@ esac
 timedatectl set-timezone "$timezone"
 systemctl enable ssh
 loginctl enable-linger "$operator"
+usermod -aG dialout "$operator"
 
 temporary_dir=$(mktemp -d /tmp/pi-node-bootstrap.XXXXXX)
 cleanup() {

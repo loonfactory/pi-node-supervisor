@@ -360,8 +360,8 @@ privileged `pi-power-manager` service and connects Supervisor to
 `/etc/pi-power-manager/config.json`. On a new device its automatic shutdown
 timer remains disabled; later deployments preserve the timer's existing
 enabled state. A failed health check automatically restores the previous
-unit/release. The default target and registry match `hu-pi-02` with CaptureNode
-on ports 8000 and 8001:
+unit/release. The default registry contains two CaptureNode cameras on ports
+8000 and 8001 plus the CWT temperature/humidity sensor:
 
 ```bash
 scripts/deploy.sh
@@ -376,6 +376,11 @@ power boundary, with one command:
 ```bash
 scripts/deploy.sh --bootstrap --target huintech@192.168.12.6
 ```
+
+`--bootstrap` is intentionally explicit because it installs Raspberry Pi
+packages, enables the operator's `dialout` access, applies bootloader power
+settings, and reboots before deploying the applications. Normal software-only
+upgrades omit it and use the same script with `--target` only.
 
 After hardware diagnostics and a supervised wake test, enable the automatic
 power timer as part of deployment with `scripts/deploy.sh --enable-power`.

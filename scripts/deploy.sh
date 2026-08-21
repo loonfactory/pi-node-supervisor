@@ -166,10 +166,6 @@ if "$python_bin" -c 'import build' >/dev/null 2>&1; then
   "$python_bin" -m build --wheel --outdir "$build_dir" "$project_root"
 elif "$python_bin" -c 'import hatchling' >/dev/null 2>&1; then
   "$python_bin" -m pip wheel --no-deps --no-build-isolation --wheel-dir "$build_dir" "$project_root"
-elif [[ -x "$project_root/../capture-node/.venv/bin/python" ]] && \
-     "$project_root/../capture-node/.venv/bin/python" -c 'import hatchling' >/dev/null 2>&1; then
-  "$project_root/../capture-node/.venv/bin/python" -m pip wheel \
-    --no-deps --no-build-isolation --wheel-dir "$build_dir" "$project_root"
 else
   "$python_bin" -m venv "$build_dir/builder"
   "$build_dir/builder/bin/python" -m pip install build
