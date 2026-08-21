@@ -64,7 +64,21 @@
       },
       "sensor_storage": {
         "local_directory": "/home/huintech/pi-node-supervisor/sensors",
-        "mirrors": [],
+        "mirrors": [
+          {
+            "type": "ftps",
+            "name": "archive",
+            "host": "192.168.12.2",
+            "port": 21,
+            "username": "captureftp",
+            "remote_directory": "/",
+            "password_env": "CAPTURE_NODE_FTPS_PASSWORD",
+            "verify_tls": false,
+            "connect_timeout_seconds": 10,
+            "operation_timeout_seconds": 30,
+            "layout": "daily"
+          }
+        ],
         "retry_base_seconds": 30,
         "retry_max_seconds": 3600
       }

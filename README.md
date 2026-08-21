@@ -432,6 +432,19 @@ the service, point `current` to the verified `previous` release, restore the
 corresponding `backups/nodes.json.*`, reload user systemd, and restart the
 service.
 
+To roll the repository defaults out to an existing device, put the FTPS
+password alone on one line in a local mode-`0600` file and run:
+
+```bash
+./scripts/deploy.sh --target huintech@192.168.12.11 \
+  --update-settings --ftps-password-file ./secrets/ftps-password
+```
+
+Without `--update-settings`, deployment preserves the active schedules and
+CaptureNode storage settings. The password file is staged only for the
+deployment and installed into the protected service environment files; its
+contents are not written to JSON or committed to the repository.
+
 The default deployment replaces the legacy `capture-node-web@camera0/1` user
 services. It preserves managed copies of both existing camera configs and, on
 first install, imports their native schedules as the initial RTC power plan.

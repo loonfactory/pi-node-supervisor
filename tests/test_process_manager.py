@@ -501,7 +501,15 @@ def test_capture_node_settings_merge_common_and_node_overlays(tmp_path: Path):
                             "horizontal_flip": True,
                             "vertical_flip": True,
                         }
-                    }
+                    },
+                    "storages": [
+                        {
+                            "type": "file",
+                            "name": "local",
+                            "directory": "captures/{camera}",
+                            "layout": "daily",
+                        }
+                    ],
                 },
                 "nodes": {
                     "camera1": {"capture": {"params": {"vertical_flip": False}}}
@@ -523,6 +531,8 @@ def test_capture_node_settings_merge_common_and_node_overlays(tmp_path: Path):
         "horizontal_flip": True,
         "vertical_flip": False,
     }
+    assert first["storages"][0]["directory"] == "captures/camera0"
+    assert second["storages"][0]["directory"] == "captures/camera1"
     assert result["updated_nodes"] == ["camera0", "camera1"]
     assert result["revision"] == {"id": 9}
     manager.stop()

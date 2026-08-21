@@ -20,6 +20,8 @@ power_manager_source=${POWER_MANAGER_SOURCE:-$project_root/components/pi-power-m
 install_power_manager=true
 enable_power=false
 bootstrap_device=false
+update_settings=false
+ftps_password_file=''
 
 usage() {
   printf '%s\n' \
@@ -37,6 +39,8 @@ usage() {
     "  --power-manager-source PATH  Local pi-power-manager source root" \
     "  --enable-power           Enable timer; boot-latched GPIO26 gates execution" \
     "  --bootstrap              Provision OS, CaptureNode, Supervisor and power manager" \
+    "  --update-settings        Replace active schedules/storage defaults during deployment" \
+    "  --ftps-password-file FILE  Install FTPS password from a local protected file" \
     "  --without-power-manager  Skip privileged manager installation" \
     "  --huintech-device-source PATH  HUINTECHDEVICE python source root" \
     "  --preserve-existing-nodes  Keep and validate the target's existing nodes.json" \
@@ -57,6 +61,8 @@ while (($#)); do
     --power-manager-source) power_manager_source=${2:?missing value for --power-manager-source}; shift 2 ;;
     --enable-power) enable_power=true; shift ;;
     --bootstrap) bootstrap_device=true; shift ;;
+    --update-settings) update_settings=true; shift ;;
+    --ftps-password-file) ftps_password_file=${2:?missing value for --ftps-password-file}; shift 2 ;;
     --without-power-manager) install_power_manager=false; shift ;;
     --huintech-device-source) huintech_device_source=${2:?missing value for --huintech-device-source}; shift 2 ;;
     --preserve-existing-nodes) preserve_existing_nodes=true; shift ;;
@@ -99,6 +105,10 @@ done
   printf 'Node registry or initial configuration is unreadable\n' >&2
   exit 2
 }
+if [[ -n "$ftps_password_file" && ! -r "$ftps_password_file" ]]; then
+  printf 'FTPS password file is unreadable: %s\n' "$ftps_password_file" >&2
+  exit 2
+fi
 if [[ "$install_power_manager" == true ]]; then
   [[ -n "$power_manager_source" && -r "$power_manager_source/pyproject.toml" ]] || {
     printf 'Bundled pi-power-manager source is unavailable: %s\n' "$power_manager_source" >&2
@@ -131,6 +141,9 @@ if [[ "$bootstrap_device" == true ]]; then
   bootstrap_arguments+=(--power-manager-source "$power_manager_source")
   if [[ "$enable_power" == true ]]; then
     bootstrap_arguments+=(--enable-power)
+  fi
+  if [[ -n "$ftps_password_file" ]]; then
+    bootstrap_arguments+=(--ftps-password-file "$ftps_password_file")
   fi
   "$script_dir/bootstrap-device.sh" "${bootstrap_arguments[@]}"
   exit 0
@@ -200,12 +213,15 @@ scp "${ssh_options[@]}" \
 if [[ -n "$sensor_dependency_archive" ]]; then
   scp "${ssh_options[@]}" "$sensor_dependency_archive" "$target:$remote_stage/"
 fi
+if [[ -n "$ftps_password_file" ]]; then
+  scp "${ssh_options[@]}" "$ftps_password_file" "$target:$remote_stage/ftps-password"
+fi
 
 printf 'Installing and activating release\n'
 ssh "${ssh_options[@]}" "$target" bash -s -- \
   "$remote_base" "$remote_stage" "$release_id" "$bind_host" "$port" \
   "$capture_node_executable" "$replace_capture_services" "$deployment_power_config" \
-  "$preserve_existing_nodes" <<'REMOTE_INSTALL'
+  "$preserve_existing_nodes" "$update_settings" <<'REMOTE_INSTALL'
 set -Eeuo pipefail
 
 base=$1
@@ -217,6 +233,7 @@ capture_node_executable=$6
 replace_capture_services=$7
 power_config=$8
 preserve_existing_nodes=$9
+update_settings=${10}
 
 case "$base" in
   "$HOME"/*) ;;
@@ -347,11 +364,40 @@ if ! grep -Eq '^PI_NODE_SUPERVISOR_API_TOKEN=.{20,}$' "$config_dir/supervisor.en
 fi
 chmod 600 "$config_dir/supervisor.env"
 
+if [[ -r "$stage/ftps-password" ]]; then
+  python3 - "$stage/ftps-password" "$config_dir/supervisor.env" "$HOME/capture-node/.env.local" <<'PYTHON_FTPS_SECRET'
+import json
+import os
+import sys
+from pathlib import Path
+
+secret_path, supervisor_path, capture_path = map(Path, sys.argv[1:])
+secret = secret_path.read_text(encoding="utf-8").rstrip("\r\n")
+if not secret or "\n" in secret or "\r" in secret or "\x00" in secret:
+    raise SystemExit("FTPS password file must contain exactly one non-empty line")
+
+def update(path: Path, names: tuple[str, ...]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    existing = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+    prefixes = tuple(f"{name}=" for name in names)
+    lines = [line for line in existing if not line.startswith(prefixes)]
+    lines.extend(f"{name}={json.dumps(secret)}" for name in names)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    temporary.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    os.chmod(temporary, 0o600)
+    os.replace(temporary, path)
+
+update(supervisor_path, ("SENSOR_STORAGE_PASSWORD",))
+update(capture_path, ("CAPTURE_NODE_FTPS_PASSWORD",))
+PYTHON_FTPS_SECRET
+fi
+
 first_install=false
 if [[ ! -f "$config_dir/config.json" ]]; then
   first_install=true
-  bootstrap="$config_dir/bootstrap-config.json"
-  python3 - "$config_dir/initial-config.json" "$config_dir/nodes.json" "$bootstrap" <<'PYTHON_BOOTSTRAP'
+fi
+bootstrap="$config_dir/bootstrap-config.json"
+python3 - "$config_dir/initial-config.json" "$config_dir/nodes.json" "$bootstrap" <<'PYTHON_BOOTSTRAP'
 import json
 import sys
 from datetime import UTC, datetime, timedelta
@@ -446,6 +492,7 @@ output_path.write_text(
     json.dumps(document, ensure_ascii=True, indent=2) + "\n", encoding="utf-8"
 )
 PYTHON_BOOTSTRAP
+if [[ "$first_install" == true ]]; then
   "$release/.venv/bin/pi-node-supervisor" \
     --nodes "$config_dir/nodes.json" \
     --state-dir "$state_dir" \
@@ -533,6 +580,18 @@ fi
 api_token=${PI_NODE_SUPERVISOR_API_TOKEN:-}
 if [[ -z "$api_token" ]]; then
   api_token=$(sed -n 's/^PI_NODE_SUPERVISOR_API_TOKEN=//p' "$config_dir/supervisor.env")
+fi
+if [[ "$first_install" == true || "$update_settings" == true ]]; then
+  printf 'Applying deployment settings through Supervisor API\n'
+  curl --fail --silent --show-error \
+    -H "X-Supervisor-Token: $api_token" \
+    -H 'Content-Type: application/json' \
+    --request PUT --data-binary "@$bootstrap" \
+    "http://127.0.0.1:$port/api/config/draft" >/dev/null
+  curl --fail --silent --show-error \
+    -H "X-Supervisor-Token: $api_token" \
+    --request POST \
+    "http://127.0.0.1:$port/api/revisions/apply" >/dev/null
 fi
 curl --fail --silent --show-error \
   -H "X-Supervisor-Token: $api_token" \

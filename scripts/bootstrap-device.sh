@@ -13,6 +13,7 @@ nodes_file=${NODES_FILE:-$project_root/examples/nodes.dual-camera-sensor.json}
 initial_config=${INITIAL_CONFIG:-$project_root/examples/config.empty.json}
 huintech_device_source=${HUINTECHDEVICE_SOURCE:-$project_root/components/huintech-device/python}
 power_manager_source=${POWER_MANAGER_SOURCE:-$project_root/components/pi-power-manager}
+ftps_password_file=''
 camera_specs=()
 
 usage() {
@@ -32,6 +33,7 @@ usage() {
     "  --timezone ZONE         Device timezone (default: $timezone)" \
     "  --port PORT             Supervisor Web port (default: $port)" \
     "  --enable-power          Enable the timer; each boot's GPIO26 latch gates execution" \
+    "  --ftps-password-file FILE  Install FTPS password from a local protected file" \
     "  -h, --help              Show this help"
 }
 
@@ -47,6 +49,7 @@ while (($#)); do
     --timezone) timezone=${2:?missing value for --timezone}; shift 2 ;;
     --port) port=${2:?missing value for --port}; shift 2 ;;
     --enable-power) enable_power=true; shift ;;
+    --ftps-password-file) ftps_password_file=${2:?missing value for --ftps-password-file}; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     -*) printf 'Unknown option: %s\n' "$1" >&2; usage >&2; exit 2 ;;
     *) [[ -z "$target" ]] || { printf 'Only one target is allowed.\n' >&2; exit 2; }; target=$1; shift ;;
@@ -68,6 +71,7 @@ done
 [[ -r "$capture_source/eng/deploy.sh" ]] || { printf 'CaptureNode source is unavailable. Set CAPTURE_NODE_SOURCE.\n' >&2; exit 2; }
 [[ -r "$nodes_file" ]] || { printf 'Node registry is unavailable: %s\n' "$nodes_file" >&2; exit 2; }
 [[ -r "$initial_config" ]] || { printf 'Initial configuration is unavailable: %s\n' "$initial_config" >&2; exit 2; }
+[[ -z "$ftps_password_file" || -r "$ftps_password_file" ]] || { printf 'FTPS password file is unavailable: %s\n' "$ftps_password_file" >&2; exit 2; }
 for command_name in scp ssh ssh-copy-id ssh-keygen; do
   command -v "$command_name" >/dev/null || { printf 'Missing local command: %s\n' "$command_name" >&2; exit 2; }
 done
@@ -190,6 +194,9 @@ supervisor_arguments+=(--huintech-device-source "$huintech_device_source")
 supervisor_arguments+=(--power-manager-source "$power_manager_source")
 if [[ "$enable_power" == true ]]; then
   supervisor_arguments+=(--enable-power)
+fi
+if [[ -n "$ftps_password_file" ]]; then
+  supervisor_arguments+=(--ftps-password-file "$ftps_password_file")
 fi
 "$script_dir/deploy.sh" "${supervisor_arguments[@]}"
 

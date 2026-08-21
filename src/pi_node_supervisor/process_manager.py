@@ -171,6 +171,7 @@ class CaptureNodeProcessManager:
                 previous = self._read_configuration(path)
                 candidate = self._deep_merge(previous, settings.common)
                 candidate = self._deep_merge(candidate, settings.nodes.get(node.id, {}))
+                candidate = self._expand_camera_placeholders(candidate, node.id)
                 if candidate != previous:
                     updates.append((node, path, previous_bytes, candidate))
 
@@ -210,6 +211,23 @@ class CaptureNodeProcessManager:
                 result[key] = cls._deep_merge(current, value)
             else:
                 result[key] = copy.deepcopy(value)
+        return result
+
+    @staticmethod
+    def _expand_camera_placeholders(
+        document: dict[str, Any], node_id: str
+    ) -> dict[str, Any]:
+        result = copy.deepcopy(document)
+        storages = result.get("storages")
+        if not isinstance(storages, list):
+            return result
+        for storage in storages:
+            if not isinstance(storage, dict):
+                continue
+            for key in ("directory", "remote_directory"):
+                value = storage.get(key)
+                if isinstance(value, str):
+                    storage[key] = value.replace("{camera}", node_id)
         return result
 
     def update_storages(
