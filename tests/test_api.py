@@ -166,7 +166,10 @@ async def test_runtime_catalog_endpoints_and_static_ui(service: SupervisorServic
         assert "전원 운용 설정" in root.text
         assert "작동 전후 여유 시간" in root.text
         assert "촬영·센서 수집 일정과 별개로 매일 지정한 시간에는 장치 전원을 유지합니다" in root.text
-        assert "촬영과 자동 전원 계획이 모두 비활성화됩니다" in root.text
+        assert "CaptureNode 촬영 일정" in root.text
+        assert "Sensor 온·습도 수집 일정" in root.text
+        assert "그 어떠한 일정도 설정되지 않으면 전원 관리가 비활성화됩니다" in root.text
+        assert 'class="panel settings-card power-settings-card power-block"' in root.text
         assert 'id="events-page-size"' in root.text
         assert 'id="events-prev"' in root.text
         assert 'id="events-next"' in root.text

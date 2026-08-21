@@ -58,8 +58,8 @@
           <div class="page-heading"><div><p class="eyebrow">DEVICE SETTINGS</p><h1>설정</h1><p class="page-description">촬영·센서 수집 시각과 저장 위치를 한곳에서 관리합니다.</p></div></div>
 
           <div class="settings-grid">
-            <article class="panel settings-card capture-schedule-card">
-              <div class="panel-title"><div><h2>촬영 일정</h2><span>카메라의 반복 촬영 시간과 간격을 설정합니다.</span></div></div>
+            <article class="panel settings-card capture-schedule-card capture-node-block">
+              <div class="panel-title"><div><h2>CaptureNode 촬영 일정</h2><span>카메라의 반복 촬영 시간과 간격을 설정합니다.</span></div></div>
               <form id="capture-schedule-form">
                 <input id="capture-schedule-timezone" type="hidden" value="Asia/Seoul" />
                 <div class="form-grid schedule-mode-grid">
@@ -83,7 +83,7 @@
                   <div id="daily-time-list" class="daily-time-list"></div>
                 </div>
                 <p id="capture-schedule-summary" class="field-help"></p>
-                <p id="capture-schedule-warning" class="settings-warning" hidden>촬영 시각이 없습니다. 촬영과 자동 전원 계획이 모두 비활성화됩니다.</p>
+                <p id="capture-schedule-warning" class="settings-warning" hidden>촬영 시각이 없습니다. CaptureNode 자동 촬영이 비활성화됩니다.</p>
                 <div class="settings-actions storage-apply-actions"><span id="capture-schedule-note">촬영 일정을 불러오는 중입니다.</span><button id="apply-capture-schedule" type="submit">촬영 일정 적용</button></div>
               </form>
             </article>
@@ -126,8 +126,8 @@
               </form>
             </article>
 
-            <article class="panel settings-card capture-schedule-card">
-              <div class="panel-title"><div><h2>온·습도 수집 일정</h2><span>저장된 시각마다 센서 값을 읽고 전원 계획에 반영합니다.</span></div></div>
+            <article class="panel settings-card capture-schedule-card sensor-block">
+              <div class="panel-title"><div><h2>Sensor 온·습도 수집 일정</h2><span>저장된 시각마다 센서 값을 읽고 전원 계획에 반영합니다.</span></div></div>
               <form id="sensor-schedule-form">
                 <input id="sensor-schedule-timezone" type="hidden" value="Asia/Seoul" />
                 <div class="form-grid schedule-mode-grid">
@@ -142,14 +142,15 @@
                   <div id="sensor-time-list" class="daily-time-list"></div>
                 </div>
                 <p id="sensor-schedule-summary" class="field-help"></p>
-                <p id="sensor-schedule-warning" class="settings-warning" hidden>수집 시각이 없습니다. 센서 수집과 해당 전원 계획이 비활성화됩니다.</p>
+                <p id="sensor-schedule-warning" class="settings-warning" hidden>수집 시각이 없습니다. Sensor 자동 수집이 비활성화됩니다.</p>
                 <div class="settings-actions storage-apply-actions"><span id="sensor-schedule-note">센서 일정을 불러오는 중입니다.</span><button id="apply-sensor-schedule" type="submit">센서 일정 적용</button></div>
               </form>
             </article>
 
-            <article class="panel settings-card power-settings-card">
+            <article class="panel settings-card power-settings-card power-block">
               <div class="panel-title"><div><h2>전원 운용 설정</h2><span>촬영·센서 수집 일정에 따른 여유 시간과 별도 전원 유지 일정을 관리합니다.</span></div></div>
               <form id="power-settings-form">
+                <p class="settings-warning power-schedule-warning">그 어떠한 일정도 설정되지 않으면 전원 관리가 비활성화됩니다.</p>
                 <section class="power-settings-section">
                   <div class="subsection-heading"><div><strong>작동 전후 여유 시간</strong><span>촬영이나 센서 수집 전에 전원을 미리 켜고 작업 후에 유지할 시간을 설정합니다.</span></div></div>
                   <div class="form-grid">

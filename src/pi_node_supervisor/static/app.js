@@ -457,10 +457,7 @@ function updateCaptureScheduleVisibility() {
 function updateCaptureScheduleWarning() {
   const warning = $("#capture-schedule-warning");
   const hasTimes = $("#daily-time-list").querySelector('input[type="time"]') !== null;
-  const hasPowerKeep = (state.configuration?.power_keep_schedules || []).length > 0;
-  warning.textContent = hasPowerKeep
-    ? "촬영 시각이 없습니다. 촬영용 전원 계획은 꺼지지만 별도 전원 유지 일정은 계속 작동합니다."
-    : "촬영 시각이 없습니다. 촬영과 자동 전원 계획이 모두 비활성화됩니다.";
+  warning.textContent = "촬영 시각이 없습니다. CaptureNode 자동 촬영이 비활성화됩니다.";
   warning.hidden = $("#capture-schedule-mode").value !== "daily" || hasTimes;
 }
 
@@ -1313,11 +1310,8 @@ $("#capture-schedule-form").addEventListener("submit", async event => {
   try { schedule = captureScheduleFromForm(); } catch (error) { toast(error.message, true); return; }
   const targetLabel = nodeId === "common" ? "모든 카메라" : nodeId;
   const powerPlanDisabled = schedule.mode === "daily" && schedule.daily_times.length === 0;
-  const hasPowerKeep = (state.configuration?.power_keep_schedules || []).length > 0;
   const confirmation = powerPlanDisabled
-    ? hasPowerKeep
-      ? "촬영 시각이 비어 있습니다. 촬영용 전원 계획은 비활성화되지만 별도 전원 유지 일정은 계속 작동합니다. 계속할까요?"
-      : "촬영 시각이 비어 있습니다. 적용하면 촬영과 자동 전원 계획이 모두 비활성화됩니다. 계속할까요?"
+    ? "촬영 시각이 비어 있습니다. CaptureNode 자동 촬영이 비활성화됩니다. 계속할까요?"
     : `${targetLabel}의 촬영 일정을 적용할까요?`;
   if (!nodeId || !confirm(confirmation)) return;
   const button = $("#apply-capture-schedule");
@@ -1379,7 +1373,7 @@ $("#sensor-schedule-form").addEventListener("submit", async event => {
   const targetLabel = nodeId === "common" ? "모든 센서" : nodeId;
   const empty = schedule.mode === "daily" && schedule.daily_times.length === 0;
   const confirmation = empty
-    ? "수집 시각이 비어 있습니다. 센서 수집과 해당 전원 계획이 비활성화됩니다. 계속할까요?"
+    ? "수집 시각이 비어 있습니다. Sensor 자동 수집이 비활성화됩니다. 계속할까요?"
     : `${targetLabel}의 온·습도 수집 일정을 적용할까요?`;
   if (!nodeId || !confirm(confirmation)) return;
   const button = $("#apply-sensor-schedule");
