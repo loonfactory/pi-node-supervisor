@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime, timedelta
 from typing import Any, Callable
 from urllib.parse import unquote, urlsplit
@@ -243,6 +244,87 @@ class ExecutionEngine:
                     {"node_id": current_node, "error": f"{type(exc).__name__}: {exc}"}
                 )
         return {"nodes": results, "failures": failures}
+
+    def capture_all_now(self) -> dict[str, Any]:
+        """Trigger all capture adapters concurrently using their configured storages."""
+
+        selected = {
+            node_id: capture
+            for node_id, adapter in self.adapters.items()
+            if callable(capture := getattr(adapter, "capture_now", None))
+        }
+        if not selected:
+            raise ValueError("no camera capture adapters are available")
+
+        completed: dict[str, dict[str, Any]] = {}
+        failures: dict[str, str] = {}
+        with ThreadPoolExecutor(
+            max_workers=len(selected), thread_name_prefix="manual-camera-capture"
+        ) as pool:
+            pending = {
+                pool.submit(capture): node_id for node_id, capture in selected.items()
+            }
+            for future in as_completed(pending):
+                node_id = pending[future]
+                try:
+                    completed[node_id] = future.result()
+                except Exception as exc:
+                    failures[node_id] = f"{type(exc).__name__}: {exc}"
+
+        return self._finalize_manual_captures(
+            len(selected), completed, failures
+        )
+
+    def _finalize_manual_captures(
+        self,
+        requested: int,
+        completed: dict[str, dict[str, Any]],
+        failures: dict[str, str],
+    ) -> dict[str, Any]:
+        results = [
+            {"node_id": node_id, **completed[node_id]}
+            for node_id in sorted(completed)
+        ]
+        failure_items = [
+            {"node_id": node_id, "error": failures[node_id]}
+            for node_id in sorted(failures)
+        ]
+        for item in results:
+            self.runtime.append_event(
+                "capture.manual_succeeded",
+                node_id=item["node_id"],
+                payload={
+                    "capture_id": item["capture_id"],
+                    "captured_at": item["captured_at"],
+                },
+            )
+        for item in failure_items:
+            self.runtime.append_event(
+                "capture.manual_failed",
+                severity="error",
+                node_id=item["node_id"],
+                payload={"error": item["error"]},
+            )
+
+        data_sync = {
+            "indexed": 0,
+            "new_data": 0,
+            "runs_added": 0,
+            "failures": [],
+        }
+        for item in results:
+            sync = self.sync_data(item["node_id"])
+            for key in ("indexed", "new_data", "runs_added"):
+                data_sync[key] += sync[key]
+            data_sync["failures"].extend(sync["failures"])
+        return {
+            "requested": requested,
+            "succeeded": len(results),
+            "failed": len(failure_items),
+            "items": results,
+            "failures": failure_items,
+            "data_sync": data_sync,
+        }
 
     def sync_data(self, node_id: str | None = None) -> dict[str, Any]:
         with self._native_sync_lock:

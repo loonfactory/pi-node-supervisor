@@ -344,6 +344,18 @@ class CaptureNodeAdapter:
             "run_id": run_id,
         }
 
+    def capture_now(self) -> dict[str, Any]:
+        """Capture with the node's current parameters and configured storages."""
+
+        self.health()
+        capture = self.client.capture()
+        terminal = self.client.wait_for_terminal(capture["capture_id"])
+        return {
+            "capture_id": capture["capture_id"],
+            "captured_at": capture["captured_at"],
+            "terminal_event": terminal,
+        }
+
     def capture_events(self) -> list[dict[str, Any]]:
         """Return recent CaptureNode events for native-timer observation."""
 

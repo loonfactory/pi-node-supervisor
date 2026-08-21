@@ -343,6 +343,57 @@ async def test_camera_preview_is_authenticated_and_not_cached(service: Superviso
 
 
 @pytest.mark.anyio
+async def test_manual_capture_uses_all_camera_adapters_and_reports_partial_failure(
+    service: SupervisorService,
+):
+    class SuccessfulCamera:
+        node_id = "camera0"
+
+        def capture_now(self):
+            return {
+                "capture_id": "capture-0",
+                "captured_at": "2030-01-01T00:00:00Z",
+                "terminal_event": {"event_type": "terminal.completed"},
+            }
+
+        def list_data(self, **_filters):
+            return []
+
+    class FailedCamera:
+        node_id = "camera1"
+
+        def capture_now(self):
+            raise RuntimeError("camera unavailable")
+
+    runtime = RuntimeStore(service.store.database_path)
+    engine = ExecutionEngine(
+        service.store,
+        runtime,
+        {"camera0": SuccessfulCamera(), "camera1": FailedCamera()},
+    )
+    app = create_app(service, api_token="secret", engine=engine)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as browser:
+        denied = await browser.post("/api/captures/manual")
+        captured = await browser.post(
+            "/api/captures/manual", headers={"X-Supervisor-Token": "secret"}
+        )
+
+    assert denied.status_code == 401
+    assert captured.status_code == 200
+    assert captured.json()["requested"] == 2
+    assert captured.json()["succeeded"] == 1
+    assert captured.json()["failed"] == 1
+    assert captured.json()["items"][0]["capture_id"] == "capture-0"
+    assert captured.json()["failures"][0]["node_id"] == "camera1"
+    assert [event.event_type for event in runtime.list_events()] == [
+        "capture.manual_failed",
+        "capture.manual_succeeded",
+    ]
+
+
+@pytest.mark.anyio
 async def test_managed_camera_storage_configuration_api(service: SupervisorService):
     class ProcessManager:
         received_storage = None

@@ -1239,6 +1239,26 @@ $("#load-capture-node-settings").addEventListener("click", async () => {
 $("#apply-draft").addEventListener("click", async () => { if (!confirm("검증된 Draft를 새 Active revision으로 적용할까요?")) return; try { const result = await api("/api/revisions/apply", { method: "POST" }); toast(`Revision #${result.id}을 적용했습니다.`); refresh(); } catch (error) { toast(error.message, true); } });
 $("#refresh-dashboard").addEventListener("click", async () => { await refresh(); toast("노드 상태를 갱신했습니다."); });
 $("#sync-data").addEventListener("click", async () => { try { const result = await api("/api/data/sync", { method: "POST" }); toast(result.new_data ? `새 데이터 ${result.new_data}개를 반영했습니다.` : "이미 최신 상태입니다."); refresh(); } catch (error) { toast(error.message, true); } });
+$("#capture-all-cameras").addEventListener("click", async event => {
+  const button = event.currentTarget;
+  const label = button.textContent;
+  button.disabled = true;
+  button.textContent = "촬영 및 저장 중…";
+  try {
+    const result = await api("/api/captures/manual", { method: "POST" });
+    if (result.failed) {
+      const failedNodes = result.failures.map(item => item.node_id).join(", ");
+      toast(`${result.succeeded}대 촬영 완료, ${result.failed}대 실패 (${failedNodes})`, true);
+    } else {
+      toast(`모든 카메라 ${result.succeeded}대의 촬영과 저장이 완료되었습니다.`);
+    }
+  } catch (error) {
+    toast(friendlyError(error), true);
+  } finally {
+    button.disabled = false;
+    button.textContent = label;
+  }
+});
 $("#refresh-previews").addEventListener("click", startCameraStreams);
 $("#events-page-size").addEventListener("change", async event => {
   state.eventsPageSize = Number(event.target.value);

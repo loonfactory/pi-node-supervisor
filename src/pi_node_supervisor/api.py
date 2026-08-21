@@ -1081,6 +1081,18 @@ def create_app(
             },
         )
 
+    @app.post(
+        "/api/captures/manual",
+        dependencies=[Depends(authenticated)],
+    )
+    async def capture_all_cameras_now() -> dict[str, Any]:
+        if engine is None:
+            raise HTTPException(status_code=503, detail="execution engine is disabled")
+        try:
+            return engine.capture_all_now()
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
     @app.get(
         "/api/nodes/{node_id}/preview/stream",
         dependencies=[Depends(authenticated)],
