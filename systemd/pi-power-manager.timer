@@ -1,0 +1,12 @@
+[Unit]
+Description=Evaluate pi-power-manager schedules
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=30s
+AccuracySec=1s
+Unit=pi-power-manager.service
+
+[Install]
+WantedBy=timers.target
+

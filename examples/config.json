@@ -1,0 +1,20 @@
+{
+  "schema_version": 2,
+  "timezone": "Asia/Seoul",
+  "minimum_lead_seconds": 60,
+  "clock_tolerance_seconds": 5,
+  "power_schedule": [
+    {
+      "power-on": "2030-01-01T08:00:00",
+      "power-down": "2030-01-01T12:00:00"
+    },
+    {
+      "power-on": "2030-01-01T13:00:00",
+      "power-down": "2030-01-01T18:00:00"
+    },
+    {
+      "power-on": "2030-01-02T08:00:00",
+      "power-down": "2030-01-02T18:00:00"
+    }
+  ]
+}
