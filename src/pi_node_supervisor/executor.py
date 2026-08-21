@@ -197,6 +197,7 @@ class ExecutionEngine:
             return completed
         except Exception as exc:
             error = f"{type(exc).__name__}: {exc}"
+            error_code = getattr(exc, "code", None)
             failed = self.runtime.complete_run(
                 run.run_id, status="failed", error=error
             )
@@ -206,9 +207,18 @@ class ExecutionEngine:
                 run_id=run.run_id,
                 activity_id=activity.activity_id,
                 node_id=activity.node_id,
-                payload={"error": error},
+                payload={
+                    "error": error,
+                    **({"error_code": error_code} if error_code else {}),
+                },
             )
             return failed
+
+    def close(self) -> None:
+        for adapter in self.adapters.values():
+            closer = getattr(adapter, "close", None)
+            if callable(closer):
+                closer()
 
     def sync_data(self, node_id: str | None = None) -> dict[str, Any]:
         with self._native_sync_lock:
@@ -481,7 +491,15 @@ class ExecutionEngine:
             try:
                 results.append({"node_id": node_id, "healthy": True, **adapter.health()})
             except Exception as exc:
-                results.append({"node_id": node_id, "healthy": False, "error": str(exc)})
+                error_code = getattr(exc, "code", None)
+                results.append(
+                    {
+                        "node_id": node_id,
+                        "healthy": False,
+                        "error": str(exc),
+                        **({"error_code": error_code} if error_code else {}),
+                    }
+                )
         return results
 
     def preview_frame(self, node_id: str) -> tuple[bytes, str]:

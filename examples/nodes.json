@@ -24,7 +24,14 @@
       "prepare_seconds": 1,
       "default_runtime_seconds": 10,
       "cleanup_seconds": 5,
-      "required": true
+      "required": true,
+      "sensor_serial": {
+        "driver": "cwt-soil-thc-s",
+        "port": "/dev/ttyAMA0",
+        "baudrate": 4800,
+        "timeout_seconds": 1.0,
+        "slave_id": 1
+      }
     }
   ]
 }

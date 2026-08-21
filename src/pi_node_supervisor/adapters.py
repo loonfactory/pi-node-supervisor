@@ -373,6 +373,13 @@ class CaptureNodeAdapter:
 def build_adapters(definitions) -> dict[str, ManagedNodeAdapter]:
     adapters: dict[str, ManagedNodeAdapter] = {}
     for definition in definitions:
+        if definition.sensor_serial is not None:
+            from .sensor_adapter import CwtSensorAdapter, HuintechCwtProvider
+
+            adapters[definition.id] = CwtSensorAdapter(
+                definition, HuintechCwtProvider(definition)
+            )
+            continue
         if definition.kind != "capture-node" or definition.endpoint is None:
             continue
         client = CaptureNodeClient(

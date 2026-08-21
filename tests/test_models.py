@@ -8,6 +8,7 @@ from pi_node_supervisor.models import (
     DailyPowerKeepSchedule,
     NodeRegistryDocument,
     SensorScheduleSettings,
+    SensorReading,
     StorageSettingsDocument,
     SupervisorConfiguration,
 )
@@ -75,6 +76,67 @@ def test_sensor_schedule_uses_unique_stored_wall_clock_times():
                 "mode": "daily",
                 "daily_times": ["00:00:00", "00:00:00"],
                 "timezone": "Asia/Seoul",
+            }
+        )
+
+
+def test_cwt_serial_node_configuration_is_strict():
+    node = {
+        "id": "environment0",
+        "kind": "sensor-node",
+        "activity_types": ["sensor-collection"],
+        "profiles": ["temperature-humidity"],
+        "sensor_serial": {
+            "driver": "cwt-soil-thc-s",
+            "port": "/dev/ttyAMA0",
+            "baudrate": 4800,
+            "timeout_seconds": 1,
+            "slave_id": 1,
+        },
+    }
+    parsed = NodeRegistryDocument.model_validate(
+        {"schema_version": 1, "nodes": [node]}
+    ).nodes[0]
+    assert parsed.sensor_serial.port == "/dev/ttyAMA0"
+
+    for field, value, message in (
+        ("port", "relative/ttyAMA0", "allowed absolute"),
+        ("port", "/dev/null", "allowed absolute"),
+        ("baudrate", 12345, "unsupported serial baudrate"),
+        ("timeout_seconds", 0, "greater than 0"),
+        ("slave_id", 255, "less than or equal to 254"),
+    ):
+        invalid = {**node, "sensor_serial": {**node["sensor_serial"], field: value}}
+        with pytest.raises(ValidationError, match=message):
+            NodeRegistryDocument.model_validate(
+                {"schema_version": 1, "nodes": [invalid]}
+            )
+
+
+def test_sensor_reading_requires_aware_finite_temperature_and_humidity():
+    reading = SensorReading.model_validate(
+        {
+            "observed_at": "2030-01-01T00:00:00+09:00",
+            "temperature_c": 21.5,
+            "humidity_percent": 63.2,
+        }
+    )
+    assert reading.observed_at.isoformat() == "2029-12-31T15:00:00+00:00"
+
+    with pytest.raises(ValidationError, match="include a UTC offset"):
+        SensorReading.model_validate(
+            {
+                "observed_at": "2030-01-01T00:00:00",
+                "temperature_c": 21.5,
+                "humidity_percent": 63.2,
+            }
+        )
+    with pytest.raises(ValidationError, match="finite"):
+        SensorReading.model_validate(
+            {
+                "observed_at": "2030-01-01T00:00:00Z",
+                "temperature_c": float("nan"),
+                "humidity_percent": 63.2,
             }
         )
 

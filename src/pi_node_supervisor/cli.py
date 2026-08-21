@@ -140,13 +140,22 @@ def main(argv: Sequence[str] | None = None) -> int:
             _emit(service.apply_draft())
         elif args.command == "tick":
             engine = _engine(args, service)
-            _emit({"items": engine.tick()})
+            try:
+                _emit({"items": engine.tick()})
+            finally:
+                engine.close()
         elif args.command == "recover":
             engine = _engine(args, service)
-            _emit({"items": engine.recover()})
+            try:
+                _emit({"items": engine.recover()})
+            finally:
+                engine.close()
         elif args.command == "sync-data":
             engine = _engine(args, service)
-            _emit(engine.sync_data(args.node_id))
+            try:
+                _emit(engine.sync_data(args.node_id))
+            finally:
+                engine.close()
         elif args.command == "serve":
             token = os.environ.get(args.token_env)
             if not token:

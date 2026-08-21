@@ -182,8 +182,12 @@ def create_app(
                 if worker is not None:
                     worker.stop()
         finally:
-            if process_manager is not None:
-                process_manager.stop()
+            try:
+                if engine is not None:
+                    engine.close()
+            finally:
+                if process_manager is not None:
+                    process_manager.stop()
 
     app = FastAPI(
         title="pi-node-supervisor", version="0.1.0", lifespan=lifespan

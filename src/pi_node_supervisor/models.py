@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import datetime, time as Time
+from datetime import UTC, datetime, time as Time
 from ipaddress import ip_address
+import math
 import posixpath
 import re
 from pathlib import Path
@@ -31,6 +32,26 @@ _ENVIRONMENT_VARIABLE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, populate_by_name=True)
+
+
+class SensorReading(StrictModel):
+    observed_at: datetime
+    temperature_c: float
+    humidity_percent: float = Field(ge=0, le=100)
+
+    @field_validator("temperature_c", "humidity_percent")
+    @classmethod
+    def finite_measurement(cls, value: float) -> float:
+        if not math.isfinite(value):
+            raise ValueError("sensor measurements must be finite")
+        return value
+
+    @field_validator("observed_at")
+    @classmethod
+    def aware_observation_time(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("observed_at must include a UTC offset")
+        return value.astimezone(UTC)
 
 
 class Policies(StrictModel):
@@ -368,6 +389,32 @@ class CaptureNodeSettings(StrictModel):
     nodes: dict[Identifier, dict[str, Any]] = Field(default_factory=dict)
 
 
+class SensorSerialSettings(StrictModel):
+    driver: Literal["cwt-soil-thc-s"] = "cwt-soil-thc-s"
+    port: str = Field(min_length=6, max_length=255)
+    baudrate: int = 4800
+    timeout_seconds: float = Field(1.0, gt=0, le=30)
+    slave_id: int = Field(1, ge=1, le=254)
+
+    @field_validator("port")
+    @classmethod
+    def safe_serial_port(cls, value: str) -> str:
+        allowed = re.compile(
+            r"^/dev/(?:ttyAMA\d+|ttyUSB\d+|ttyACM\d+|"
+            r"serial/by-id/[A-Za-z0-9._:+-]+)$"
+        )
+        if not allowed.fullmatch(value) or "\x00" in value or ".." in Path(value).parts:
+            raise ValueError("serial port must be an allowed absolute /dev path")
+        return value
+
+    @field_validator("baudrate")
+    @classmethod
+    def supported_baudrate(cls, value: int) -> int:
+        if value not in {1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200}:
+            raise ValueError("unsupported serial baudrate")
+        return value
+
+
 class SupervisorConfiguration(StrictModel):
     schema_version: Literal[1] = 1
     timezone: str
@@ -415,6 +462,7 @@ class NodeDefinition(StrictModel):
     request_timeout_seconds: float = Field(10.0, gt=0, le=300)
     completion_timeout_seconds: float = Field(60.0, gt=0, le=3600)
     managed_capture: ManagedCaptureProcess | None = None
+    sensor_serial: SensorSerialSettings | None = None
 
     @field_validator("endpoint")
     @classmethod
@@ -447,6 +495,15 @@ class NodeDefinition(StrictModel):
                 raise ValueError(
                     f"managed CaptureNode endpoint must match {expected}"
                 )
+        if self.sensor_serial is not None:
+            if self.kind != "sensor-node":
+                raise ValueError("sensor_serial is only valid for sensor-node")
+            if "sensor-collection" not in self.activity_types:
+                raise ValueError("sensor_serial requires sensor-collection capability")
+            if "temperature-humidity" not in self.profiles:
+                raise ValueError("CWT sensor requires temperature-humidity profile")
+            if self.endpoint is not None:
+                raise ValueError("serial sensor-node cannot also configure an HTTP endpoint")
         return self
 
 

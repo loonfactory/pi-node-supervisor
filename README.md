@@ -32,9 +32,15 @@ Python 3.11 or newer is required.
 
 ```bash
 python -m venv .venv
-.venv/bin/pip install -e '.[web,dev]'
+.venv/bin/pip install -e '.[web,sensor,dev]'
 .venv/bin/pytest
 ```
+
+The `sensor` extra installs `pyserial`. HUINTECHDEVICE is currently a
+source-only Python library, so its `src` directory must also be present on
+`PYTHONPATH` (or be packaged by that project) when the CWT adapter runs. The
+Supervisor imports only its public CWT driver API and does not run a separate
+HUINTECHDEVICE service.
 
 The live HTTP integration test starts the real CaptureNode FastAPI app on a
 loopback socket. Environments that prohibit sockets skip that one test; run it
@@ -265,6 +271,25 @@ occurrence receives a deterministic ID, is claimed once per revision, and is
 marked missed instead of being measured retroactively after the lateness
 limit. The same rolling refresh updates both the executable occurrence plan
 and the RTC power file.
+
+Configure a CWT node in `nodes.json` with a fixed driver, an allowed absolute
+serial path (`/dev/ttyAMA*`, `/dev/ttyUSB*`, `/dev/ttyACM*`, or
+`/dev/serial/by-id/*`), baud rate, timeout, and Modbus slave ID. The adapter
+keeps one serial handle for the Supervisor lifecycle and requests only
+`HUMIDITY | TEMPERATURE` in one driver call. Conductivity, salinity, TDS, and
+all write APIs are outside this boundary.
+
+A read-only hardware smoke check is available after granting the service user
+serial-port access:
+
+```bash
+PYTHONPATH=src:/opt/huintech-device/src .venv/bin/python \
+  scripts/read_cwt_sensor.py --port /dev/ttyAMA0 --slave-id 1
+```
+
+The command prints only `observed_at`, `temperature_c`, and
+`humidity_percent`, then closes the port. It never invokes calibration,
+factor, offset, or slave-ID writes.
 
 Managed CaptureNode children emit structured JSON logs. Supervisor consumes
 that child-process log stream and stores `capture-node.*` records in its event
