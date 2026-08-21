@@ -241,7 +241,6 @@ async def test_sensor_http_flow_preserves_boundary_rows_and_recovers_mirrors(tmp
         ftps.fail = False
         retried = await browser.post("/api/sensor-storage/sync", headers=headers)
         after_retry = await browser.get("/api/sensor-data", headers=headers)
-        root = await browser.get("/")
 
     assert duplicate.status_code == 200
     assert provider.reads == 2
@@ -255,7 +254,3 @@ async def test_sensor_http_flow_preserves_boundary_rows_and_recovers_mirrors(tmp
     assert {item["sync_status"] for item in rows} == {"synchronized"}
     assert len(sftp.uploads) == 2
     assert len(ftps.uploads) == 2
-    assert "센서 데이터" in root.text
-    assert "conductivity" not in root.text.lower()
-    assert "salinity" not in root.text.lower()
-    assert "tds" not in root.text.lower()

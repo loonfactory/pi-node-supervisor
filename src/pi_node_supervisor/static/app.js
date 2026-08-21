@@ -121,7 +121,7 @@ function captureScheduleLines(schedule) {
 }
 
 function sensorScheduleLines(schedule) {
-  if (!(schedule.daily_times || []).length) return ["수집 시각 없음 · 센서용 전원 계획 비활성화"];
+  if (!(schedule.daily_times || []).length) return ["수집 시각 없음 · 토양 센서 전원 계획 비활성화"];
   return partitionCaptureTimes(schedule.daily_times || []).map(block => {
     if (block.length === 1) return `${koreanClock(block[0])}에 수집`;
     const interval = captureTimeSeconds(block[1]) - captureTimeSeconds(block[0]);
@@ -159,7 +159,7 @@ function renderPowerTimeline(configuration, activePlan) {
   });
   const sensorCards = [...sensorGroups.values()].map(group => `
     <div class="window">
-      <strong>온습도 수집</strong>
+      <strong>토양 센서 수집</strong>
       ${sensorScheduleLines(group.schedule).map(line => `<small class="window-detail">${safe(line)}</small>`).join("")}
       <div class="activity-tags">
         ${group.sensors.map(sensor => `<span class="tag">${safe(sensor)}</span>`).join("")}
@@ -210,7 +210,7 @@ function renderDashboard() {
   $("#power-timeline").innerHTML = timeline || '<div class="empty">등록된 반복 일정이 없습니다.</div>';
 
   const nodes = dashboard.nodes || [];
-  $("#node-summary").innerHTML = nodes.length ? nodes.map(node => `<div class="node-row"><div><strong>${safe(node.node_id)}</strong><small>${safe(node.camera_detail || node.error || "CaptureNode API")}</small></div>${status(node.healthy ? "healthy" : "unhealthy")}</div>`).join("") : '<div class="empty">실행 가능한 노드가 없습니다.</div>';
+  $("#node-summary").innerHTML = nodes.length ? nodes.map(node => `<div class="node-row"><div><strong>${safe(node.node_id)}</strong><small>${safe(node.camera_detail || node.error || "카메라 API")}</small></div>${status(node.healthy ? "healthy" : "unhealthy")}</div>`).join("") : '<div class="empty">실행 가능한 노드가 없습니다.</div>';
   renderRuns("#recent-runs", state.runs.slice(0, 5));
 }
 
@@ -311,7 +311,7 @@ function renderSensors() {
   const latest = state.sensorData[0];
   const sensorNodes = state.nodes.filter(node => node.kind === "sensor-node");
   $("#sensor-metric-grid").innerHTML = [
-    ["등록 센서", sensorNodes.length, sensorNodes.length ? "good" : "alert"],
+    ["등록 토양 센서", sensorNodes.length, sensorNodes.length ? "good" : "alert"],
     ["최근 온도", latest ? `${latest.temperature_c.toLocaleString()} °C` : "—", latest ? "good" : ""],
     ["최근 습도", latest ? `${latest.humidity_percent.toLocaleString()} %` : "—", latest ? "good" : ""],
     ["원격 재시도", (counts.pending || 0) + (counts.failed || 0), counts.failed ? "alert" : "good"],
@@ -319,12 +319,12 @@ function renderSensors() {
 
   const measurementRows = state.sensorData.map(item => `<tr><td>${fmt(item.timestamp)}</td><td><strong>${safe(item.node_id)}</strong></td><td>${safe(item.temperature_c)}</td><td>${safe(item.humidity_percent)}</td><td>${status(item.sync_status)}<br><code>${safe(item.relative_path)}</code></td></tr>`);
   $("#sensor-data-table").innerHTML = measurementRows.length
-    ? `<table class="sensor-data-table"><thead><tr><th>예약 시각</th><th>센서</th><th>온도 °C</th><th>습도 %</th><th>저장 상태</th></tr></thead><tbody>${measurementRows.join("")}</tbody></table>`
+    ? `<table class="sensor-data-table"><thead><tr><th>예약 시각</th><th>토양 센서</th><th>온도 °C</th><th>습도 %</th><th>저장 상태</th></tr></thead><tbody>${measurementRows.join("")}</tbody></table>`
     : '<div class="empty">로컬 CSV에 저장된 온·습도 측정값이 없습니다.</div>';
 
   const deliveryRows = (state.sensorDelivery.items || []).map(item => `<tr><td>${fmt(item.updated_at)}</td><td><strong>${safe(item.node_id)}</strong><br><small>${safe(item.target)}</small></td><td>${status(item.status)}</td><td>${safe(item.attempts)}</td><td>${item.next_attempt_at ? fmt(item.next_attempt_at) : "—"}</td><td><code>${safe(item.relative_path)}</code>${item.last_error ? `<br><small class="danger-text">${safe(item.last_error)}</small>` : ""}</td></tr>`);
   $("#sensor-delivery-table").innerHTML = deliveryRows.length
-    ? `<table class="sensor-delivery-table"><thead><tr><th>갱신 시각</th><th>센서 / 대상</th><th>상태</th><th>시도</th><th>다음 재시도</th><th>CSV / 오류</th></tr></thead><tbody>${deliveryRows.join("")}</tbody></table>`
+    ? `<table class="sensor-delivery-table"><thead><tr><th>갱신 시각</th><th>토양 센서 / 대상</th><th>상태</th><th>시도</th><th>다음 재시도</th><th>CSV / 오류</th></tr></thead><tbody>${deliveryRows.join("")}</tbody></table>`
     : '<div class="empty">설정된 원격 복제 이력이 없습니다. 로컬 CSV 수집은 독립적으로 계속됩니다.</div>';
 }
 
@@ -393,7 +393,7 @@ function renderCameras() {
         <div class="camera-placeholder">프레임을 불러오는 중입니다.</div>
       </div>
       <div class="camera-footer"><span data-preview-status>대기 중</span><button class="ghost" data-preview-refresh="${safe(node.id)}">스트림 재연결</button></div>
-    </article>`).join("") : '<div class="empty">등록된 CaptureNode가 없습니다.</div>';
+    </article>`).join("") : '<div class="empty">등록된 카메라가 없습니다.</div>';
 }
 
 function loadConfigurationIntoForm(configuration) {
@@ -457,7 +457,7 @@ function updateCaptureScheduleVisibility() {
 function updateCaptureScheduleWarning() {
   const warning = $("#capture-schedule-warning");
   const hasTimes = $("#daily-time-list").querySelector('input[type="time"]') !== null;
-  warning.textContent = "촬영 시각이 없습니다. CaptureNode 자동 촬영이 비활성화됩니다.";
+  warning.textContent = "촬영 시각이 없습니다. 카메라 자동 촬영이 비활성화됩니다.";
   warning.hidden = $("#capture-schedule-mode").value !== "daily" || hasTimes;
 }
 
@@ -659,7 +659,7 @@ function captureScheduleFromForm() {
 function renderSensorNodeOptions() {
   const sensors = state.nodes.filter(node => (node.activity_types || []).includes("sensor-collection"));
   const previous = $("#sensor-schedule-node").value || "common";
-  $("#sensor-schedule-node").innerHTML = `<option value="common">모든 센서 · 공통</option>${sensors.map(node => `<option value="${safe(node.id)}">${safe(node.id)} · 개별</option>`).join("")}`;
+  $("#sensor-schedule-node").innerHTML = `<option value="common">모든 토양 센서 · 공통</option>${sensors.map(node => `<option value="${safe(node.id)}">${safe(node.id)} · 개별</option>`).join("")}`;
   if (previous === "common" || sensors.some(node => node.id === previous)) $("#sensor-schedule-node").value = previous;
 }
 
@@ -713,14 +713,14 @@ function generateSensorTimes(range) {
 function renderSensorTimes(times = []) {
   $("#sensor-time-list").innerHTML = times.length ? times.map((value, index) => `
     <div class="daily-time-row">
-      <input type="time" step="1" value="${safe(value)}" aria-label="매일 센서 수집 시각 ${index + 1}" />
+      <input type="time" step="1" value="${safe(value)}" aria-label="매일 토양 센서 수집 시각 ${index + 1}" />
       <button type="button" class="text-button danger-text" data-remove-sensor-time="${index}">삭제</button>
     </div>`).join("") : '<div class="friendly-empty"><strong>등록된 시각이 없습니다.</strong><span>‘시각 추가’를 눌러 매일 수집할 시각을 입력하세요.</span></div>';
   updateSensorScheduleVisibility();
 }
 
 function formatSensorSchedule(schedule) {
-  if (!schedule || schedule.mode === "disabled") return "자동 센서 수집 사용 안 함";
+  if (!schedule || schedule.mode === "disabled") return "토양 센서 자동 수집 사용 안 함";
   if (!schedule.daily_times?.length) return `수집 시각 없음 · ${schedule.timezone}`;
   return `${schedule.daily_times.length}개 저장 시각 · ${schedule.timezone}`;
 }
@@ -739,7 +739,7 @@ function loadSensorScheduleIntoForm(value) {
 
 async function loadSensorSchedule(nodeId = $("#sensor-schedule-node").value) {
   if (!nodeId) return;
-  $("#sensor-schedule-note").textContent = "센서 일정을 불러오는 중입니다…";
+  $("#sensor-schedule-note").textContent = "토양 센서 일정을 불러오는 중입니다…";
   try {
     const response = await api("/api/sensor-schedules");
     if ($("#sensor-schedule-node").value !== nodeId) return;
@@ -754,9 +754,9 @@ async function loadSensorSchedule(nodeId = $("#sensor-schedule-node").value) {
     }
     loadSensorScheduleIntoForm(schedule);
     $("#sensor-schedule-note").textContent = mixed
-      ? "개별 설정이 서로 다릅니다. 적용하면 모든 센서가 공통 설정으로 통일됩니다."
+      ? "개별 설정이 서로 다릅니다. 적용하면 모든 토양 센서가 공통 설정으로 통일됩니다."
       : nodeId === "common"
-        ? "모든 센서에 같은 저장 시각을 적용합니다."
+        ? "모든 토양 센서에 같은 저장 시각을 적용합니다."
         : `${nodeId}에만 이 수집 일정을 적용합니다.`;
   } catch (error) {
     if ($("#sensor-schedule-node").value === nodeId) $("#sensor-schedule-note").textContent = `설정을 불러오지 못했습니다: ${error.message}`;
@@ -773,19 +773,28 @@ function sensorScheduleFromForm() {
 }
 
 function renderSensorSettingsNodeOptions() {
-  const select = $("#sensor-settings-node");
-  const previous = select.value;
-  select.innerHTML = state.sensorSettings.map(item => `<option value="${safe(item.node_id)}">${safe(item.node_id)}</option>`).join("");
-  if (state.sensorSettings.some(item => item.node_id === previous)) select.value = previous;
-  if (select.value) loadSensorSettingsIntoForm(select.value);
+  const options = state.sensorSettings.map(item => `<option value="${safe(item.node_id)}">${safe(item.node_id)}</option>`).join("");
+  const connectionSelect = $("#sensor-settings-node");
+  const storageSelect = $("#sensor-storage-node");
+  const previous = connectionSelect.value || storageSelect.value;
+  connectionSelect.innerHTML = options;
+  storageSelect.innerHTML = options;
+  if (state.sensorSettings.some(item => item.node_id === previous)) {
+    connectionSelect.value = previous;
+    storageSelect.value = previous;
+  }
+  if (connectionSelect.value) loadSensorSettingsIntoForm(connectionSelect.value);
 }
 
 function loadSensorSettingsIntoForm(nodeId = $("#sensor-settings-node").value) {
   const item = state.sensorSettings.find(candidate => candidate.node_id === nodeId);
   if (!item) {
-    $("#sensor-settings-note").textContent = "설정 가능한 CWT 센서가 없습니다.";
+    $("#sensor-settings-note").textContent = "설정 가능한 토양 센서가 없습니다.";
+    $("#sensor-storage-note").textContent = "설정 가능한 토양 센서가 없습니다.";
     return;
   }
+  $("#sensor-settings-node").value = nodeId;
+  $("#sensor-storage-node").value = nodeId;
   const serial = item.sensor_serial;
   const storage = item.sensor_storage;
   $("#sensor-driver").value = serial.driver;
@@ -803,6 +812,7 @@ function loadSensorSettingsIntoForm(nodeId = $("#sensor-settings-node").value) {
   $("#sensor-settings-note").textContent = state.sensorRestartRequired
     ? "nodes.json 저장 완료 · 서비스 재시작 전까지 기존 설정으로 실행됩니다."
     : `${health} · 온도와 습도만 수집합니다.`;
+  $("#sensor-storage-note").textContent = `로컬 CSV 원본 · 복제 대상 ${state.sensorMirrorDraft.length}개`;
 }
 
 function sensorMirrorDescription(item) {
@@ -1171,7 +1181,7 @@ async function refresh() {
     renderStorageCameraOptions();
     renderDashboard(); renderEvents(); renderData(); renderNodes(); renderCameras(); startCameraStreams();
     try { await loadSensors(); } catch (error) {
-      $("#sensor-data-table").innerHTML = `<div class="friendly-empty error-copy"><strong>센서 데이터를 불러오지 못했습니다.</strong><span>${safe(error.message)}</span></div>`;
+      $("#sensor-data-table").innerHTML = `<div class="friendly-empty error-copy"><strong>토양 센서 데이터를 불러오지 못했습니다.</strong><span>${safe(error.message)}</span></div>`;
       $("#sensor-delivery-table").innerHTML = '<div class="empty">동기화 상태를 확인할 수 없습니다.</div>';
     }
   } catch (error) {
@@ -1208,7 +1218,7 @@ $("#load-capture-node-settings").addEventListener("click", async () => {
     const configuration = JSON.parse($("#config-editor").value);
     configuration.capture_node_settings = await api("/api/settings/capture-nodes");
     $("#config-editor").value = JSON.stringify(configuration, null, 2);
-    toast("현재 CaptureNode 설정을 편집기에 가져왔습니다. 저장하거나 적용하기 전 내용을 확인하세요.");
+    toast("현재 카메라 설정을 편집기에 가져왔습니다. 저장하거나 적용하기 전 내용을 확인하세요.");
   } catch (error) {
     toast(error instanceof SyntaxError ? "먼저 편집기의 JSON 형식을 확인하세요." : error.message, true);
   }
@@ -1311,7 +1321,7 @@ $("#capture-schedule-form").addEventListener("submit", async event => {
   const targetLabel = nodeId === "common" ? "모든 카메라" : nodeId;
   const powerPlanDisabled = schedule.mode === "daily" && schedule.daily_times.length === 0;
   const confirmation = powerPlanDisabled
-    ? "촬영 시각이 비어 있습니다. CaptureNode 자동 촬영이 비활성화됩니다. 계속할까요?"
+    ? "촬영 시각이 비어 있습니다. 카메라 자동 촬영이 비활성화됩니다. 계속할까요?"
     : `${targetLabel}의 촬영 일정을 적용할까요?`;
   if (!nodeId || !confirm(confirmation)) return;
   const button = $("#apply-capture-schedule");
@@ -1370,22 +1380,22 @@ $("#sensor-schedule-form").addEventListener("submit", async event => {
   const nodeId = $("#sensor-schedule-node").value;
   let schedule;
   try { schedule = sensorScheduleFromForm(); } catch (error) { toast(error.message, true); return; }
-  const targetLabel = nodeId === "common" ? "모든 센서" : nodeId;
+  const targetLabel = nodeId === "common" ? "모든 토양 센서" : nodeId;
   const empty = schedule.mode === "daily" && schedule.daily_times.length === 0;
   const confirmation = empty
-    ? "수집 시각이 비어 있습니다. Sensor 자동 수집이 비활성화됩니다. 계속할까요?"
+    ? "수집 시각이 비어 있습니다. 토양 센서 자동 수집이 비활성화됩니다. 계속할까요?"
     : `${targetLabel}의 온·습도 수집 일정을 적용할까요?`;
   if (!nodeId || !confirm(confirmation)) return;
   const button = $("#apply-sensor-schedule");
   button.disabled = true;
-  $("#sensor-schedule-note").textContent = "센서 일정을 확인하는 중입니다…";
+  $("#sensor-schedule-note").textContent = "토양 센서 일정을 확인하는 중입니다…";
   try {
     const result = await api("/api/sensor-schedules", { method: "PUT", body: JSON.stringify({ target: nodeId, settings: schedule }) });
-    $("#sensor-schedule-note").textContent = `센서 일정 적용 완료 · 설정 #${result.revision.id}`;
+    $("#sensor-schedule-note").textContent = `토양 센서 일정 적용 완료 · 설정 #${result.revision.id}`;
     toast(`${targetLabel} 수집 일정을 적용했습니다.`);
     await refresh();
   } catch (error) {
-    $("#sensor-schedule-note").textContent = "적용하지 못했습니다. 기존 센서 일정은 유지됩니다.";
+    $("#sensor-schedule-note").textContent = "적용하지 못했습니다. 기존 토양 센서 일정은 유지됩니다.";
     toast(error.message, true);
   } finally { button.disabled = false; }
 });
@@ -1436,7 +1446,7 @@ $("#power-settings-form").addEventListener("submit", async event => {
 });
 
 $("#refresh-sensors").addEventListener("click", async () => {
-  try { await loadSensors(); toast("센서 상태를 갱신했습니다."); } catch (error) { toast(error.message, true); }
+  try { await loadSensors(); toast("토양 센서 상태를 갱신했습니다."); } catch (error) { toast(error.message, true); }
 });
 $("#sync-sensor-storage").addEventListener("click", async event => {
   const button = event.currentTarget;
@@ -1448,7 +1458,8 @@ $("#sync-sensor-storage").addEventListener("click", async event => {
   } catch (error) { toast(error.message, true); }
   finally { button.disabled = false; }
 });
-$("#sensor-settings-node").addEventListener("change", () => loadSensorSettingsIntoForm());
+$("#sensor-settings-node").addEventListener("change", event => loadSensorSettingsIntoForm(event.target.value));
+$("#sensor-storage-node").addEventListener("change", event => loadSensorSettingsIntoForm(event.target.value));
 $("#add-sensor-mirror").addEventListener("click", () => openSensorMirrorEditor());
 $("#sensor-mirror-type").addEventListener("change", () => {
   $("#sensor-mirror-port").value = $("#sensor-mirror-type").value === "ftps" ? "21" : $("#sensor-mirror-type").value === "sftp" ? "22" : "";
@@ -1475,24 +1486,30 @@ $("#sensor-mirror-list").addEventListener("click", event => {
   state.sensorMirrorDraft.splice(Number(remove.dataset.removeSensorMirror), 1);
   renderSensorMirrorList();
 });
-$("#sensor-settings-form").addEventListener("submit", async event => {
-  event.preventDefault();
+async function applySensorSettings(button, note, confirmationLabel) {
   const nodeId = $("#sensor-settings-node").value;
   let document;
   try { document = sensorSettingsFromForm(); } catch (error) { toast(error.message, true); return; }
-  if (!nodeId || !confirm(`${nodeId}의 CWT·CSV 설정을 저장할까요?\n현재 수집 프로세스에는 서비스 재시작 후 반영됩니다.`)) return;
-  const button = $("#apply-sensor-settings");
+  if (!nodeId || !confirm(`${nodeId}의 ${confirmationLabel}을 저장할까요?\n현재 수집 프로세스에는 서비스 재시작 후 반영됩니다.`)) return;
   button.disabled = true;
-  $("#sensor-settings-note").textContent = "설정을 검증하고 nodes.json에 원자적으로 저장하는 중입니다…";
+  note.textContent = "설정을 검증하고 nodes.json에 원자적으로 저장하는 중입니다…";
   try {
     const result = await api(`/api/sensor-settings/${encodeURIComponent(nodeId)}`, { method: "PUT", body: JSON.stringify(document) });
     await loadSensors();
-    $("#sensor-settings-note").textContent = `저장 완료 · ${result.backup}에서 복구 가능 · 서비스 재시작 필요`;
-    toast("센서 설정을 저장했습니다. 운영 확인 후 서비스를 재시작하세요.");
+    note.textContent = `저장 완료 · ${result.backup}에서 복구 가능 · 서비스 재시작 필요`;
+    toast("토양 센서 설정을 저장했습니다. 운영 확인 후 서비스를 재시작하세요.");
   } catch (error) {
-    $("#sensor-settings-note").textContent = "저장하지 못했습니다. 기존 nodes.json은 유지됩니다.";
+    note.textContent = "저장하지 못했습니다. 기존 nodes.json은 유지됩니다.";
     toast(error.message, true);
   } finally { button.disabled = false; }
+}
+
+$("#sensor-settings-form").addEventListener("submit", async event => {
+  event.preventDefault();
+  await applySensorSettings($("#apply-sensor-settings"), $("#sensor-settings-note"), "연결 설정");
+});
+$("#apply-sensor-storage-settings").addEventListener("click", async () => {
+  await applySensorSettings($("#apply-sensor-storage-settings"), $("#sensor-storage-note"), "CSV 저장소 설정");
 });
 
 $("#storage-camera").addEventListener("change", () => {

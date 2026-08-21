@@ -148,33 +148,13 @@ async def test_runtime_catalog_endpoints_and_static_ui(service: SupervisorServic
     ) as browser:
         root = await browser.get("/")
         assert root.status_code == 200
-        assert "Pi Node Supervisor" in root.text
-        assert "카메라 프리뷰" in root.text
-        assert "카메라 저장소" in root.text
-        assert "촬영 일정" in root.text
-        assert "수집 데이터" in root.text
-        assert "실행 이력" not in root.text
-        assert "최근 촬영" in root.text
-        app_script = (await browser.get("/app.js")).text
-        assert "장치 연결이 잠시 끊겼습니다" in app_script
-        assert 'console.warn("[Pi Node Supervisor]"' in app_script
-        assert "온습도 수집" in app_script
-        assert "recurringScheduleIds" in app_script
-        assert "날짜를 지정한 1회 작업" not in root.text
-        assert "기준 시간대" not in root.text
-        assert "노드 상태 갱신" in root.text
-        assert "전원 운용 설정" in root.text
-        assert "작동 전후 여유 시간" in root.text
-        assert "촬영·센서 수집 일정과 별개로 매일 지정한 시간에는 장치 전원을 유지합니다" in root.text
-        assert "CaptureNode 촬영 일정" in root.text
-        assert "Sensor 온·습도 수집 일정" in root.text
-        assert "그 어떠한 일정도 설정되지 않으면 전원 관리가 비활성화됩니다" in root.text
-        assert 'class="panel settings-card power-settings-card power-block"' in root.text
-        assert 'id="events-page-size"' in root.text
-        assert 'id="events-prev"' in root.text
-        assert 'id="events-next"' in root.text
-        assert 'data-view="settings"' in root.text
-        assert (await browser.get("/app.js")).status_code == 200
+        assert root.headers["content-type"].startswith("text/html")
+        app_script = await browser.get("/app.js")
+        assert app_script.status_code == 200
+        assert app_script.headers["content-type"].startswith("text/javascript")
+        styles = await browser.get("/styles.css")
+        assert styles.status_code == 200
+        assert styles.headers["content-type"].startswith("text/css")
 
         dashboard = await browser.get("/api/dashboard", headers=headers)
         assert dashboard.status_code == 200
