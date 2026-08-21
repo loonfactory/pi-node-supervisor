@@ -12,7 +12,7 @@ from typing import Any
 import pytest
 from PIL import Image
 
-from capture_node.core.cameras import Capture, PreviewFrame
+from capture_node.core.cameras import Capture, PreviewFrame, RawCapture
 from capture_node.core.config import Configuration, JsonOptionsRepository
 from capture_node.core.options import Options
 from capture_node.core.events import EVENT_ATTRIBUTE, EventEmitter
@@ -33,7 +33,7 @@ class FakeCamera:
         self.capture_calls = 0
         self.applied: list[dict[str, Any]] = []
 
-    def capture(self) -> Capture:
+    def capture(self, *, include_raw: bool = False) -> Capture:
         self.capture_calls += 1
         if self.delay:
             time.sleep(self.delay)
@@ -44,6 +44,7 @@ class FakeCamera:
             Image.new("RGB", (24, 16), (20, 110, 180)),
             datetime.now(UTC),
             {"ExposureTime": 12_000, "AnalogueGain": 1.5, "Frame": self.capture_calls},
+            RawCapture(b"fake-dng") if include_raw else None,
         )
 
     def apply(self, parameters: Mapping[str, Any]) -> None:

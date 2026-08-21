@@ -17,6 +17,7 @@ from capture_node.core.cameras.contracts import (
     CameraStatus,
     Capture,
     PreviewFrame,
+    RawCapture,
 )
 from capture_node.core.cameras.options import Picamera2Options
 
@@ -58,6 +59,8 @@ class Picamera2Camera:
             ) from exc
 
         self._camera = Picamera2(camera_num)
+        self._sensor_resolution = tuple(self._camera.sensor_resolution)
+        self._sensor_modes = tuple(dict(mode) for mode in self._camera.sensor_modes)
         self._transform_type = Transform
         self._size = size
         self._horizontal_flip = False
@@ -69,7 +72,9 @@ class Picamera2Camera:
         self._camera.configure(self._configuration(False, False))
         self._camera.start()
 
-    def capture(self) -> Capture:
+    def capture(self, *, include_raw: bool = False) -> Capture:
+        if include_raw:
+            return self._capture_with_raw()
         with self._lock:
             request = self._camera.capture_request()
             try:
@@ -81,6 +86,35 @@ class Picamera2Camera:
             Image.fromarray(array),
             datetime.now(UTC),
             dict(metadata),
+        )
+
+    def _capture_with_raw(self) -> Capture:
+        with self._lock:
+            preview_configuration = self._camera.camera_config
+            still_configuration = self._still_configuration()
+            request = None
+            try:
+                request = self._camera.switch_mode_capture_request_and_stop(
+                    still_configuration
+                )
+                array = request.make_array("main")
+                metadata = request.get_metadata()
+                output = BytesIO()
+                request.save_dng(output, "raw")
+            except BaseException:
+                if request is not None:
+                    request.release()
+                self._restore_preview(preview_configuration, stop_first=True)
+                raise
+            try:
+                request.release()
+            finally:
+                self._restore_preview(preview_configuration, stop_first=True)
+        return Capture(
+            Image.fromarray(array),
+            datetime.now(UTC),
+            dict(metadata),
+            RawCapture(output.getvalue()),
         )
 
     def apply(self, parameters: Mapping[str, Any]) -> None:
@@ -161,6 +195,40 @@ class Picamera2Camera:
                 vflip=vertical_flip,
             ),
         )
+
+    def _still_configuration(self):
+        main: dict[str, Any] = {"format": "BGR888"}
+        if self._size is not None:
+            main["size"] = self._size
+        sensor: dict[str, Any] = {
+            "output_size": self._sensor_resolution,
+        }
+        matching_depths = [
+            int(mode["bit_depth"])
+            for mode in self._sensor_modes
+            if tuple(mode.get("size", ())) == sensor["output_size"]
+            and mode.get("bit_depth") is not None
+        ]
+        if matching_depths:
+            sensor["bit_depth"] = max(matching_depths)
+        return self._camera.create_still_configuration(
+            main=main,
+            raw={},
+            sensor=sensor,
+            transform=self._transform_type(
+                hflip=self._horizontal_flip,
+                vflip=self._vertical_flip,
+            ),
+        )
+
+    def _restore_preview(self, configuration, *, stop_first: bool = False) -> None:
+        if stop_first:
+            try:
+                self._camera.stop()
+            except RuntimeError:
+                pass
+        self._camera.configure(configuration)
+        self._camera.start()
 
     def _reconfigure(self, horizontal_flip: bool, vertical_flip: bool) -> None:
         previous = (self._horizontal_flip, self._vertical_flip)

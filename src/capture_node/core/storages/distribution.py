@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+from collections.abc import Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from enum import StrEnum
@@ -16,9 +17,20 @@ class TerminalState(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
+class DistributionArtifact:
+    data: bytes
+    name: str
+
+    def __post_init__(self) -> None:
+        if not self.name:
+            raise ValueError("distribution artifact name must not be empty")
+
+
+@dataclass(frozen=True, slots=True)
 class TargetFailure:
     target: str
     cause: BaseException
+    name: str | None = None
 
 
 class DistributionInProgress(RuntimeError):
@@ -30,6 +42,7 @@ class DistributionResult:
     state: TerminalState
     targets: tuple[str, ...]
     failures: tuple[TargetFailure, ...]
+    artifacts: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if self.state is TerminalState.COMPLETED and self.failures:
@@ -58,6 +71,17 @@ class Distributor:
     def submit(self, data: bytes, name: str) -> Future[DistributionResult]:
         """Start one bounded background distribution without waiting for storage."""
 
+        return self.submit_many((DistributionArtifact(data, name),))
+
+    def submit_many(
+        self,
+        artifacts: Sequence[DistributionArtifact],
+    ) -> Future[DistributionResult]:
+        """Distribute one capture's complete artifact bundle as one pending job."""
+
+        bundle = tuple(artifacts)
+        self._validate_bundle(bundle)
+
         with self._state_lock:
             if self._closed:
                 raise RuntimeError("distributor is closed")
@@ -67,7 +91,7 @@ class Distributor:
                 )
             self._active = True
             try:
-                future = self._executor.submit(self.distribute, data, name)
+                future = self._executor.submit(self.distribute_many, bundle)
             except BaseException:
                 self._active = False
                 raise
@@ -75,25 +99,43 @@ class Distributor:
         return future
 
     def distribute(self, data: bytes, name: str) -> DistributionResult:
+        return self.distribute_many((DistributionArtifact(data, name),))
+
+    def distribute_many(
+        self,
+        artifacts: Sequence[DistributionArtifact],
+    ) -> DistributionResult:
+        bundle = tuple(artifacts)
+        self._validate_bundle(bundle)
         targets = self.targets
         failures: list[TargetFailure] = []
         for target in targets:
-            try:
-                result = target.save(data, name)
-                if not result.succeeded:
-                    assert result.cause is not None
-                    failures.append(TargetFailure(target.name, result.cause))
-            except BaseException as exc:
-                failures.append(TargetFailure(target.name, exc))
+            for artifact in bundle:
+                try:
+                    result = target.save(artifact.data, artifact.name)
+                    if not result.succeeded:
+                        assert result.cause is not None
+                        failures.append(
+                            TargetFailure(target.name, result.cause, artifact.name)
+                        )
+                except BaseException as exc:
+                    failures.append(TargetFailure(target.name, exc, artifact.name))
 
         names = tuple(target.name for target in targets)
+        artifact_names = tuple(artifact.name for artifact in bundle)
         if failures:
             return DistributionResult(
                 TerminalState.DISCARDED,
                 names,
                 tuple(failures),
+                artifact_names,
             )
-        return DistributionResult(TerminalState.COMPLETED, names, ())
+        return DistributionResult(
+            TerminalState.COMPLETED,
+            names,
+            (),
+            artifact_names,
+        )
 
     def close(self) -> None:
         """Wait for the active distribution and reject later submissions."""
@@ -107,3 +149,11 @@ class Distributor:
     def _release(self, _future: Future[DistributionResult]) -> None:
         with self._state_lock:
             self._active = False
+
+    @staticmethod
+    def _validate_bundle(artifacts: tuple[DistributionArtifact, ...]) -> None:
+        if not artifacts:
+            raise ValueError("distribution artifact bundle must not be empty")
+        names = [artifact.name for artifact in artifacts]
+        if len(names) != len(set(names)):
+            raise ValueError("distribution artifact names must be unique")

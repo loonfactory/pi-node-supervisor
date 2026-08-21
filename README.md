@@ -107,11 +107,13 @@ and legacy files in the storage root remain readable and listed. Set
 
 Storage implementations expose save, read, list, and delete operations. File
 retention is owned by the separate maintenance policy rather than by `save`.
-The example configuration keeps the `local` target for 365 days and runs
+The example configuration keeps the `local` target for 7 days and runs
 maintenance once per day; remote archive targets are not deleted automatically.
 
 PNG and JPEG use independent image settings. PNG defaults to
-`"compression": 9`, while JPEG defaults to `"quality": 90`.
+`"compression": 7`, while JPEG defaults to `"quality": 90`. Picamera2 can
+also save a sensor-native DNG from the same request by setting
+`image.raw.enabled` to `true`; unsupported camera types reject that setting.
 
 ## SFTP storage
 

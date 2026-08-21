@@ -251,6 +251,7 @@ def test_e2_web_reads_and_updates_runtime_settings(tmp_path: Path) -> None:
         "format": "png",
         "compression": 7,
         "embed_metadata": False,
+        "raw": {"enabled": False, "format": "dng"},
     }
     response = asyncio.run(endpoint(app, "/api/config", "PUT")(document))
 
@@ -259,6 +260,7 @@ def test_e2_web_reads_and_updates_runtime_settings(tmp_path: Path) -> None:
         "format": "png",
         "compression": 7,
         "embed_metadata": False,
+        "raw": {"enabled": False, "format": "dng"},
     }
     assert camera.applied[-1] == {"Contrast": 1.2}
 

@@ -29,12 +29,22 @@ class CameraControlsUnavailable(RuntimeError):
 
 
 @dataclass(frozen=True, slots=True)
+class RawCapture:
+    """A camera-native raw artifact produced from the same sensor request."""
+
+    data: bytes
+    extension: str = "dng"
+    media_type: str = "image/x-adobe-dng"
+
+
+@dataclass(frozen=True, slots=True)
 class Capture:
     """A decoded still image and metadata observed at capture time."""
 
     image: Image.Image
     captured_at: datetime
     parameters: Mapping[str, Any] = field(default_factory=dict)
+    raw: RawCapture | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,7 +92,7 @@ class CameraDevice:
 class Camera(Protocol):
     """Still-capture capability."""
 
-    def capture(self) -> Capture:
+    def capture(self, *, include_raw: bool = False) -> Capture:
         """Capture and return one decoded still image."""
 
     def apply(self, parameters: Mapping[str, Any]) -> None:

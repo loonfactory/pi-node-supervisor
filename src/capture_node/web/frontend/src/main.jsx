@@ -66,8 +66,9 @@ function App() {
   const [timezone, setTimezone] = useState("Asia/Seoul");
   const [imageDraft, setImageDraft] = useState({
     format: "png",
-    compression: 9,
+    compression: 7,
     embed_metadata: true,
+    raw: { enabled: false, format: "dng" },
   });
   const [params, setParams] = useState("{}");
   const [controls, setControls] = useState([]);
@@ -250,7 +251,7 @@ function App() {
       : `Q${config.image.quality}`;
     return `${config.image.format.toUpperCase()} · ${value} · ${
       config.image.embed_metadata ? "Metadata on" : "Metadata off"
-    }`;
+    }${config.image.raw?.enabled ? " · DNG RAW" : ""}`;
   }, [config]);
 
   const submit = async (event) => {
@@ -278,11 +279,13 @@ function App() {
                 format: "png",
                 compression: Number(imageDraft.compression),
                 embed_metadata: imageDraft.embed_metadata,
+                raw: imageDraft.raw,
               }
             : {
                 format: "jpeg",
                 quality: Number(imageDraft.quality),
                 embed_metadata: imageDraft.embed_metadata,
+                raw: imageDraft.raw,
               },
         capture: {
           mode: captureMode,
@@ -640,13 +643,15 @@ function App() {
                         event.target.value === "png"
                           ? {
                               format: "png",
-                              compression: 9,
+                              compression: 7,
                               embed_metadata: current.embed_metadata,
+                              raw: current.raw,
                             }
                           : {
                               format: "jpeg",
                               quality: 90,
                               embed_metadata: current.embed_metadata,
+                              raw: current.raw,
                             },
                       )
                     }
@@ -691,6 +696,21 @@ function App() {
                     }
                   />
                 </label>
+                {config?.camera?.type === "picamera2" && (
+                  <label className="image-metadata-control">
+                    <span>Save DNG RAW</span>
+                    <input
+                      type="checkbox"
+                      checked={Boolean(imageDraft.raw?.enabled)}
+                      onChange={(event) =>
+                        setImageDraft((current) => ({
+                          ...current,
+                          raw: { enabled: event.target.checked, format: "dng" },
+                        }))
+                      }
+                    />
+                  </label>
+                )}
               </div>
               <div className="field-group">
                 <span className="field-label">Schedule mode</span>

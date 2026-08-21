@@ -36,6 +36,8 @@ from capture_node.web.logging_config import configure_logging
 from capture_node.web.problems import ApiProblem
 from capture_node.web.storage_browser import StorageBrowser
 
+_MEDIA_TYPES = {".dng": "image/x-adobe-dng"}
+
 
 def create_app(
     node: CaptureNode,
@@ -330,7 +332,11 @@ def create_app(
                 "Stored file not found",
                 str(exc),
             ) from exc
-        media_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+        media_type = (
+            _MEDIA_TYPES.get(Path(filename).suffix.lower())
+            or mimetypes.guess_type(filename)[0]
+            or "application/octet-stream"
+        )
         return Response(data, media_type=media_type)
 
     @app.get("/api/preview")

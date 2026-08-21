@@ -37,6 +37,29 @@ def test_picamera2_size_is_validated_by_its_options_model() -> None:
         Picamera2Options(camera_num=-1)
 
 
+def test_raw_dng_is_disabled_by_default_and_restricted_to_picamera2() -> None:
+    options = Options.model_validate(
+        {
+            "capture": {"interval_seconds": 60},
+            "image": {"format": "png", "compression": 7},
+        }
+    )
+    assert not options.image.raw.enabled
+
+    document = options.model_dump(mode="json")
+    document["camera"] = {
+        "type": "v4l2",
+        "device": "/dev/video0",
+        "width": 1920,
+        "height": 1080,
+        "frame_rate": 15,
+        "startup_timeout_seconds": 10,
+    }
+    document["image"]["raw"] = {"enabled": True, "format": "dng"}
+    with pytest.raises(ValueError, match="requires a picamera2"):
+        Options.model_validate(document)
+
+
 @pytest.mark.covers("CFG-001", "CFG-002", "CFG-003", "CFG-004", "CFG-008")
 def test_a1_loads_full_headless_configuration_and_defaults(tmp_path: Path) -> None:
     path = tmp_path / "config.json"
@@ -50,7 +73,7 @@ def test_a1_loads_full_headless_configuration_and_defaults(tmp_path: Path) -> No
     assert configuration.current.capture.interval_seconds == 5
     assert configuration.current.camera.type == "picamera2"
     assert configuration.current.image.format == "png"
-    assert configuration.current.image.compression == 9
+    assert configuration.current.image.compression == 7
     assert configuration.current.image.embed_metadata is True
     assert configuration.current.storages == ()
     assert configuration.current.maintenance.retention == ()
@@ -289,6 +312,25 @@ def test_retention_targets_must_be_configured_and_unique() -> None:
                 },
             }
         )
+
+
+def test_calibration_metadata_is_preserved_without_applying_image_correction(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "config.json"
+    configuration = make_configuration(path)
+    document = configuration.current.model_dump(mode="json")
+    document["calibration"] = {
+        "type": "checkerboard",
+        "camera_matrix": [[1.0, 0.0, 2.0], [0.0, 1.0, 3.0], [0.0, 0.0, 1.0]],
+        "distortion_coefficients": [0.1, -0.2, 0.0, 0.0, 0.0],
+    }
+
+    result = configuration.replace(document, lambda _capture: None)
+
+    assert result.succeeded
+    assert result.options.calibration["type"] == "checkerboard"
+    assert Configuration.load(path).current.calibration == result.options.calibration
 
 
 @pytest.mark.covers("CFG-009", "CAP-008", "CAP-009")

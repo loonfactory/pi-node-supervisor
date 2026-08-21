@@ -109,7 +109,9 @@ class V4L2Camera:
             process_factory=process_factory,
         )
 
-    def capture(self) -> Capture:
+    def capture(self, *, include_raw: bool = False) -> Capture:
+        if include_raw:
+            raise RuntimeError("DNG raw capture is unavailable for V4L2 cameras")
         data, _ = self._stream.current_frame()
         captured_at = datetime.now(UTC)
         snapshot_at = datetime.now(UTC)

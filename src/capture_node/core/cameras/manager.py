@@ -27,10 +27,10 @@ class CameraManager:
         self._lock = threading.RLock()
         self._closed = False
 
-    def capture(self) -> Capture:
+    def capture(self, *, include_raw: bool = False) -> Capture:
         with self._lock:
             self._ensure_open()
-            return self._camera.capture()
+            return self._camera.capture(include_raw=include_raw)
 
     def apply(self, parameters: Mapping[str, Any]) -> None:
         with self._lock:

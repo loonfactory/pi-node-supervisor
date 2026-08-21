@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import json
 import time
 import logging
 import statistics
 import threading
 import tracemalloc
 from pathlib import Path
+from io import BytesIO
 
 import pytest
+from PIL import Image
 
 from capture_node.core import CaptureNode
 from capture_node.core.events import EventEmitter, EventType
@@ -84,6 +87,45 @@ def test_b1_normal_collection_reaches_completed_terminal_state(
         EventType.CAPTURE_SUCCEEDED,
         EventType.TERMINAL_COMPLETED,
     ]
+
+
+def test_png_and_dng_are_distributed_as_one_capture_bundle(
+    tmp_path: Path,
+    event_output,
+) -> None:
+    storage = FakeStorage("local")
+    node, emitted = build_core(tmp_path, FakeCamera(), (storage,), event_output)
+    document = node.options.model_dump(mode="json")
+    document["image"] = {
+        "format": "png",
+        "compression": 7,
+        "embed_metadata": True,
+        "raw": {"enabled": True, "format": "dng"},
+    }
+    assert node.update_options(document).succeeded
+
+    result = node.collect_once()
+    wait_until(
+        lambda: any(
+            item["event_type"] == EventType.TERMINAL_COMPLETED for item in emitted
+        )
+    )
+
+    assert result.error is None
+    assert len(storage.calls) == 2
+    names = [name for _data, name in storage.calls]
+    assert names[0].endswith(".png")
+    assert names[1].endswith(".dng")
+    assert names[0].removesuffix(".png") == names[1].removesuffix(".dng")
+    assert storage.calls[1][0] == b"fake-dng"
+    png_parameters = json.loads(
+        Image.open(BytesIO(storage.calls[0][0])).getexif()[37510][8:]
+    )
+    assert png_parameters["capture_id"] == result.capture_id
+    completed = next(
+        item for item in emitted if item["event_type"] == EventType.TERMINAL_COMPLETED
+    )
+    assert completed["artifacts"] == names
 
 
 @pytest.mark.covers("STO-001", "STO-003")

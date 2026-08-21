@@ -8,6 +8,7 @@ from capture_node.core.storages.contracts import (
     StoredFile,
 )
 from capture_node.core.storages.distribution import (
+    DistributionArtifact,
     DistributionInProgress,
     DistributionResult,
     Distributor,
@@ -30,6 +31,7 @@ from capture_node.core.storages.registry import (
 __all__ = [
     "ConfiguredStorageProvider",
     "DistributionInProgress",
+    "DistributionArtifact",
     "DistributionResult",
     "Distributor",
     "FileStorageOptions",

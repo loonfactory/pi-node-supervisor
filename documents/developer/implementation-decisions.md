@@ -48,7 +48,8 @@ SRS-CAPTURENODE-001이며, 추가된 기능 계약은
 ## DEC-004 Image Defaults
 
 - 결정: Image Options는 `JpegImageOptions`(quality 기본 90)와
-  `PngImageOptions`(compression 기본 9)의 discriminated union으로 분리한다.
+  `PngImageOptions`의 discriminated union으로 분리한다. PNG compression의
+  초기 기본값 9는 DEC-023에서 7로 변경했다.
   새 설정의 기본 형식은 무손실 PNG이고 메타데이터는 기본 포함한다.
 - 근거: 손실 품질과 무손실 압축 수준은 의미가 다르므로 공통 `quality`
   수치와 역변환을 공유하지 않는다.
@@ -263,9 +264,9 @@ SRS-CAPTURENODE-001이며, 추가된 기능 계약은
   `.venv`만 공유한다.
 - 초기 설치: 대상 경로가 없으면 애플리케이션·선택한 instance의 촬영·가상환경
   경로를 생성한다. instance 설정은 예제 JSON을 복사하지 않고 검증된 Options
-  모델로 Picamera2, Preview-only 일정, PNG, 로컬 Storage와 365일 보존 정책을
+  모델로 Picamera2, Preview-only 일정, PNG, 로컬 Storage와 보존 정책을
   생성한다. 이후 배포에서는 이미 생성된 운영 설정과 촬영 파일을 교체하지
-  않는다.
+  않는다. 이미지·보존 초기값은 DEC-023을 따른다.
 - Raspberry Pi Python: 배포 venv는 system site packages를 포함해 OS의
   Picamera2/libcamera binding을 사용한다. 플랫폼 모듈은 해당 Registration의
   생성 또는 discovery 시점에만 import한다.
@@ -396,7 +397,7 @@ SRS-CAPTURENODE-001이며, 추가된 기능 계약은
   생성하지 않는다.
 - 정책: target별 `max_age_days`를 명시하며 Storage가 반환한 UTC
   `modified_at`을 기준으로 경계보다 오래된 파일만 삭제한다. 기본은 빈
-  정책이고 운영 예제의 local target에만 365일을 설정한다.
+  정책이고 운영 예제의 local target 보존기간은 DEC-023을 따른다.
 - 실패: 목록·삭제 예외를 대상별로 기록하고 다른 파일·Storage 처리와
   촬영 파이프라인은 계속한다. 런타임 정책 변경은 재시작을 요구한다.
 - 근거: 저장 행위가 기존 데이터를 암묵적으로 삭제하지 않게 하고, 새
@@ -421,3 +422,31 @@ SRS-CAPTURENODE-001이며, 추가된 기능 계약은
   확인한다.
 - 운영 절차와 장애 판별은
   `documents/operations/isolated-network-time-sync.md`를 따른다.
+
+## DEC-023 Picamera2 RAW Capture and Seven-Day Local Retention
+
+- 결정: Picamera2 운영 프로필은 PNG Compression 7과 metadata를 유지하면서
+  같은 센서 요청의 DNG를 함께 저장한다. RAW 설정은 `image.raw`라는 명시적
+  옵션이며 V4L2에서는 검증 단계에서 거절한다.
+- 센서 정확성: 임의의 12-bit container로 확장하지 않고 센서가 제공하는 전체
+  해상도 최고 비트 깊이를 사용한다. 현재 IMX708과 IMX219는 10-bit다.
+- 촬영 수명주기: RAW가 활성화된 촬영만 still configuration으로 전환한다.
+  `switch_mode_capture_request_and_stop`으로 요청을 얻고 DNG 생성과 request release
+  후 기존 preview configuration을 다시 시작해 장기 운용의 CMA fragmentation
+  위험을 줄인다.
+- 저장 묶음: 처리 영상과 DNG는 같은 UTC timestamp와 capture ID를 사용하며
+  Distributor의 단일 bounded 작업에서 모든 대상에 전달한다. 개별 Storage가
+  다중 파일 transaction을 제공하지 않으므로 부분 저장을 rollback하지는 않되,
+  모든 산출물 시도가 끝날 때까지 촬영을 terminal state로 전환하지 않는다.
+- metadata: PNG/JPEG EXIF `UserComment`에는 capture ID와 기존 카메라 metadata를
+  포함한다. DNG metadata는 Picamera2의 센서 요청 metadata를 source-of-truth로
+  사용하고 두 파일의 동일 stem으로 촬영 묶음을 식별한다.
+- 보존: 운영 local Storage는 7일을 유지하며 원격 Storage에는 자동 삭제 정책을
+  넣지 않는다. 보존 판단은 기존 StorageMaintenance의 파일별 modified time을
+  사용한다.
+- 기본값: PNG compression 기본값을 9에서 7로 변경한다. 신규 Picamera2 배포는
+  RAW를 활성화하고 local 7일 보존을 생성하지만, 기존 운영 설정은 배포 중
+  덮어쓰지 않고 Supervisor의 revision 적용 경로로 명시적으로 갱신한다.
+- 기각: PNG만 저장하는 방식은 ISP 이전 Bayer data와 더 넓은 계조를 복원할 수
+  없어 정량 분석 원본으로 부족하다. RAW만 저장하는 방식은 현장 확인과 일반
+  도구 호환성이 떨어져 처리 영상과 RAW 병행을 채택했다.

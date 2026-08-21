@@ -64,9 +64,12 @@ class Options(StrictModel):
     image: ImageOptions = Field(default_factory=PngImageOptions)
     storages: tuple[StorageOptions, ...] = ()
     maintenance: MaintenanceOptions = Field(default_factory=MaintenanceOptions)
+    calibration: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_storage_targets(self) -> Options:
+        if self.image.raw.enabled and self.camera.type != "picamera2":
+            raise ValueError("DNG raw capture requires a picamera2 camera")
         storage_names = [storage.name for storage in self.storages]
         if len(set(storage_names)) != len(storage_names):
             raise ValueError("storage target names must be unique")

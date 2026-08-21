@@ -497,7 +497,11 @@ def write_configuration(path: Path, camera_num: int, spec: str) -> None:
     options = Options(
         camera=camera_options(spec, camera_num),
         capture=CaptureOptions(mode="disabled"),
-        image=PngImageOptions(),
+        image=PngImageOptions(
+            compression=7,
+            embed_metadata=True,
+            raw={"enabled": spec == "picamera2" or spec.startswith("picamera2:")},
+        ),
         storages=(
             FileStorageOptions(
                 type="file",
@@ -507,7 +511,7 @@ def write_configuration(path: Path, camera_num: int, spec: str) -> None:
             ),
         ),
         maintenance=MaintenanceOptions(
-            retention=(RetentionOptions(target="local", max_age_days=365),),
+            retention=(RetentionOptions(target="local", max_age_days=7),),
         ),
     )
     temporary = path.with_suffix(f"{path.suffix}.tmp")

@@ -24,6 +24,10 @@ class FakeRequest:
     def get_metadata(self):
         return {"ExposureTime": 5_000}
 
+    def save_dng(self, output, stream: str) -> None:
+        self._calls.append(("raw", stream))
+        output.write(b"test-dng")
+
     def release(self) -> None:
         pass
 
@@ -42,6 +46,11 @@ class FakePicamera:
         self.calls: list[tuple[str, str]] = []
         self.configured = None
         self.applied_controls = {}
+        self.sensor_resolution = (4608, 2592)
+        self.sensor_modes = [
+            {"size": (4608, 2592), "bit_depth": 10},
+            {"size": (4608, 2592), "bit_depth": 8},
+        ]
         self.__class__.instances.append(self)
 
     def create_preview_configuration(self, *, main, transform):
@@ -49,6 +58,19 @@ class FakePicamera:
 
     def configure(self, configuration) -> None:
         self.configured = configuration
+        self.camera_config = configuration
+
+    def create_still_configuration(self, *, main, raw, sensor, transform):
+        return {
+            "main": main,
+            "raw": raw,
+            "sensor": sensor,
+            "transform": transform,
+        }
+
+    def switch_mode_capture_request_and_stop(self, configuration):
+        self.still_config = configuration
+        return FakeRequest(self.calls)
 
     def start(self) -> None:
         pass
@@ -154,6 +176,41 @@ def test_picamera_discovery_returns_selectable_options(monkeypatch) -> None:
     assert [device.name for device in devices] == ["imx708_noir", "imx219"]
     assert [device.options.camera_num for device in devices] == [0, 1]
     assert devices[0].options.size == (1920, 1080)
+
+
+def test_picamera_raw_capture_returns_dng_from_full_sensor_mode(monkeypatch) -> None:
+    FakePicamera.instances.clear()
+    monkeypatch.setitem(
+        sys.modules,
+        "picamera2",
+        SimpleNamespace(Picamera2=FakePicamera),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "libcamera",
+        SimpleNamespace(Transform=FakeTransform),
+    )
+    monkeypatch.setattr(
+        "capture_node.core.cameras.picamera2.Image.fromarray",
+        lambda _array: Image.new("RGB", (8, 6), "green"),
+    )
+    camera = Picamera2Camera(camera_num=0, size=(1920, 1080))
+
+    capture = camera.capture(include_raw=True)
+
+    implementation = FakePicamera.instances[0]
+    assert capture.raw is not None
+    assert capture.raw.data == b"test-dng"
+    assert capture.raw.extension == "dng"
+    assert implementation.calls == [("still", "main"), ("raw", "raw")]
+    assert implementation.still_config["main"] == {
+        "format": "BGR888",
+        "size": (1920, 1080),
+    }
+    assert implementation.still_config["sensor"] == {
+        "output_size": (4608, 2592),
+        "bit_depth": 10,
+    }
 
 
 @pytest.mark.covers("NFR-001")

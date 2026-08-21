@@ -14,7 +14,7 @@ class UnavailableCamera:
     def __init__(self, cause: BaseException) -> None:
         self._detail = str(cause) or type(cause).__name__
 
-    def capture(self) -> Capture:
+    def capture(self, *, include_raw: bool = False) -> Capture:
         raise RuntimeError(f"camera is unavailable: {self._detail}")
 
     def apply(self, parameters: Mapping[str, Any]) -> None:

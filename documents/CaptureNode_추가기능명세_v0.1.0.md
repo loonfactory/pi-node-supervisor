@@ -36,6 +36,7 @@
 | EXT-STO-003 | 일 단위 저장 경로 | 파일 수 증가를 제한하도록 캡처를 UTC 날짜 디렉터리에 저장한다. |
 | EXT-STO-004 | Explicit FTPS Storage | 검증된 TLS 제어·데이터 채널로 원격 저장·조회·목록을 제공한다. |
 | EXT-IMG-001 | 이미지 정책 변경 | 실행 중 이미지 형식, 품질·압축 수준, 메타데이터 정책을 변경한다. |
+| EXT-IMG-002 | Picamera2 RAW 묶음 | 처리 영상과 센서 원본 DNG를 같은 촬영 ID로 저장한다. |
 
 ### 2.1 기존 기준선과의 차이
 
@@ -387,10 +388,10 @@ FTPS는 SSH 기반 SFTP와 다른 Storage type인 `ftps`로 등록한다.
   시각과 같은 파일은 유지한다.
 - 목록은 50개 페이지 단위로 오래된 항목부터 처리하며 한 파일의
   삭제 실패가 다른 파일이나 Storage 처리를 중단하지 않는다.
-- 기본 정책은 비어 있다. 운영 예제의 `local`만 365일 보존을
+- 기본 정책은 비어 있다. 운영 예제의 `local`만 7일 보존을
   명시하고 원격 archive에는 적용하지 않는다.
-- 2MB, 하루 72장 가정의 365일 예상량은 약 52.6GB이다. 실제 PNG
-  크기는 촬영 내용에 따라 달라지므로 용량 상한을 보장하지 않는다.
+- PNG와 DNG의 실제 크기는 센서와 촬영 내용에 따라 달라지므로 용량 상한을
+  보장하지 않는다.
 
 ## 6. Image policy
 
@@ -401,7 +402,7 @@ Web의 `Apply changes`로 다음 값을 변경한다.
 - JPEG: `image.format: jpeg`, `image.quality: 1-100`
 - PNG: `image.format: png`, `image.compression: 0-9`
 - `image.embed_metadata`: metadata 포함 여부
-- 기본은 PNG Compression 9이며 JPEG로 변경하면 Quality 90을 사용한다.
+- 기본은 PNG Compression 7이며 JPEG로 변경하면 Quality 90을 사용한다.
 
 변경은 설정 파일에 저장되며 다음 촬영부터 적용된다. 기존 저장 파일은 변경하지
 않는다.
@@ -430,7 +431,22 @@ JSON에 포함한다. software 반전값은 device snapshot인 `observed_control
 - 범위: `0-9`
 - 값이 높을수록 압축이 강해져 저장 시간이 늘고 파일 크기가 작아질 수 있다.
 - PNG는 무손실이므로 압축 수준에 따른 픽셀 화질 변화는 없다.
-- 하단 요약 예: `PNG · Compression 9 · Metadata off`
+- 하단 요약 예: `PNG · Compression 7 · Metadata on · DNG RAW`
+
+### 6.4 Picamera2 DNG RAW
+
+- `image.raw.enabled: true`와 `image.raw.format: dng`로 활성화한다.
+- Picamera2만 지원하며 V4L2 설정에 RAW를 활성화하면 설정 검증에서 거절한다.
+- 촬영 순간에 전체 센서 해상도의 가장 높은 지원 비트 깊이로 still mode를
+  구성한다. 배포된 IMX708과 IMX219는 모두 10-bit이므로 12-bit로 변환하거나
+  표기하지 않는다.
+- 같은 센서 요청에서 처리 영상과 DNG를 생성하고 동일 UTC 시각과 capture ID의
+  파일명 stem을 사용한다.
+- 두 산출물을 모든 Storage에 한 작업으로 전달하며 두 파일의 저장 시도가 모두
+  종결되기 전에는 다음 촬영을 수락하지 않는다.
+- DNG는 Picamera2가 기록하는 센서·노출 metadata를 포함한다. PNG/JPEG에는 기존
+  EXIF와 `UserComment` metadata를 유지하고 capture ID도 포함한다.
+- RAW 촬영 뒤 preview configuration을 복구해 Web MJPEG를 계속 제공한다.
 
 ## 7. API 추가·변경 목록
 
@@ -465,7 +481,8 @@ Camera 1 Web port: 8001
 
 - 배포 시 기존 instance 설정과 `captures/`는 보존한다.
 - instance 설정이 없으면 검증된 Options 모델로 해당 Camera 번호의 Picamera2,
-  Preview-only 일정, PNG, 로컬 Storage와 365일 보존 정책을 생성한다. 예제 설정
+  Preview-only 일정, PNG Compression 7, Picamera2 DNG, 로컬 Storage와 7일
+  보존 정책을 생성한다. 예제 설정
   파일은 배포 입력으로 사용하지 않는다.
 - 기존 capture root의 파일은 Camera 0 디렉터리로 이동한다.
 - 최초 배포 시 애플리케이션·선택한 instance별 `captures/`·가상환경 경로와

@@ -16,8 +16,12 @@
   },
   "image": {
     "format": "png",
-    "compression": 9,
-    "embed_metadata": true
+    "compression": 7,
+    "embed_metadata": true,
+    "raw": {
+      "enabled": true,
+      "format": "dng"
+    }
   },
   "storages": [
     {
@@ -32,7 +36,7 @@
     "retention": [
       {
         "target": "local",
-        "max_age_days": 365
+        "max_age_days": 7
       }
     ]
   }

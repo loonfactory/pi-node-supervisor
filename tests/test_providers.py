@@ -37,7 +37,7 @@ class ProviderCamera:
         self.closed = False
         self.parameters: dict = {}
 
-    def capture(self) -> Capture:
+    def capture(self, *, include_raw: bool = False) -> Capture:
         return Capture(
             Image.new("RGB", (2, 2)),
             datetime.now(UTC),

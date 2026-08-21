@@ -7,6 +7,7 @@ from capture_node.core.encodings.options import (
     ImageOptions,
     JpegImageOptions,
     PngImageOptions,
+    RawImageOptions,
 )
 from capture_node.core.encodings.png import PngEncoding
 
@@ -19,4 +20,5 @@ __all__ = [
     "JpegEncoding",
     "PngEncoding",
     "PngImageOptions",
+    "RawImageOptions",
 ]

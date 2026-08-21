@@ -124,8 +124,12 @@ and file size, not image quality:
 ```json
 {
   "format": "png",
-  "compression": 9,
-  "embed_metadata": true
+  "compression": 7,
+  "embed_metadata": true,
+  "raw": {
+    "enabled": true,
+    "format": "dng"
+  }
 }
 ```
 
@@ -140,6 +144,9 @@ JPEG uses a quality value from `1` through `100`:
 ```
 
 When `embed_metadata` is true, CaptureNode writes capture metadata as EXIF data.
+`raw.enabled` is supported only by Picamera2. It saves a sensor-native DNG from the
+same request and therefore uses the sensor's actual bit depth (10-bit on the deployed
+IMX708 and IMX219), rather than promising a fixed 12-bit output.
 
 ## Storage
 
@@ -235,7 +242,7 @@ the application does not parse dotenv files itself.
   "retention": [
     {
       "target": "local",
-      "max_age_days": 365
+      "max_age_days": 7
     }
   ]
 }

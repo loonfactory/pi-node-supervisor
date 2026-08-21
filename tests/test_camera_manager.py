@@ -17,7 +17,7 @@ class ManagedCamera:
         self.closed = False
         self.parameters = {}
 
-    def capture(self) -> Capture:
+    def capture(self, *, include_raw: bool = False) -> Capture:
         if self.closed:
             raise RuntimeError("closed")
         return Capture(Image.new("RGB", (2, 2)), datetime.now(UTC), {"name": self.name})

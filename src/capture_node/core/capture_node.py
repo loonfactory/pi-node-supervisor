@@ -7,7 +7,7 @@ import time
 import uuid
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Any
 
@@ -23,6 +23,7 @@ from capture_node.core.options import CaptureOptions, Options
 from capture_node.core.scheduler import CaptureSchedule, CaptureScheduler
 from capture_node.core.storages import (
     DistributionResult,
+    DistributionArtifact,
     Distributor,
     StorageProvider,
     TerminalState,
@@ -207,7 +208,9 @@ class CaptureNode:
         handed_off = False
         try:
             try:
-                captured = self._camera_provider.camera().capture()
+                captured = self._camera_provider.camera().capture(
+                    include_raw=self.options.image.raw.enabled
+                )
             except BaseException as exc:
                 self._emitter.emit(
                     EventType.CAPTURE_FAILED,
@@ -221,17 +224,37 @@ class CaptureNode:
                 capture_id=capture_id,
             )
             try:
+                captured = replace(
+                    captured,
+                    parameters={**captured.parameters, "capture_id": capture_id},
+                )
                 encoded = self._encoder.encode(captured, self.options.image)
                 name = self._capture_name(captured.captured_at, capture_id, encoded.extension)
+                artifacts = [DistributionArtifact(encoded.data, name)]
+                if self.options.image.raw.enabled:
+                    if captured.raw is None:
+                        raise RuntimeError(
+                            "camera did not return the requested DNG raw capture"
+                        )
+                    artifacts.append(
+                        DistributionArtifact(
+                            captured.raw.data,
+                            self._capture_name(
+                                captured.captured_at,
+                                capture_id,
+                                captured.raw.extension,
+                            ),
+                        )
+                    )
                 if not self._distributor.targets:
-                    outcome = self._distributor.distribute(encoded.data, name)
+                    outcome = self._distributor.distribute_many(artifacts)
                     self._emit_distribution(capture_id, outcome)
                     return CollectionResult(
                         True,
                         capture_id,
                         captured_at=captured.captured_at,
                     )
-                future = self._distributor.submit(encoded.data, name)
+                future = self._distributor.submit_many(artifacts)
                 handed_off = True
                 future.add_done_callback(
                     lambda completed: self._complete_distribution(
@@ -297,6 +320,7 @@ class CaptureNode:
                 EventType.TERMINAL_COMPLETED,
                 capture_id=capture_id,
                 targets=list(outcome.targets),
+                artifacts=list(outcome.artifacts),
             )
             return
         self._emitter.emit(
@@ -305,6 +329,7 @@ class CaptureNode:
             failures=[
                 {
                     "target": failure.target,
+                    "name": failure.name,
                     "cause": cause_payload(failure.cause),
                 }
                 for failure in outcome.failures
@@ -378,6 +403,7 @@ class CaptureNode:
             ],
             "capture_timezone": options.capture.timezone,
             "image_format": options.image.format,
+            "raw_format": options.image.raw.format if options.image.raw.enabled else None,
             "storage_targets": [storage.name for storage in options.storages],
             "retention_targets": [
                 rule.target for rule in options.maintenance.retention
@@ -403,6 +429,8 @@ class CaptureNode:
             changed["capture.params"] = after.capture.params
         if before.image != after.image:
             changed["image"] = after.image.model_dump(mode="json")
+        if before.calibration != after.calibration:
+            changed["calibration"] = after.calibration
         return changed
 
     @staticmethod
