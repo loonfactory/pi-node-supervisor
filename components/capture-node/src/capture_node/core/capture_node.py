@@ -16,7 +16,7 @@ from capture_node.core.config import (
     Configuration,
     UpdateResult,
 )
-from capture_node.core.encodings import ImageEncoder
+from capture_node.core.encodings import DngImageOptions, ImageEncoder
 from capture_node.core.events import EventEmitter, EventType, cause_payload
 from capture_node.core.maintenance import MaintenanceScheduler, StorageMaintenance
 from capture_node.core.options import CaptureOptions, Options
@@ -206,10 +206,13 @@ class CaptureNode:
         capture_id = uuid.uuid4().hex
         captured = None
         handed_off = False
+        image_options = self.options.image
+        dng_only = isinstance(image_options, DngImageOptions)
+        include_raw = dng_only or image_options.raw.enabled
         try:
             try:
                 captured = self._camera_provider.camera().capture(
-                    include_raw=self.options.image.raw.enabled
+                    include_raw=include_raw
                 )
             except BaseException as exc:
                 self._emitter.emit(
@@ -224,14 +227,20 @@ class CaptureNode:
                 capture_id=capture_id,
             )
             try:
-                captured = replace(
-                    captured,
-                    parameters={**captured.parameters, "capture_id": capture_id},
-                )
-                encoded = self._encoder.encode(captured, self.options.image)
-                name = self._capture_name(captured.captured_at, capture_id, encoded.extension)
-                artifacts = [DistributionArtifact(encoded.data, name)]
-                if self.options.image.raw.enabled:
+                artifacts: list[DistributionArtifact] = []
+                if not dng_only:
+                    captured = replace(
+                        captured,
+                        parameters={**captured.parameters, "capture_id": capture_id},
+                    )
+                    encoded = self._encoder.encode(captured, image_options)
+                    name = self._capture_name(
+                        captured.captured_at,
+                        capture_id,
+                        encoded.extension,
+                    )
+                    artifacts.append(DistributionArtifact(encoded.data, name))
+                if include_raw:
                     if captured.raw is None:
                         raise RuntimeError(
                             "camera did not return the requested DNG raw capture"
@@ -403,7 +412,11 @@ class CaptureNode:
             ],
             "capture_timezone": options.capture.timezone,
             "image_format": options.image.format,
-            "raw_format": options.image.raw.format if options.image.raw.enabled else None,
+            "raw_format": (
+                "dng"
+                if isinstance(options.image, DngImageOptions)
+                else options.image.raw.format if options.image.raw.enabled else None
+            ),
             "storage_targets": [storage.name for storage in options.storages],
             "retention_targets": [
                 rule.target for rule in options.maintenance.retention

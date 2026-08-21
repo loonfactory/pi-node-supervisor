@@ -148,6 +148,16 @@ When `embed_metadata` is true, CaptureNode writes capture metadata as EXIF data.
 same request and therefore uses the sensor's actual bit depth (10-bit on the deployed
 IMX708 and IMX219), rather than promising a fixed 12-bit output.
 
+To store the sensor RAW artifact without an additional processed PNG or JPEG, use:
+
+```json
+{
+  "format": "dng"
+}
+```
+
+This DNG-only policy is supported only by Picamera2.
+
 ## Storage
 
 All storage types implement save, read, paged list, and delete. `layout` accepts

@@ -9,7 +9,11 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from pydantic import Field, field_validator, model_validator
 
 from capture_node.core.cameras.options import CameraOptions, Picamera2Options
-from capture_node.core.encodings.options import ImageOptions, PngImageOptions
+from capture_node.core.encodings.options import (
+    DngImageOptions,
+    ImageOptions,
+    PngImageOptions,
+)
 from capture_node.core.maintenance import MaintenanceOptions
 from capture_node.core.models import StrictModel
 from capture_node.core.storages.options import StorageOptions
@@ -68,7 +72,10 @@ class Options(StrictModel):
 
     @model_validator(mode="after")
     def validate_storage_targets(self) -> Options:
-        if self.image.raw.enabled and self.camera.type != "picamera2":
+        requests_dng = isinstance(self.image, DngImageOptions) or (
+            hasattr(self.image, "raw") and self.image.raw.enabled
+        )
+        if requests_dng and self.camera.type != "picamera2":
             raise ValueError("DNG raw capture requires a picamera2 camera")
         storage_names = [storage.name for storage in self.storages]
         if len(set(storage_names)) != len(storage_names):

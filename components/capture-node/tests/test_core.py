@@ -128,6 +128,37 @@ def test_png_and_dng_are_distributed_as_one_capture_bundle(
     assert completed["artifacts"] == names
 
 
+def test_dng_policy_distributes_only_the_sensor_raw_artifact(
+    tmp_path: Path,
+    event_output,
+) -> None:
+    storage = FakeStorage("local")
+    node, emitted = build_core(tmp_path, FakeCamera(), (storage,), event_output)
+    document = node.options.model_dump(mode="json")
+    document["image"] = {"format": "dng"}
+    assert node.update_options(document).succeeded
+
+    result = node.collect_once()
+    wait_until(
+        lambda: any(
+            item["event_type"] == EventType.TERMINAL_COMPLETED for item in emitted
+        )
+    )
+
+    assert result.error is None
+    assert storage.calls == [
+        (
+            b"fake-dng",
+            next(
+                item["artifacts"][0]
+                for item in emitted
+                if item["event_type"] == EventType.TERMINAL_COMPLETED
+            ),
+        )
+    ]
+    assert storage.calls[0][1].endswith(".dng")
+
+
 @pytest.mark.covers("STO-001", "STO-003")
 def test_b2_zero_target_collection_completes(
     tmp_path: Path,

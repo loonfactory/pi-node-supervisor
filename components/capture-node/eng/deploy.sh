@@ -458,7 +458,7 @@ import sys
 from pathlib import Path
 
 from capture_node.core.cameras.options import Picamera2Options, V4L2CameraOptions
-from capture_node.core.encodings.options import PngImageOptions
+from capture_node.core.encodings.options import DngImageOptions
 from capture_node.core.maintenance.options import (
     MaintenanceOptions,
     RetentionOptions,
@@ -497,11 +497,7 @@ def write_configuration(path: Path, camera_num: int, spec: str) -> None:
     options = Options(
         camera=camera_options(spec, camera_num),
         capture=CaptureOptions(mode="disabled"),
-        image=PngImageOptions(
-            compression=7,
-            embed_metadata=True,
-            raw={"enabled": spec == "picamera2" or spec.startswith("picamera2:")},
-        ),
+        image=DngImageOptions(),
         storages=(
             FileStorageOptions(
                 type="file",

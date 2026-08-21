@@ -28,7 +28,11 @@ class PngImageOptions(StrictModel):
     raw: RawImageOptions = Field(default_factory=RawImageOptions)
 
 
+class DngImageOptions(StrictModel):
+    format: Literal["dng"] = "dng"
+
+
 ImageOptions = Annotated[
-    JpegImageOptions | PngImageOptions,
+    JpegImageOptions | PngImageOptions | DngImageOptions,
     Field(discriminator="format"),
 ]

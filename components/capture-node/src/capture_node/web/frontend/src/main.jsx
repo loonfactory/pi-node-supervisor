@@ -243,9 +243,12 @@ function App() {
   const imagePolicyValue =
     imageDraft.format === "png"
       ? imageDraft.compression
-      : imageDraft.quality;
+      : imageDraft.format === "jpeg"
+        ? imageDraft.quality
+        : null;
   const imagePolicy = useMemo(() => {
     if (!config) return "";
+    if (config.image.format === "dng") return "DNG · Sensor RAW only";
     const value = config.image.format === "png"
       ? `Compression ${config.image.compression}`
       : `Q${config.image.quality}`;
@@ -274,7 +277,9 @@ function App() {
       const next = {
         ...config,
         image:
-          imageDraft.format === "png"
+          imageDraft.format === "dng"
+            ? { format: "dng" }
+            : imageDraft.format === "png"
             ? {
                 format: "png",
                 compression: Number(imageDraft.compression),
@@ -640,77 +645,90 @@ function App() {
                     value={imageDraft.format}
                     onChange={(event) =>
                       setImageDraft((current) =>
-                        event.target.value === "png"
-                          ? {
-                              format: "png",
-                              compression: 7,
-                              embed_metadata: current.embed_metadata,
-                              raw: current.raw,
-                            }
-                          : {
-                              format: "jpeg",
-                              quality: 90,
-                              embed_metadata: current.embed_metadata,
-                              raw: current.raw,
-                            },
+                        event.target.value === "dng"
+                          ? { format: "dng" }
+                          : event.target.value === "png"
+                            ? {
+                                format: "png",
+                                compression: 7,
+                                embed_metadata: current.embed_metadata,
+                                raw: current.raw,
+                              }
+                            : {
+                                format: "jpeg",
+                                quality: 90,
+                                embed_metadata: current.embed_metadata,
+                                raw: current.raw,
+                              },
                       )
                     }
                   >
                     <option value="jpeg">JPEG</option>
                     <option value="png">PNG</option>
+                    <option
+                      value="dng"
+                      disabled={config?.camera?.type !== "picamera2"}
+                    >
+                      DNG sensor RAW only
+                    </option>
                   </select>
                 </label>
-                <label className="image-quality-control">
-                  <span>
-                    {imageDraft.format === "png" ? "Compression" : "Quality"}
-                  </span>
-                  <div>
-                    <input
-                      type="range"
-                      min={imageDraft.format === "png" ? "0" : "1"}
-                      max={imageDraft.format === "png" ? "9" : "100"}
-                      step="1"
-                      value={imagePolicyValue}
-                      onChange={(event) => changeImagePolicyValue(event.target.value)}
-                    />
-                    <input
-                      type="number"
-                      min={imageDraft.format === "png" ? "0" : "1"}
-                      max={imageDraft.format === "png" ? "9" : "100"}
-                      step="1"
-                      value={imagePolicyValue}
-                      onChange={(event) => changeImagePolicyValue(event.target.value)}
-                    />
-                  </div>
-                </label>
-                <label className="image-metadata-control">
-                  <span>Embed metadata</span>
-                  <input
-                    type="checkbox"
-                    checked={imageDraft.embed_metadata}
-                    onChange={(event) =>
-                      setImageDraft((current) => ({
-                        ...current,
-                        embed_metadata: event.target.checked,
-                      }))
-                    }
-                  />
-                </label>
-                {config?.camera?.type === "picamera2" && (
+                {imageDraft.format !== "dng" && (
+                  <label className="image-quality-control">
+                    <span>
+                      {imageDraft.format === "png" ? "Compression" : "Quality"}
+                    </span>
+                    <div>
+                      <input
+                        type="range"
+                        min={imageDraft.format === "png" ? "0" : "1"}
+                        max={imageDraft.format === "png" ? "9" : "100"}
+                        step="1"
+                        value={imagePolicyValue}
+                        onChange={(event) => changeImagePolicyValue(event.target.value)}
+                      />
+                      <input
+                        type="number"
+                        min={imageDraft.format === "png" ? "0" : "1"}
+                        max={imageDraft.format === "png" ? "9" : "100"}
+                        step="1"
+                        value={imagePolicyValue}
+                        onChange={(event) => changeImagePolicyValue(event.target.value)}
+                      />
+                    </div>
+                  </label>
+                )}
+                {imageDraft.format !== "dng" && (
                   <label className="image-metadata-control">
-                    <span>Save DNG RAW</span>
+                    <span>Embed metadata</span>
                     <input
                       type="checkbox"
-                      checked={Boolean(imageDraft.raw?.enabled)}
+                      checked={imageDraft.embed_metadata}
                       onChange={(event) =>
                         setImageDraft((current) => ({
                           ...current,
-                          raw: { enabled: event.target.checked, format: "dng" },
+                          embed_metadata: event.target.checked,
                         }))
                       }
                     />
                   </label>
                 )}
+                {imageDraft.format !== "dng" &&
+                  config?.camera?.type === "picamera2" && (
+                    <label className="image-metadata-control">
+                      <span>Save DNG RAW</span>
+                      <input
+                        type="checkbox"
+                        checked={Boolean(imageDraft.raw?.enabled)}
+                        onChange={(event) =>
+                          setImageDraft((current) => ({
+                            ...current,
+                            raw: { enabled: event.target.checked, format: "dng" },
+                          }))
+                        }
+                      />
+                    </label>
+                  )}
               </div>
               <div className="field-group">
                 <span className="field-label">Schedule mode</span>

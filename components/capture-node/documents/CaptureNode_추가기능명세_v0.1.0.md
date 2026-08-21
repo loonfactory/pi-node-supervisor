@@ -37,6 +37,7 @@
 | EXT-STO-004 | Explicit FTPS Storage | 검증된 TLS 제어·데이터 채널로 원격 저장·조회·목록을 제공한다. |
 | EXT-IMG-001 | 이미지 정책 변경 | 실행 중 이미지 형식, 품질·압축 수준, 메타데이터 정책을 변경한다. |
 | EXT-IMG-002 | Picamera2 RAW 묶음 | 처리 영상과 센서 원본 DNG를 같은 촬영 ID로 저장한다. |
+| EXT-IMG-003 | Picamera2 DNG-only | 처리 영상 없이 센서 원본 DNG 하나만 저장한다. |
 
 ### 2.1 기존 기준선과의 차이
 
@@ -447,6 +448,14 @@ JSON에 포함한다. software 반전값은 device snapshot인 `observed_control
 - DNG는 Picamera2가 기록하는 센서·노출 metadata를 포함한다. PNG/JPEG에는 기존
   EXIF와 `UserComment` metadata를 유지하고 capture ID도 포함한다.
 - RAW 촬영 뒤 preview configuration을 복구해 Web MJPEG를 계속 제공한다.
+
+### 6.5 Picamera2 DNG-only
+
+- `image.format: dng`로 설정하면 PNG/JPEG 인코딩 없이 센서 DNG 하나만 저장한다.
+- 정기 촬영과 즉시 촬영은 동일한 현재 이미지 정책을 사용한다.
+- Picamera2만 지원하며 V4L2 설정에서는 검증 단계에서 거절한다.
+- 카메라가 DNG artifact를 반환하지 않으면 해당 촬영은 저장 완료가 아니라
+  terminal discard로 기록한다.
 
 ## 7. API 추가·변경 목록
 

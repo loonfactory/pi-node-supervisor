@@ -15,13 +15,7 @@
     "params": {}
   },
   "image": {
-    "format": "png",
-    "compression": 7,
-    "embed_metadata": true,
-    "raw": {
-      "enabled": true,
-      "format": "dng"
-    }
+    "format": "dng"
   },
   "storages": [
     {

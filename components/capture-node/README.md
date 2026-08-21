@@ -111,9 +111,10 @@ The example configuration keeps the `local` target for 7 days and runs
 maintenance once per day; remote archive targets are not deleted automatically.
 
 PNG and JPEG use independent image settings. PNG defaults to
-`"compression": 7`, while JPEG defaults to `"quality": 90`. Picamera2 can
-also save a sensor-native DNG from the same request by setting
-`image.raw.enabled` to `true`; unsupported camera types reject that setting.
+`"compression": 7`, while JPEG defaults to `"quality": 90`. Set
+`"image": {"format": "dng"}` to store only the Picamera2 sensor-native DNG.
+PNG/JPEG can still request a paired DNG with `image.raw.enabled`; unsupported
+camera types reject both DNG modes.
 
 ## SFTP storage
 

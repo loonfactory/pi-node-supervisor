@@ -450,3 +450,14 @@ SRS-CAPTURENODE-001이며, 추가된 기능 계약은
 - 기각: PNG만 저장하는 방식은 ISP 이전 Bayer data와 더 넓은 계조를 복원할 수
   없어 정량 분석 원본으로 부족하다. RAW만 저장하는 방식은 현장 확인과 일반
   도구 호환성이 떨어져 처리 영상과 RAW 병행을 채택했다.
+
+## DEC-024 DNG-only Operational Capture
+
+- 상태: DEC-023의 운영 이미지 기본값 중 PNG+DNG 병행 결정을 대체한다. 기존
+  `image.raw` 묶음 계약은 호환 목적으로 유지한다.
+- 결정: 신규 Picamera2 운영 설정은 `image.format: dng`를 사용해 센서 DNG 하나만
+  저장한다. 정기 촬영과 즉시 촬영은 같은 적용 이미지 정책을 사용한다.
+- 근거: 정량 비교의 원본은 ISP 처리 영상이 아니라 Bayer RAW여야 하며, 같은
+  촬영의 PNG를 필수 산출물로 유지할 필요가 없다.
+- 제약: V4L2는 DNG-only 정책을 거절한다. DNG 요청에서 카메라가 RAW artifact를
+  반환하지 않으면 저장 성공으로 처리하지 않고 terminal discard로 기록한다.

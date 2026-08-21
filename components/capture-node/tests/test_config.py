@@ -59,6 +59,21 @@ def test_raw_dng_is_disabled_by_default_and_restricted_to_picamera2() -> None:
     with pytest.raises(ValueError, match="requires a picamera2"):
         Options.model_validate(document)
 
+    document["image"] = {"format": "dng"}
+    with pytest.raises(ValueError, match="requires a picamera2"):
+        Options.model_validate(document)
+
+
+def test_dng_only_is_a_valid_picamera2_image_policy() -> None:
+    options = Options.model_validate(
+        {
+            "capture": {"interval_seconds": 60},
+            "image": {"format": "dng"},
+        }
+    )
+
+    assert options.image.model_dump(mode="json") == {"format": "dng"}
+
 
 @pytest.mark.covers("CFG-001", "CFG-002", "CFG-003", "CFG-004", "CFG-008")
 def test_a1_loads_full_headless_configuration_and_defaults(tmp_path: Path) -> None:
