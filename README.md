@@ -13,5 +13,5 @@ python -m unittest discover -s tests
 
 ## C++
 
-C++ 소스는 `cpp/` 아래에 둔다. 빌드 체계와 보드 통합 방식은 C++ 구현을
-본격적으로 진행할 때 별도로 결정한다.
+C++ 소스는 `cpp/` 아래에 둔다. MCU 독립 SP485EN 코어의 빌드, 테스트 및
+보드 통합 경계는 `cpp/README.md`에 설명되어 있다.
