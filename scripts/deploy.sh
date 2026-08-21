@@ -34,7 +34,7 @@ usage() {
     "  --capture-node-executable PATH  Trusted CaptureNode runtime" \
     "  --power-config PATH      pi-power-manager config path" \
     "  --power-manager-source PATH  Local pi-power-manager source root" \
-    "  --enable-power           Enable automatic shutdown after diagnostics" \
+    "  --enable-power           Enable timer; boot-latched GPIO26 gates execution" \
     "  --without-power-manager  Skip privileged manager installation" \
     "  --huintech-device-source PATH  HUINTECHDEVICE python source root" \
     "  --preserve-existing-nodes  Keep and validate the target's existing nodes.json" \

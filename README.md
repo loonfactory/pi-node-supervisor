@@ -367,8 +367,10 @@ on ports 8000 and 8001:
 scripts/deploy.sh
 ```
 
-After hardware diagnostics and a supervised wake test, enable automatic power
-management as part of deployment with `scripts/deploy.sh --enable-power`.
+After hardware diagnostics and a supervised wake test, enable the automatic
+power timer as part of deployment with `scripts/deploy.sh --enable-power`.
+This option does not resample GPIO26. The interlock mode latched for the current
+boot remains unchanged, and GPIO26 is sampled again on every subsequent boot.
 
 Override values without editing the script:
 
@@ -441,9 +443,12 @@ scripts/install-power-manager.sh --target huintech@192.168.12.7 --enable
 ```
 
 The enable path runs hardware, bootloader, RTC, clock, configuration, and state
-diagnostics first. Any failed check keeps the timer disabled. Supervisor never
-receives RTC-write or shutdown permission; only the root system service owns
-those operations.
+diagnostics first. Any failed check keeps the timer disabled. A successful
+enable keeps the timer installed even when the current boot latched GPIO26 as
+blocked; the interlock's `ExecCondition` prevents power actions for that boot,
+then startup samples GPIO26 again on the next boot. Supervisor never receives
+RTC-write or shutdown permission; only the root system service owns those
+operations.
 
 Automatic power management also has a physical active-low interlock on BCM
 GPIO26 (physical pin 37). At startup, a dedicated service configures it as an
@@ -495,5 +500,12 @@ the GPIO26-to-GND jumper and opt in only after checking the device:
 scripts/bootstrap-device.sh --enable-power scnu@192.168.12.8
 ```
 
-`--enable-power` fails and disables the timer if the startup GPIO26 latch is
-not HIGH. Repeat `--camera` to select one or two Picamera2 or V4L2 devices.
+`--enable-power` enables the timer, while the GPIO26 mode latched at each boot
+independently permits or blocks actual power actions. Repeat `--camera` to
+select one or two Picamera2 or V4L2 devices.
+
+
+  ./scripts/deploy.sh \
+    --target huintech@192.168.12.6 \
+    --nodes examples/nodes.dual-camera-sensor.json \
+    --power-manager-source ../../pi-power-manager

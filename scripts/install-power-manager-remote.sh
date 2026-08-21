@@ -180,15 +180,13 @@ if [[ "$enable_timer" == true ]]; then
     exit 1
   }
   systemctl enable pi-power-manager-interlock.service pi-power-manager.timer
-  systemctl restart pi-power-manager-interlock.service
+  # Do not resample GPIO26 during deployment. The interlock is latched once at
+  # boot; start only initializes the latch when this is the first installation
+  # in the current boot.
+  systemctl start pi-power-manager-interlock.service
   systemctl start pi-power-manager.timer
   latched_mode=$(cat /run/pi-power-manager/gpio26-mode 2>/dev/null || printf 'blocked')
-  if [[ "$latched_mode" != enabled ]]; then
-    systemctl disable --now pi-power-manager.timer >/dev/null 2>&1 || true
-    printf 'GPIO26 startup interlock is %s; timer was disabled. Remove the jumper and rerun with --enable.\n' "$latched_mode" >&2
-    exit 1
-  fi
-  printf 'pi-power-manager installed; timer enabled; startup mode=%s.\n' "$latched_mode"
+  printf 'pi-power-manager installed; timer enabled; current boot mode=%s. GPIO26 is sampled again at the next boot.\n' "$latched_mode"
 else
   systemctl disable --now pi-power-manager.timer >/dev/null 2>&1 || true
   systemctl disable --now pi-power-manager-interlock.service >/dev/null 2>&1 || true

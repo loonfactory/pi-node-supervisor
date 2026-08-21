@@ -22,7 +22,7 @@ usage() {
     "  --camera SPEC           picamera2[:N] or v4l2:/absolute/path; repeat for two" \
     "  --timezone ZONE         Device timezone (default: $timezone)" \
     "  --port PORT             Supervisor Web port (default: $port)" \
-    "  --enable-power          Enable shutdown only when GPIO26 is HIGH" \
+    "  --enable-power          Enable the timer; each boot's GPIO26 latch gates execution" \
     "  -h, --help              Show this help"
 }
 
