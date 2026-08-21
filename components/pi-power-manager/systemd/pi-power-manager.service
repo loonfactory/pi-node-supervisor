@@ -1,0 +1,16 @@
+[Unit]
+Description=pi-power-manager RTC wake alarm scheduler
+After=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/pi-power-manager tick --execute --json
+User=root
+Group=root
+StateDirectory=pi-power-manager
+StateDirectoryMode=0750
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/pi-power-manager /sys/class/rtc/rtc0/wakealarm
