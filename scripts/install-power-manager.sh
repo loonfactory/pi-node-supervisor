@@ -10,6 +10,7 @@ nodes_file=${NODES_FILE:-}
 initial_config=${INITIAL_CONFIG:-}
 capture_node_executable=${CAPTURE_NODE_EXECUTABLE:-}
 enable_timer=false
+install_only=false
 
 usage() {
   printf '%s\n' \
@@ -24,6 +25,8 @@ usage() {
     "  --initial-config FILE    Initial Supervisor configuration" \
     "  --capture-node-executable PATH  Target CaptureNode Web executable" \
     "  --enable                 Enable automatic shutdown after diagnostics" \
+    "  --preserve-enablement    Keep the target timer's current enabled state" \
+    "  --install-only           Install only; do not redeploy Supervisor" \
     "  -h, --help               Show this help"
 }
 
@@ -36,13 +39,23 @@ while (($#)); do
     --initial-config) initial_config=${2:?missing value for --initial-config}; shift 2 ;;
     --capture-node-executable) capture_node_executable=${2:?missing value for --capture-node-executable}; shift 2 ;;
     --enable) enable_timer=true; shift ;;
+    --preserve-enablement) enable_timer=preserve; shift ;;
+    --install-only) install_only=true; shift ;;
     -h|--help) usage; exit 0 ;;
     *) printf 'Unknown option: %s\n' "$1" >&2; usage >&2; exit 2 ;;
   esac
 done
 
 [[ "$target" =~ ^[A-Za-z0-9._-]+@[A-Za-z0-9._:-]+$ ]] || { printf 'Invalid SSH target.\n' >&2; exit 2; }
-[[ -r "$power_source/pyproject.toml" ]] || { printf 'pi-power-manager source is unavailable.\n' >&2; exit 2; }
+if [[ ! -r "$power_source/pyproject.toml" ]]; then
+  for candidate in "$project_root/../../pi-power-manager" "$project_root/../pi-power-manager"; do
+    if [[ -r "$candidate/pyproject.toml" ]]; then
+      power_source=$candidate
+      break
+    fi
+  done
+fi
+[[ -r "$power_source/pyproject.toml" ]] || { printf 'pi-power-manager source is unavailable. Use --power-source PATH.\n' >&2; exit 2; }
 
 operator=${target%@*}
 remote_base=${remote_base:-/home/$operator/pi-node-supervisor}
@@ -84,6 +97,11 @@ ssh -tt -o ConnectTimeout=10 "$target" \
   sudo bash "$remote_stage/install-power-manager-remote.sh" \
   "$operator" "$remote_base" "$remote_stage" "$release_id" "$enable_timer"
 
+if [[ "$install_only" == true ]]; then
+  printf 'RTC integration installed. timer_enabled=%s\n' "$enable_timer"
+  exit 0
+fi
+
 # Point Supervisor at the protected configuration only after root preparation
 # succeeds. This deployment remains unprivileged.
 deploy_arguments=(
@@ -91,6 +109,7 @@ deploy_arguments=(
   --remote-base "$remote_base"
   --power-config /etc/pi-power-manager/config.json
   --capture-node-executable "$capture_node_executable"
+  --without-power-manager
 )
 [[ -z "$nodes_file" ]] || deploy_arguments+=(--nodes "$nodes_file")
 [[ -z "$initial_config" ]] || deploy_arguments+=(--initial-config "$initial_config")

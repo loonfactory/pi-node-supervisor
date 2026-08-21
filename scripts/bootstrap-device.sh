@@ -149,24 +149,18 @@ PYTHON
 
 remote_base="/home/$operator/pi-node-supervisor"
 capture_executable="/home/$operator/capture-node/.venv/bin/capture-node-web"
-"$script_dir/deploy.sh" \
+supervisor_arguments=(
   --target "$target" \
   --remote-base "$remote_base" \
   --nodes "$nodes_file" \
   --capture-node-executable "$capture_executable" \
   --bind-host 0.0.0.0 \
   --port "$port"
-
-power_arguments=(
-  --target "$target"
-  --remote-base "$remote_base"
-  --nodes "$nodes_file"
-  --capture-node-executable "$capture_executable"
 )
 if [[ "$enable_power" == true ]]; then
-  power_arguments+=(--enable)
+  supervisor_arguments+=(--enable-power)
 fi
-"$script_dir/install-power-manager.sh" "${power_arguments[@]}"
+"$script_dir/deploy.sh" "${supervisor_arguments[@]}"
 
 printf 'Verifying deployment.\n'
 ssh "${ssh_options[@]}" "$target" \

@@ -14,8 +14,11 @@ python_bin=${PYTHON_BIN:-python3}
 capture_node_executable=${CAPTURE_NODE_EXECUTABLE:-/home/huintech/capture-node/.venv/bin/capture-node-web}
 replace_capture_services=${REPLACE_CAPTURE_SERVICES:-true}
 preserve_existing_nodes=${PRESERVE_EXISTING_NODES:-false}
-power_config=${POWER_CONFIG:-$remote_base/generated/pi-power-manager.json}
+power_config=${POWER_CONFIG:-/etc/pi-power-manager/config.json}
 huintech_device_source=${HUINTECHDEVICE_SOURCE:-}
+power_manager_source=${POWER_MANAGER_SOURCE:-}
+install_power_manager=true
+enable_power=false
 
 usage() {
   printf '%s\n' \
@@ -29,7 +32,10 @@ usage() {
     "  --nodes FILE             Node registry JSON" \
     "  --initial-config FILE    Initial configuration JSON" \
     "  --capture-node-executable PATH  Trusted CaptureNode runtime" \
-    "  --power-config PATH      Generated pi-power-manager config path" \
+    "  --power-config PATH      pi-power-manager config path" \
+    "  --power-manager-source PATH  Local pi-power-manager source root" \
+    "  --enable-power           Enable automatic shutdown after diagnostics" \
+    "  --without-power-manager  Skip privileged manager installation" \
     "  --huintech-device-source PATH  HUINTECHDEVICE python source root" \
     "  --preserve-existing-nodes  Keep and validate the target's existing nodes.json" \
     "  --keep-external-capture-nodes   Do not disable legacy user services" \
@@ -46,6 +52,9 @@ while (($#)); do
     --initial-config) initial_config=${2:?missing value for --initial-config}; shift 2 ;;
     --capture-node-executable) capture_node_executable=${2:?missing value for --capture-node-executable}; shift 2 ;;
     --power-config) power_config=${2:?missing value for --power-config}; shift 2 ;;
+    --power-manager-source) power_manager_source=${2:?missing value for --power-manager-source}; shift 2 ;;
+    --enable-power) enable_power=true; shift ;;
+    --without-power-manager) install_power_manager=false; shift ;;
     --huintech-device-source) huintech_device_source=${2:?missing value for --huintech-device-source}; shift 2 ;;
     --preserve-existing-nodes) preserve_existing_nodes=true; shift ;;
     --keep-external-capture-nodes) replace_capture_services=false; shift ;;
@@ -87,6 +96,24 @@ done
   printf 'Node registry or initial configuration is unreadable\n' >&2
   exit 2
 }
+if [[ "$install_power_manager" == true ]]; then
+  if [[ -z "$power_manager_source" ]]; then
+    for candidate in "$project_root/../../pi-power-manager" "$project_root/../pi-power-manager"; do
+      if [[ -r "$candidate/pyproject.toml" ]]; then
+        power_manager_source=$candidate
+        break
+      fi
+    done
+  fi
+  [[ -n "$power_manager_source" && -r "$power_manager_source/pyproject.toml" ]] || {
+    printf 'deploy.sh includes pi-power-manager; use --power-manager-source PATH when its source cannot be found\n' >&2
+    exit 2
+  }
+  [[ "$power_config" == /etc/pi-power-manager/config.json ]] || {
+    printf 'The integrated deployment requires --power-config /etc/pi-power-manager/config.json\n' >&2
+    exit 2
+  }
+fi
 sensor_count=$(
   "$python_bin" -c 'import json,sys; print(sum(node.get("sensor_serial") is not None for node in json.load(open(sys.argv[1], encoding="utf-8"))["nodes"]))' "$nodes_file"
 )
@@ -126,6 +153,12 @@ trap cleanup EXIT INT TERM
 
 printf 'Preflight: %s\n' "$target"
 ssh "${ssh_options[@]}" "$target" 'set -eu; command -v python3 >/dev/null; command -v systemctl >/dev/null; command -v curl >/dev/null; command -v tar >/dev/null; systemctl --user show-environment >/dev/null; printf "host=%s arch=%s python=%s\n" "$(hostname)" "$(uname -m)" "$(python3 -V 2>&1)"'
+
+deployment_power_config=$power_config
+if [[ "$install_power_manager" == true ]] && \
+   ! ssh "${ssh_options[@]}" "$target" test -r /etc/pi-power-manager/config.json; then
+  deployment_power_config="$remote_base/generated/pi-power-manager.json"
+fi
 
 printf 'Building wheel\n'
 if "$python_bin" -c 'import build' >/dev/null 2>&1; then
@@ -174,7 +207,7 @@ fi
 printf 'Installing and activating release\n'
 ssh "${ssh_options[@]}" "$target" bash -s -- \
   "$remote_base" "$remote_stage" "$release_id" "$bind_host" "$port" \
-  "$capture_node_executable" "$replace_capture_services" "$power_config" \
+  "$capture_node_executable" "$replace_capture_services" "$deployment_power_config" \
   "$preserve_existing_nodes" <<'REMOTE_INSTALL'
 set -Eeuo pipefail
 
@@ -532,6 +565,65 @@ unset api_token
 systemctl --user is-active pi-node-supervisor.service
 printf 'release=%s first_install=%s endpoint=http://%s:%s/\n' "$release_id" "$first_install" "$(hostname -I | awk '{print $1}')" "$port"
 REMOTE_INSTALL
+
+if [[ "$install_power_manager" == true ]]; then
+  printf 'Installing pi-power-manager privileged service\n'
+  power_arguments=(
+    --target "$target"
+    --remote-base "$remote_base"
+    --power-source "$power_manager_source"
+    --install-only
+  )
+  if [[ "$enable_power" == true ]]; then
+    power_arguments+=(--enable)
+  else
+    power_arguments+=(--preserve-enablement)
+  fi
+  "$script_dir/install-power-manager.sh" "${power_arguments[@]}"
+
+  if [[ "$deployment_power_config" != "$power_config" ]]; then
+    printf 'Connecting Supervisor to %s\n' "$power_config"
+    ssh "${ssh_options[@]}" "$target" bash -s -- \
+      "$remote_base" "$deployment_power_config" "$power_config" "$port" <<'REMOTE_POWER_SWITCH'
+set -Eeuo pipefail
+base=$1
+old_path=$2
+new_path=$3
+port=$4
+release_unit="$base/current/pi-node-supervisor.service"
+user_unit="$HOME/.config/systemd/user/pi-node-supervisor.service"
+backup=$(mktemp /tmp/pi-node-supervisor-unit.XXXXXX)
+release_backup=$(mktemp /tmp/pi-node-supervisor-release-unit.XXXXXX)
+cp -p "$user_unit" "$backup"
+cp -p "$release_unit" "$release_backup"
+cleanup() { rm -f -- "$backup" "$release_backup"; }
+trap cleanup EXIT
+sed "s|--power-config $old_path|--power-config $new_path|" "$release_unit" > "$user_unit.next"
+grep -Fq -- "--power-config $new_path" "$user_unit.next"
+mv -f "$user_unit.next" "$release_unit"
+install -m 644 "$release_unit" "$user_unit"
+if ! systemctl --user daemon-reload || ! systemctl --user restart pi-node-supervisor.service; then
+  install -m 644 "$release_backup" "$release_unit"
+  install -m 644 "$backup" "$user_unit"
+  systemctl --user daemon-reload || true
+  systemctl --user restart pi-node-supervisor.service || true
+  exit 1
+fi
+for _attempt in $(seq 1 180); do
+  if curl --fail --silent "http://127.0.0.1:$port/api/health" >/dev/null; then
+    exit 0
+  fi
+  sleep 1
+done
+install -m 644 "$release_backup" "$release_unit"
+install -m 644 "$backup" "$user_unit"
+systemctl --user daemon-reload || true
+systemctl --user restart pi-node-supervisor.service || true
+printf 'Supervisor failed after switching to the privileged power configuration\n' >&2
+exit 1
+REMOTE_POWER_SWITCH
+  fi
+fi
 
 printf 'Deployment complete: http://%s:%s/\n' "${target#*@}" "$port"
 printf 'The API token remains on the device at %s/config/supervisor.env\n' "$remote_base"

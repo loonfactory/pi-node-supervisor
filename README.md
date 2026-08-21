@@ -355,13 +355,20 @@ shutdown capabilities.
 [`scripts/deploy.sh`](scripts/deploy.sh) builds a wheel, checks the SSH target
 and registered CaptureNode health, installs an isolated versioned virtual
 environment, preserves the active schedule and previous unit, and activates a
-user-level systemd service. A failed health check automatically restores the
-previous unit/release. The default target and registry match `hu-pi-02` with
-CaptureNode on ports 8000 and 8001:
+user-level systemd service. The same deployment also installs or upgrades the
+privileged `pi-power-manager` service and connects Supervisor to
+`/etc/pi-power-manager/config.json`. On a new device its automatic shutdown
+timer remains disabled; later deployments preserve the timer's existing
+enabled state. A failed health check automatically restores the previous
+unit/release. The default target and registry match `hu-pi-02` with CaptureNode
+on ports 8000 and 8001:
 
 ```bash
 scripts/deploy.sh
 ```
+
+After hardware diagnostics and a supervised wake test, enable automatic power
+management as part of deployment with `scripts/deploy.sh --enable-power`.
 
 Override values without editing the script:
 
@@ -412,15 +419,15 @@ children.
 
 The first installation activates an empty schedule. Later deployments never
 replace `config/config.json`, the SQLite state, or the API token. The actual
-`pi-power-manager` configuration is also left untouched: generated power JSON
-is staged below the Supervisor installation until privileged integration is
-explicitly configured. The token remains mode `0600` at
-`~/pi-node-supervisor/config/supervisor.env`.
+`pi-power-manager` configuration is preserved on upgrades and remains owned by
+the Supervisor operator account with mode `0640`. The token remains mode
+`0600` at `~/pi-node-supervisor/config/supervisor.env`.
 
-Install the privileged RTC boundary separately. This command installs
-`pi-power-manager`, grants Supervisor write access only to its dedicated
-configuration directory, and redeploys Supervisor against that path. It
-deliberately leaves the automatic shutdown timer disabled and inactive:
+The standalone installer remains available for repairing or upgrading only the
+privileged RTC boundary. It grants Supervisor write access only to its
+dedicated configuration directory and redeploys Supervisor against that path.
+Without `--enable`, it deliberately leaves the automatic shutdown timer
+disabled and inactive:
 
 ```bash
 scripts/install-power-manager.sh --target huintech@192.168.12.7

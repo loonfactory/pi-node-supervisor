@@ -17,7 +17,18 @@ case "$stage" in
   /tmp/pi-power-manager-deploy.*) ;;
   *) printf 'Invalid staging path.\n' >&2; exit 2 ;;
 esac
-[[ "$enable_timer" == true || "$enable_timer" == false ]] || { printf 'Invalid timer state.\n' >&2; exit 2; }
+[[ "$enable_timer" == true || "$enable_timer" == false || "$enable_timer" == preserve ]] || {
+  printf 'Invalid timer state.\n' >&2
+  exit 2
+}
+
+if [[ "$enable_timer" == preserve ]]; then
+  if systemctl is-enabled --quiet pi-power-manager.timer 2>/dev/null; then
+    enable_timer=true
+  else
+    enable_timer=false
+  fi
+fi
 
 wheel=$(find "$stage" -maxdepth 1 -type f -name 'pi_power_manager-*.whl' -print -quit)
 [[ -r "$wheel" ]] || { printf 'pi-power-manager wheel is missing.\n' >&2; exit 1; }
@@ -30,10 +41,10 @@ state_dir=/var/lib/pi-power-manager
 state_path="$state_dir/state.json"
 source_config="$supervisor_base/generated/pi-power-manager.json"
 
-[[ -r "$source_config" ]] || {
-  printf 'Supervisor has not generated a power configuration: %s\n' "$source_config" >&2
+if [[ ! -r "$config_path" && ! -r "$source_config" ]]; then
+  printf 'No existing or staged power configuration is available: %s\n' "$source_config" >&2
   exit 1
-}
+fi
 
 install -d -m 0755 /opt/pi-power-manager /opt/pi-power-manager/releases "$release"
 python3 -m venv "$release/.venv"
@@ -44,7 +55,12 @@ mv -Tf /opt/pi-power-manager/current.next /opt/pi-power-manager/current
 # Supervisor owns only this dedicated configuration directory. The privileged
 # service owns RTC access, runtime state, and shutdown requests.
 install -d -o "$operator" -g "$operator" -m 0750 "$config_dir"
-install -o "$operator" -g "$operator" -m 0640 "$source_config" "$config_path"
+if [[ ! -r "$config_path" ]]; then
+  install -o "$operator" -g "$operator" -m 0640 "$source_config" "$config_path"
+else
+  chown "$operator:$operator" "$config_path"
+  chmod 0640 "$config_path"
+fi
 install -d -o root -g root -m 0750 "$state_dir"
 
 install -d -o root -g root -m 0755 /usr/local/libexec
