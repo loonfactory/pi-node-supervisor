@@ -8,5 +8,19 @@
     "minimum-lead-seconds": 60,
     "clock-tolerance-seconds": 5
   },
-  "activities": []
+  "activities": [],
+  "power_keep_schedules": [
+    {
+      "id": "default-morning-power",
+      "start": "08:50:00",
+      "end": "09:30:00",
+      "timezone": "Asia/Seoul"
+    },
+    {
+      "id": "default-evening-power",
+      "start": "17:20:00",
+      "end": "18:10:00",
+      "timezone": "Asia/Seoul"
+    }
+  ]
 }

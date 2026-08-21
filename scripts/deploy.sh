@@ -350,6 +350,18 @@ from pathlib import Path
 initial_path, registry_path, output_path = map(Path, sys.argv[1:])
 document = json.loads(initial_path.read_text(encoding="utf-8"))
 registry = json.loads(registry_path.read_text(encoding="utf-8"))
+default_capture_times = [
+    f"{minutes // 60:02d}:{minutes % 60:02d}:00"
+    for minutes in range(5 * 60, 20 * 60 + 1, 30)
+]
+default_sensor_times = [
+    f"{minutes // 60:02d}:{minutes % 60:02d}:00"
+    for minutes in range(0, 24 * 60, 30)
+]
+configured_capture_schedules = {
+    schedule["node"]: schedule
+    for schedule in document.get("capture_schedules", [])
+}
 schedules = []
 for node in registry["nodes"]:
     managed = node.get("managed_capture")
@@ -358,25 +370,68 @@ for node in registry["nodes"]:
     capture = json.loads(
         Path(managed["config_path"]).read_text(encoding="utf-8")
     ).get("capture", {})
-    if capture.get("mode") == "disabled":
-        continue
-    schedule = {
-        "id": f"auto-{node['id']}",
-        "node": node["id"],
-        "profile": (node.get("profiles") or ["default"])[0],
-        "mode": capture.get("mode"),
-        "interval_seconds": capture.get("interval_seconds"),
-        "daily_times": capture.get("daily_times", []),
-        "timezone": capture.get("timezone", document.get("timezone", "Asia/Seoul")),
-        "parameters": {},
-    }
+    schedule = configured_capture_schedules.get(node["id"])
+    if schedule is None and capture.get("mode") == "disabled":
+        schedule = {
+            "id": f"auto-{node['id']}",
+            "node": node["id"],
+            "profile": (node.get("profiles") or ["default"])[0],
+            "mode": "daily",
+            "interval_seconds": None,
+            "daily_times": default_capture_times,
+            "timezone": document.get("timezone", "Asia/Seoul"),
+            "parameters": {},
+        }
+    elif schedule is None:
+        schedule = {
+            "id": f"auto-{node['id']}",
+            "node": node["id"],
+            "profile": (node.get("profiles") or ["default"])[0],
+            "mode": capture.get("mode"),
+            "interval_seconds": capture.get("interval_seconds"),
+            "daily_times": capture.get("daily_times", []),
+            "timezone": capture.get("timezone", document.get("timezone", "Asia/Seoul")),
+            "parameters": {},
+        }
     if schedule["mode"] == "interval":
         interval = float(schedule["interval_seconds"])
-        schedule["anchor_at"] = (
+        schedule.setdefault("anchor_at", (
             datetime.now(UTC) + timedelta(seconds=interval)
-        ).isoformat().replace("+00:00", "Z")
+        ).isoformat().replace("+00:00", "Z"))
     schedules.append(schedule)
 document["capture_schedules"] = schedules
+configured_sensor_nodes = {
+    schedule["node"]
+    for schedule in document.get("sensor_schedules", [])
+}
+sensor_schedules = list(document.get("sensor_schedules", []))
+for node in registry["nodes"]:
+    if node.get("sensor_serial") is None or node["id"] in configured_sensor_nodes:
+        continue
+    sensor_schedules.append({
+        "id": f"auto-sensor-{node['id']}",
+        "node": node["id"],
+        "profile": (node.get("profiles") or ["temperature-humidity"])[0],
+        "mode": "daily",
+        "daily_times": default_sensor_times,
+        "timezone": document.get("timezone", "Asia/Seoul"),
+        "parameters": {},
+    })
+document["sensor_schedules"] = sensor_schedules
+document.setdefault("power_keep_schedules", [
+    {
+        "id": "default-morning-power",
+        "start": "08:50:00",
+        "end": "09:30:00",
+        "timezone": document.get("timezone", "Asia/Seoul"),
+    },
+    {
+        "id": "default-evening-power",
+        "start": "17:20:00",
+        "end": "18:10:00",
+        "timezone": document.get("timezone", "Asia/Seoul"),
+    },
+])
 output_path.write_text(
     json.dumps(document, ensure_ascii=True, indent=2) + "\n", encoding="utf-8"
 )

@@ -271,6 +271,12 @@ process-relative timer restarts when the child process restarts. The finite
 final window unable to shut down rather than risk missing the next wake-up.
 One-shot dated work remains available under the advanced disclosure.
 
+The initial operating defaults are daily camera captures from `05:00` through
+`20:00` at 30-minute intervals, daily sensor collection from `00:00` through
+`23:30` at 30-minute intervals, and independent power-keep windows at
+`08:50`-`09:30` and `17:20`-`18:10` in `Asia/Seoul`. Existing active
+configurations are never replaced by these defaults during an upgrade.
+
 Sensor collection schedules store the generated wall-clock `daily_times` as
 their execution source. The 30-minute interval is only the initial form value;
 operators may generate any number of times or edit individual seconds. Each

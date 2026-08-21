@@ -2,8 +2,12 @@ const state = { dashboard: null, runs: [], events: [], eventsTotal: 0, eventsOff
 const previewUrls = new Map();
 const previewStreams = new Map();
 let dataViewUrl = null;
-const DEFAULT_CAPTURE_RANGE = { start: "09:00", intervalMinutes: 10, end: "18:00" };
+const DEFAULT_CAPTURE_RANGE = { start: "05:00", intervalMinutes: 30, end: "20:00" };
 const DEFAULT_SENSOR_RANGE = { start: "00:00", intervalMinutes: 30, end: "23:30" };
+const DEFAULT_POWER_KEEP_SCHEDULES = [
+  { id: "default-morning-power", start: "08:50:00", end: "09:30:00", timezone: "Asia/Seoul" },
+  { id: "default-evening-power", start: "17:20:00", end: "18:10:00", timezone: "Asia/Seoul" },
+];
 const $ = (selector) => document.querySelector(selector);
 const token = () => sessionStorage.getItem("supervisor-token") || "";
 
@@ -417,7 +421,7 @@ function loadPowerSettingsIntoForm(configuration) {
   const policies = configuration.policies || {};
   $("#power-warmup-seconds").value = policies["boot-lead-seconds"] ?? 120;
   $("#power-cleanup-seconds").value = policies["shutdown-grace-seconds"] ?? 60;
-  renderPowerKeepRows(configuration.power_keep_schedules || []);
+  renderPowerKeepRows(configuration.power_keep_schedules ?? DEFAULT_POWER_KEEP_SCHEDULES);
 }
 
 function powerSettingsFromForm() {
@@ -598,8 +602,17 @@ function addDailyTime(value = "09:00:00") {
   renderDailyTimes(values);
 }
 
+function defaultCaptureSchedule() {
+  return {
+    mode: "daily",
+    interval_seconds: null,
+    daily_times: generateCaptureTimes(DEFAULT_CAPTURE_RANGE),
+    timezone: "Asia/Seoul",
+  };
+}
+
 function loadCaptureScheduleIntoForm(capture) {
-  const schedule = capture || { mode: "disabled", interval_seconds: null, daily_times: [], timezone: "Asia/Seoul" };
+  const schedule = capture || defaultCaptureSchedule();
   state.captureSchedule = structuredClone(schedule);
   $("#capture-schedule-mode").value = schedule.mode || "disabled";
   const interval = splitCaptureInterval(schedule.interval_seconds || 0);
@@ -624,7 +637,7 @@ async function loadCaptureSchedule(nodeId = $("#capture-schedule-camera").value)
     let schedule = schedules.get(nodeId);
     let mixed = false;
     if (nodeId === "common") {
-      const values = response.camera_ids.map(cameraId => schedules.get(cameraId) || { mode: "disabled", interval_seconds: null, daily_times: [], timezone: "Asia/Seoul" });
+      const values = response.camera_ids.map(cameraId => schedules.get(cameraId) || defaultCaptureSchedule());
       schedule = values[0];
       const comparable = value => JSON.stringify({ mode: value.mode, interval_seconds: value.interval_seconds, daily_times: value.daily_times || [], timezone: value.timezone });
       mixed = values.some(value => comparable(value) !== comparable(schedule));
