@@ -39,6 +39,16 @@ python -m venv .venv
 .venv/bin/pytest
 ```
 
+The operator UI uses the same React and Vite layout as CaptureNode. Rebuild the
+packaged Web assets after changing files under
+`src/pi_node_supervisor/web/frontend/src`:
+
+```bash
+cd src/pi_node_supervisor/web/frontend
+npm install
+npm run build
+```
+
 The `sensor` extra installs `pyserial`. HUINTECHDEVICE is currently a
 source-only Python library, so its `python` directory must also be present on
 `PYTHONPATH` (or be packaged by that project) when the CWT adapter runs. The

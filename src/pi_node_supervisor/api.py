@@ -7,6 +7,7 @@ import csv
 import hashlib
 import hmac
 import math
+import mimetypes
 import threading
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
@@ -1068,36 +1069,32 @@ def create_app(
             },
         )
 
-    web_root = static_directory or Path(__file__).with_name("static")
+    web_root = static_directory or Path(__file__).with_name("web") / "static"
     if web_root.is_dir():
         index_html = (web_root / "index.html").read_text(encoding="utf-8")
-        script_assets = {
-            path.name: path.read_text(encoding="utf-8")
-            for path in web_root.glob("*.js")
+        assets_root = web_root / "assets"
+        asset_files = {
+            path.relative_to(assets_root).as_posix(): (
+                path.read_bytes(),
+                mimetypes.guess_type(path.name)[0] or "application/octet-stream",
+            )
+            for path in assets_root.rglob("*")
             if path.is_file()
         }
-        stylesheet = (web_root / "styles.css").read_text(encoding="utf-8")
 
         @app.get("/", include_in_schema=False)
         async def web_index() -> HTMLResponse:
             return HTMLResponse(index_html, headers={"Cache-Control": "no-store"})
 
-        @app.get("/assets/{asset_name}", include_in_schema=False)
-        async def web_script(asset_name: str) -> Response:
-            source = script_assets.get(asset_name)
-            if source is None:
+        @app.get("/assets/{asset_path:path}", include_in_schema=False)
+        async def web_asset(asset_path: str) -> Response:
+            asset = asset_files.get(asset_path)
+            if asset is None:
                 raise HTTPException(status_code=404, detail="web asset does not exist")
+            content, media_type = asset
             return Response(
-                source,
-                media_type="text/javascript",
-                headers={"Cache-Control": "no-store"},
-            )
-
-        @app.get("/styles.css", include_in_schema=False)
-        async def web_styles() -> Response:
-            return Response(
-                stylesheet,
-                media_type="text/css",
+                content,
+                media_type=media_type,
                 headers={"Cache-Control": "no-store"},
             )
 

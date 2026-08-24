@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import asyncio
-import httpx
-import pytest
+import re
 import threading
 from datetime import UTC, datetime
+
+import httpx
+import pytest
 
 from pi_node_supervisor.api import (
     _async_preview_chunks,
@@ -81,12 +83,10 @@ async def test_health_is_available_without_credentials(service: SupervisorServic
 @pytest.mark.anyio
 async def test_web_assets_disable_cache(service: SupervisorService):
     async with client(service) as browser:
-        responses = [
-            await browser.get("/"),
-            await browser.get("/assets/app.js"),
-            await browser.get("/assets/api-client.js"),
-            await browser.get("/styles.css"),
-        ]
+        root = await browser.get("/")
+        asset_paths = re.findall(r'(?:src|href)="(/assets/[^"]+)"', root.text)
+        responses = [root, *[await browser.get(path) for path in asset_paths]]
+    assert len(asset_paths) == 2
     assert all(response.headers["cache-control"] == "no-store" for response in responses)
 
 
@@ -149,10 +149,13 @@ async def test_runtime_catalog_endpoints_and_static_ui(service: SupervisorServic
         root = await browser.get("/")
         assert root.status_code == 200
         assert root.headers["content-type"].startswith("text/html")
-        app_script = await browser.get("/assets/app.js")
+        asset_paths = re.findall(r'(?:src|href)="(/assets/[^"]+)"', root.text)
+        script_path = next(path for path in asset_paths if path.endswith(".js"))
+        style_path = next(path for path in asset_paths if path.endswith(".css"))
+        app_script = await browser.get(script_path)
         assert app_script.status_code == 200
         assert app_script.headers["content-type"].startswith("text/javascript")
-        styles = await browser.get("/styles.css")
+        styles = await browser.get(style_path)
         assert styles.status_code == 200
         assert styles.headers["content-type"].startswith("text/css")
 
