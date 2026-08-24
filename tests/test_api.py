@@ -83,7 +83,8 @@ async def test_web_assets_disable_cache(service: SupervisorService):
     async with client(service) as browser:
         responses = [
             await browser.get("/"),
-            await browser.get("/app.js"),
+            await browser.get("/assets/app.js"),
+            await browser.get("/assets/api-client.js"),
             await browser.get("/styles.css"),
         ]
     assert all(response.headers["cache-control"] == "no-store" for response in responses)
@@ -120,8 +121,7 @@ async def test_preview_draft_and_apply_flow(service: SupervisorService):
         assert applied.json()["status"] == "active"
         active = await browser.get("/api/config/active", headers=headers)
         assert active.json() == normalized_document()
-        revisions = await browser.get("/api/revisions", headers=headers)
-        assert len(revisions.json()["items"]) == 1
+        assert len(service.store.list_revisions()) == 1
 
 
 @pytest.mark.anyio
@@ -149,7 +149,7 @@ async def test_runtime_catalog_endpoints_and_static_ui(service: SupervisorServic
         root = await browser.get("/")
         assert root.status_code == 200
         assert root.headers["content-type"].startswith("text/html")
-        app_script = await browser.get("/app.js")
+        app_script = await browser.get("/assets/app.js")
         assert app_script.status_code == 200
         assert app_script.headers["content-type"].startswith("text/javascript")
         styles = await browser.get("/styles.css")
@@ -185,9 +185,23 @@ async def test_runtime_catalog_endpoints_and_static_ui(service: SupervisorServic
             "offset": 0,
         }
 
-        tick = await browser.post("/api/runtime/tick", headers=headers)
-        assert tick.status_code == 200
-        assert tick.json() == {"items": []}
+        assert engine.tick() == []
+
+
+@pytest.mark.anyio
+async def test_removed_internal_and_unused_routes_are_not_exposed(
+    service: SupervisorService,
+):
+    headers = {"X-Supervisor-Token": "secret"}
+    async with client(service) as browser:
+        responses = [
+            await browser.get("/api/revisions", headers=headers),
+            await browser.get("/api/power-manager/config", headers=headers),
+            await browser.post("/api/runtime/tick", headers=headers),
+            await browser.post("/api/runtime/recover", headers=headers),
+            await browser.get("/api/nodes/camera0/preview", headers=headers),
+        ]
+    assert all(response.status_code == 404 for response in responses)
 
 
 @pytest.mark.anyio
@@ -293,15 +307,12 @@ async def test_catalog_original_proxy_requires_authentication(
 
 
 @pytest.mark.anyio
-async def test_camera_preview_is_authenticated_and_not_cached(service: SupervisorService):
+async def test_camera_preview_stream_is_authenticated_and_not_cached(service: SupervisorService):
     class PreviewAdapter:
         node_id = "camera0"
 
         def health(self):
             return {"status": "running", "camera_connected": True}
-
-        def preview_frame(self):
-            return b"\xff\xd8frame\xff\xd9", "image/jpeg"
 
         def open_preview_stream(self):
             from io import BytesIO
@@ -322,21 +333,14 @@ async def test_camera_preview_is_authenticated_and_not_cached(service: Superviso
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as browser:
-        assert (await browser.get("/api/nodes/camera0/preview")).status_code == 401
-        response = await browser.get(
-            "/api/nodes/camera0/preview",
-            headers={"X-Supervisor-Token": "secret"},
-        )
+        assert (await browser.get("/api/nodes/camera0/preview/stream")).status_code == 401
         stream_response = await browser.get(
             "/api/nodes/camera0/preview/stream",
             headers={"X-Supervisor-Token": "secret"},
         )
-    assert response.status_code == 200
-    assert response.content == b"\xff\xd8frame\xff\xd9"
-    assert response.headers["content-type"] == "image/jpeg"
-    assert response.headers["cache-control"] == "no-store"
     assert stream_response.status_code == 200
     assert stream_response.content.endswith(b"frame\r\n")
+    assert stream_response.headers["cache-control"] == "no-store"
     assert stream_response.headers["content-type"].startswith(
         "multipart/x-mixed-replace; boundary=frame"
     )

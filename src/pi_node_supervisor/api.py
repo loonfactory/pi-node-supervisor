@@ -551,31 +551,6 @@ def create_app(
             },
         }
 
-    @app.get("/api/revisions", dependencies=[Depends(authenticated)])
-    async def revisions() -> dict[str, Any]:
-        return {"items": service.store.list_revisions()}
-
-    @app.get("/api/power-manager/config", dependencies=[Depends(authenticated)])
-    async def power_configuration() -> dict[str, Any]:
-        value = service.power_configuration()
-        if value is None:
-            raise HTTPException(status_code=404, detail="power configuration does not exist")
-        return value.model_dump(mode="json", by_alias=True)
-
-    @app.post("/api/runtime/tick", dependencies=[Depends(authenticated)])
-    async def runtime_tick() -> dict[str, Any]:
-        if engine is None:
-            raise HTTPException(status_code=503, detail="execution engine is disabled")
-        items = engine.tick()
-        return {"items": [item.model_dump(mode="json") for item in items]}
-
-    @app.post("/api/runtime/recover", dependencies=[Depends(authenticated)])
-    async def runtime_recover() -> dict[str, Any]:
-        if engine is None:
-            raise HTTPException(status_code=503, detail="execution engine is disabled")
-        items = engine.recover()
-        return {"items": [item.model_dump(mode="json") for item in items]}
-
     @app.get("/api/runs", dependencies=[Depends(authenticated)])
     async def runs(
         limit: int = Query(100, ge=1, le=500),
@@ -1058,29 +1033,6 @@ def create_app(
             "revision": revision,
         }
 
-    @app.get(
-        "/api/nodes/{node_id}/preview",
-        dependencies=[Depends(authenticated)],
-        response_class=Response,
-    )
-    async def node_preview(node_id: str) -> Response:
-        if engine is None:
-            raise HTTPException(status_code=503, detail="execution engine is disabled")
-        try:
-            data, media_type = engine.preview_frame(node_id)
-        except ValueError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
-        except AdapterError as exc:
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
-        return Response(
-            data,
-            media_type=media_type,
-            headers={
-                "Cache-Control": "no-store",
-                "X-Content-Type-Options": "nosniff",
-            },
-        )
-
     @app.post(
         "/api/captures/manual",
         dependencies=[Depends(authenticated)],
@@ -1119,17 +1071,24 @@ def create_app(
     web_root = static_directory or Path(__file__).with_name("static")
     if web_root.is_dir():
         index_html = (web_root / "index.html").read_text(encoding="utf-8")
-        application_js = (web_root / "app.js").read_text(encoding="utf-8")
+        script_assets = {
+            path.name: path.read_text(encoding="utf-8")
+            for path in web_root.glob("*.js")
+            if path.is_file()
+        }
         stylesheet = (web_root / "styles.css").read_text(encoding="utf-8")
 
         @app.get("/", include_in_schema=False)
         async def web_index() -> HTMLResponse:
             return HTMLResponse(index_html, headers={"Cache-Control": "no-store"})
 
-        @app.get("/app.js", include_in_schema=False)
-        async def web_script() -> Response:
+        @app.get("/assets/{asset_name}", include_in_schema=False)
+        async def web_script(asset_name: str) -> Response:
+            source = script_assets.get(asset_name)
+            if source is None:
+                raise HTTPException(status_code=404, detail="web asset does not exist")
             return Response(
-                application_js,
+                source,
                 media_type="text/javascript",
                 headers={"Cache-Control": "no-store"},
             )

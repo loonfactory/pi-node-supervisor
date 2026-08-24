@@ -233,8 +233,8 @@ async def test_sensor_http_flow_preserves_boundary_rows_and_recovers_mirrors(tmp
     ) as browser:
         for occurrence in boundary:
             clock["now"] = occurrence
-            assert (await browser.post("/api/runtime/tick", headers=headers)).status_code == 200
-        duplicate = await browser.post("/api/runtime/tick", headers=headers)
+            assert len(engine.tick()) == 1
+        duplicate = engine.tick()
         failed_status = await browser.get("/api/sensor-storage", headers=headers)
         before_retry = await browser.get("/api/sensor-data", headers=headers)
         clock["now"] = boundary[-1] + timedelta(seconds=2)
@@ -242,7 +242,7 @@ async def test_sensor_http_flow_preserves_boundary_rows_and_recovers_mirrors(tmp
         retried = await browser.post("/api/sensor-storage/sync", headers=headers)
         after_retry = await browser.get("/api/sensor-data", headers=headers)
 
-    assert duplicate.status_code == 200
+    assert duplicate == []
     assert provider.reads == 2
     assert failed_status.json()["counts"]["failed"] == 2
     assert before_retry.json()["total"] == 2

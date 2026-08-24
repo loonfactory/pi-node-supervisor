@@ -26,6 +26,9 @@ Supervisor can own the lifecycle of its local Web runtime. `pi-power-manager`
 still owns RTC access and the real shutdown request. The Supervisor does not
 execute arbitrary shell strings or acquire either privilege.
 
+The complete Supervisor `config.json` structure, field constraints, and
+examples are documented in [`CONFIGURATION.md`](CONFIGURATION.md).
+
 ## Development
 
 Python 3.11 or newer is required.
@@ -169,14 +172,11 @@ Authenticated endpoints:
 - `GET /api/settings/capture-nodes`
 - `POST /api/plan/preview`
 - `POST /api/revisions/apply`
-- `GET /api/revisions`
-- `GET /api/power-manager/config`
 - `GET /api/dashboard`
-- `POST /api/runtime/tick`
-- `POST /api/runtime/recover`
 - `GET /api/runs`
 - `GET /api/events`
 - `GET /api/data`
+- `GET /api/data/content`
 - `POST /api/data/sync`
 - `GET /api/sensor-data`
 - `GET /api/sensor-storage`
@@ -189,9 +189,11 @@ Authenticated endpoints:
 - `GET /api/nodes/{node_id}/configuration`
 - `GET /api/capture-schedules`
 - `PUT /api/capture-schedules`
+- `GET /api/power-settings`
+- `PUT /api/power-settings`
+- `POST /api/captures/manual`
 - `PUT /api/nodes/{node_id}/storages`
 - `PUT /api/settings/cameras/storages`
-- `GET /api/nodes/{node_id}/preview`
 - `GET /api/nodes/{node_id}/preview/stream`
 
 Pass the token as `X-Supervisor-Token`. The token is an initial local API

@@ -1,6 +1,9 @@
-const state = { dashboard: null, runs: [], events: [], eventsTotal: 0, eventsOffset: 0, eventsPageSize: 25, data: [], dataTotal: 0, dataOffset: 0, dataPageSize: 25, sensorData: [], sensorDelivery: { counts: {}, items: [] }, sensorSettings: [], sensorMirrorDraft: [], nodes: [], preview: null, configuration: null, settingsLoaded: false, cameraConfigs: {}, storageDraft: [], captureSchedule: null, sensorSchedule: null };
-const previewUrls = new Map();
-const previewStreams = new Map();
+import { api } from "./api-client.js";
+import { startCameraStream, startCameraStreams, stopCameraStreams } from "./camera-preview.js";
+import { initializeConfigurationEditor } from "./configuration-editor.js";
+import { $, esc, fmt, friendlyError, safe, status, table, toast, token } from "./presentation.js";
+import { state } from "./state.js";
+
 let dataViewUrl = null;
 const DEFAULT_CAPTURE_RANGE = { start: "05:00", intervalMinutes: 30, end: "20:00" };
 const DEFAULT_SENSOR_RANGE = { start: "00:00", intervalMinutes: 30, end: "23:30" };
@@ -8,70 +11,6 @@ const DEFAULT_POWER_KEEP_SCHEDULES = [
   { id: "default-morning-power", start: "08:50:00", end: "09:30:00", timezone: "Asia/Seoul" },
   { id: "default-evening-power", start: "17:20:00", end: "18:10:00", timezone: "Asia/Seoul" },
 ];
-const $ = (selector) => document.querySelector(selector);
-const token = () => sessionStorage.getItem("supervisor-token") || "";
-
-function friendlyError(error) {
-  const message = error?.message || String(error);
-  return error instanceof TypeError && /fetch|network/i.test(message)
-    ? "장치 연결이 잠시 끊겼습니다. 잠시 후 다시 갱신해 주세요."
-    : message;
-}
-
-async function api(path, options = {}) {
-  const headers = { ...(options.headers || {}) };
-  if (token()) headers["X-Supervisor-Token"] = token();
-  if (options.body && !headers["Content-Type"]) headers["Content-Type"] = "application/json";
-  let response;
-  try {
-    response = await fetch(path, { ...options, headers });
-  } catch (error) {
-    throw new Error(friendlyError(error));
-  }
-  let body = null;
-  try { body = await response.json(); } catch { body = {}; }
-  if (!response.ok) {
-    if (response.status === 401) $("#token-dialog").showModal();
-    const detail = Array.isArray(body.detail)
-      ? body.detail.map(item => `${(item.loc || []).slice(1).join(" › ")}: ${item.msg}`).join(" · ")
-      : body.detail;
-    const error = new Error(detail || body.code || `요청 오류 (HTTP ${response.status})`);
-    error.status = response.status;
-    throw error;
-  }
-  return body;
-}
-
-function toast(message, error = false) {
-  if (error) console.warn("[Pi Node Supervisor]", message);
-  const element = $("#toast");
-  element.textContent = message;
-  element.className = error ? "show error" : "show";
-  clearTimeout(toast.timer);
-  toast.timer = setTimeout(() => element.className = "", 3200);
-}
-
-function fmt(value) {
-  if (!value) return "—";
-  const date = new Date(value);
-  return esc(Number.isNaN(date.valueOf()) ? String(value) : date.toLocaleString());
-}
-function esc(value) { return String(value).replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]); }
-function safe(value) { return value == null ? "—" : esc(value); }
-function status(value) {
-  const labels = {
-    healthy: "정상", unhealthy: "확인 필요", running: "실행 중", succeeded: "완료",
-    failed: "실패", interrupted: "중단됨", missed: "놓침", info: "안내",
-    warning: "주의", error: "오류", pending: "대기", not_queued: "미전송",
-    synchronized: "동기화", "local-only": "로컬만",
-  };
-  return `<span class="status ${value}">${safe(labels[value] || value)}</span>`;
-}
-function table(headers, rows) {
-  if (!rows.length) return '<div class="empty">표시할 항목이 없습니다.</div>';
-  return `<table><thead><tr>${headers.map(h => `<th>${h}</th>`).join("")}</tr></thead><tbody>${rows.join("")}</tbody></table>`;
-}
-
 function powerWindowLabels(window, activities = []) {
   const activityById = new Map(activities.map(item => [item.activity_id, item]));
   const items = window.activity_ids.map(id => activityById.get(id)).filter(Boolean);
@@ -1061,123 +1000,6 @@ function storageFromEditor() {
   return { ...common, password_env, verify_tls: $("#storage-verify-tls").checked };
 }
 
-function cameraCard(nodeId) {
-  return [...document.querySelectorAll("[data-camera]")].find(card => card.dataset.camera === nodeId);
-}
-
-function appendBytes(left, right) {
-  const combined = new Uint8Array(left.length + right.length);
-  combined.set(left);
-  combined.set(right, left.length);
-  return combined;
-}
-
-function findBytes(source, pattern) {
-  outer: for (let index = 0; index <= source.length - pattern.length; index += 1) {
-    for (let offset = 0; offset < pattern.length; offset += 1) {
-      if (source[index + offset] !== pattern[offset]) continue outer;
-    }
-    return index;
-  }
-  return -1;
-}
-
-function showCameraFrame(nodeId, bytes, mediaType) {
-  const card = cameraCard(nodeId);
-  if (!card) return;
-  const objectUrl = URL.createObjectURL(new Blob([bytes], { type: mediaType }));
-  const previous = previewUrls.get(nodeId);
-  const image = card.querySelector("img");
-  image.src = objectUrl;
-  image.hidden = false;
-  card.querySelector(".camera-placeholder").hidden = true;
-  previewUrls.set(nodeId, objectUrl);
-  if (previous) URL.revokeObjectURL(previous);
-}
-
-function stopCameraStream(nodeId) {
-  const controller = previewStreams.get(nodeId);
-  if (controller) controller.abort();
-  previewStreams.delete(nodeId);
-}
-
-function stopCameraStreams() {
-  [...previewStreams.keys()].forEach(stopCameraStream);
-}
-
-async function startCameraStream(nodeId) {
-  if (!token()) return;
-  stopCameraStream(nodeId);
-  const card = cameraCard(nodeId);
-  if (!card) return;
-  const statusElement = card.querySelector("[data-preview-status]");
-  const controller = new AbortController();
-  previewStreams.set(nodeId, controller);
-  statusElement.textContent = "실시간 스트림 연결 중…";
-  try {
-    const response = await fetch(`/api/nodes/${encodeURIComponent(nodeId)}/preview/stream`, {
-      headers: { "X-Supervisor-Token": token() },
-      cache: "no-store",
-      signal: controller.signal,
-    });
-    if (!response.ok) {
-      if (response.status === 401) $("#token-dialog").showModal();
-      let detail = `HTTP ${response.status}`;
-      try { detail = (await response.json()).detail || detail; } catch {}
-      throw new Error(detail);
-    }
-    if (!response.body) throw new Error("브라우저가 스트리밍 응답을 지원하지 않습니다.");
-    const reader = response.body.getReader();
-    const separator = new Uint8Array([13, 10, 13, 10]);
-    const decoder = new TextDecoder("ascii");
-    let buffer = new Uint8Array(0);
-    let frameCount = 0;
-    let statusAt = performance.now();
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) throw new Error("카메라 스트림이 종료되었습니다.");
-      buffer = appendBytes(buffer, value);
-      while (true) {
-        const headerEnd = findBytes(buffer, separator);
-        if (headerEnd < 0) {
-          if (buffer.length > 32768) throw new Error("잘못된 MJPEG 헤더입니다.");
-          break;
-        }
-        const headers = decoder.decode(buffer.slice(0, headerEnd));
-        const lengthMatch = headers.match(/content-length:\s*(\d+)/i);
-        const typeMatch = headers.match(/content-type:\s*(image\/(?:jpeg|png))/i);
-        if (!lengthMatch || !typeMatch) throw new Error("프레임 메타데이터가 없습니다.");
-        const frameLength = Number(lengthMatch[1]);
-        if (!Number.isSafeInteger(frameLength) || frameLength < 1 || frameLength > 20 * 1024 * 1024) throw new Error("프레임 크기가 올바르지 않습니다.");
-        const frameStart = headerEnd + separator.length;
-        const frameEnd = frameStart + frameLength;
-        if (buffer.length < frameEnd) break;
-        showCameraFrame(nodeId, buffer.slice(frameStart, frameEnd), typeMatch[1].toLowerCase());
-        buffer = buffer.slice(frameEnd);
-        frameCount += 1;
-        const now = performance.now();
-        if (now - statusAt >= 1000) {
-          statusElement.textContent = `실시간 · ${(frameCount * 1000 / (now - statusAt)).toFixed(1)} fps`;
-          frameCount = 0;
-          statusAt = now;
-        }
-      }
-    }
-  } catch (error) {
-    if (error.name !== "AbortError") {
-      console.warn(`[Pi Node Supervisor] ${nodeId} preview stream`, error);
-      statusElement.textContent = `스트림 실패 · ${friendlyError(error)}`;
-      card.querySelector(".camera-placeholder").textContent = "카메라 스트림을 가져올 수 없습니다.";
-    }
-  } finally {
-    if (previewStreams.get(nodeId) === controller) previewStreams.delete(nodeId);
-  }
-}
-
-function startCameraStreams() {
-  if (!$("#cameras").classList.contains("active")) return;
-  state.nodes.filter(node => node.kind === "capture-node").forEach(node => startCameraStream(node.id));
-}
 async function refresh() {
   try {
     const health = await api("/api/health");
@@ -1223,20 +1045,6 @@ document.querySelectorAll("[data-go]").forEach(button => button.addEventListener
 $("#refresh-button").addEventListener("click", refresh);
 $("#token-button").addEventListener("click", () => $("#token-dialog").showModal());
 $("#save-token").addEventListener("click", event => { event.preventDefault(); sessionStorage.setItem("supervisor-token", $("#token-input").value); $("#token-dialog").close(); refresh(); });
-$("#preview-plan").addEventListener("click", async () => { try { state.preview = await api("/api/plan/preview", { method: "POST", body: $("#config-editor").value }); toast("계획 검증이 완료되었습니다."); } catch (error) { toast(error.message, true); } });
-$("#save-draft").addEventListener("click", async () => { try { await api("/api/config/draft", { method: "PUT", body: $("#config-editor").value }); toast("Draft를 저장했습니다."); } catch (error) { toast(error.message, true); } });
-$("#load-draft").addEventListener("click", async () => { try { $("#config-editor").value = JSON.stringify(await api("/api/config/draft"), null, 2); } catch (error) { toast(error.message, true); } });
-$("#load-capture-node-settings").addEventListener("click", async () => {
-  try {
-    const configuration = JSON.parse($("#config-editor").value);
-    configuration.capture_node_settings = await api("/api/settings/capture-nodes");
-    $("#config-editor").value = JSON.stringify(configuration, null, 2);
-    toast("현재 카메라 설정을 편집기에 가져왔습니다. 저장하거나 적용하기 전 내용을 확인하세요.");
-  } catch (error) {
-    toast(error instanceof SyntaxError ? "먼저 편집기의 JSON 형식을 확인하세요." : error.message, true);
-  }
-});
-$("#apply-draft").addEventListener("click", async () => { if (!confirm("검증된 Draft를 새 Active revision으로 적용할까요?")) return; try { const result = await api("/api/revisions/apply", { method: "POST" }); toast(`Revision #${result.id}을 적용했습니다.`); refresh(); } catch (error) { toast(error.message, true); } });
 $("#refresh-dashboard").addEventListener("click", async () => { await refresh(); toast("노드 상태를 갱신했습니다."); });
 $("#sync-data").addEventListener("click", async () => { try { const result = await api("/api/data/sync", { method: "POST" }); toast(result.new_data ? `새 데이터 ${result.new_data}개를 반영했습니다.` : "이미 최신 상태입니다."); refresh(); } catch (error) { toast(error.message, true); } });
 $("#capture-all-cameras").addEventListener("click", async event => {
@@ -1601,6 +1409,6 @@ $("#apply-storages").addEventListener("click", async () => {
   } finally { button.disabled = false; }
 });
 
-$("#config-editor").value = JSON.stringify({ schema_version: 1, timezone: "Asia/Seoul", policies: { "boot-lead-seconds": 120, "shutdown-grace-seconds": 60, "merge-power-gaps-shorter-than-seconds": 300 }, activities: [] }, null, 2);
+initializeConfigurationEditor(refresh);
 updateCaptureScheduleVisibility();
 refresh();
