@@ -8,8 +8,7 @@ import json
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
-from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.parse import urlsplit
 
 from fastapi import Body, Depends, FastAPI, Header, HTTPException
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
@@ -217,27 +216,27 @@ def create_app_v2(
         return endpoint
 
     async def preview_response(device_id: str) -> StreamingResponse:
+        endpoint = camera_endpoint(device_id)
         try:
-            upstream = await asyncio.to_thread(
-                urlopen,
-                Request(f"{camera_endpoint(device_id)}/api/preview"),
-                None,
-                15,
-            )
-        except (HTTPError, URLError, TimeoutError, OSError) as exc:
+            reader, writer, media_type, chunked = await _open_preview_stream(endpoint)
+        except (TimeoutError, OSError, ValueError) as exc:
             raise HTTPException(status_code=502, detail=f"preview stream failed: {exc}") from exc
 
-        def chunks():
+        async def chunks():
             try:
-                read_available = getattr(upstream, "read1", upstream.read)
-                while chunk := read_available(64 * 1024):
-                    yield chunk
+                if chunked:
+                    async for chunk in _chunked_body(reader):
+                        yield chunk
+                else:
+                    while chunk := await reader.read(64 * 1024):
+                        yield chunk
             finally:
-                upstream.close()
+                writer.close()
+                await writer.wait_closed()
 
         return StreamingResponse(
             chunks(),
-            media_type=upstream.headers.get("Content-Type", "multipart/x-mixed-replace"),
+            media_type=media_type,
         )
 
     @app.get(
@@ -295,3 +294,77 @@ def _document(value: Any) -> Any:
 def _camel(value: str) -> str:
     head, *tail = value.split("_")
     return head + "".join(item[:1].upper() + item[1:] for item in tail)
+
+
+async def _open_preview_stream(
+    endpoint: str,
+) -> tuple[asyncio.StreamReader, asyncio.StreamWriter, str, bool]:
+    parsed = urlsplit(endpoint)
+    if parsed.scheme != "http" or not parsed.hostname or parsed.path not in {"", "/"}:
+        raise ValueError("CaptureNode preview endpoint must be a plain HTTP origin")
+    port = parsed.port or 80
+    reader, writer = await asyncio.wait_for(
+        asyncio.open_connection(parsed.hostname, port), timeout=15
+    )
+    try:
+        writer.write(
+            (
+                "GET /api/preview HTTP/1.1\r\n"
+                f"Host: {parsed.hostname}:{port}\r\n"
+                "Accept: multipart/x-mixed-replace\r\n"
+                "Connection: close\r\n\r\n"
+            ).encode("ascii")
+        )
+        await writer.drain()
+        header = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), timeout=15)
+        media_type, chunked = _parse_preview_headers(header)
+        return reader, writer, media_type, chunked
+    except BaseException:
+        writer.close()
+        await writer.wait_closed()
+        raise
+
+
+def _parse_preview_headers(header: bytes) -> tuple[str, bool]:
+    lines = header[:-4].split(b"\r\n")
+    if not lines or not lines[0].startswith(b"HTTP/1.1 200 "):
+        status = lines[0].decode("ascii", errors="replace") if lines else "empty response"
+        raise OSError(f"CaptureNode preview returned {status}")
+    headers: dict[str, str] = {}
+    for line in lines[1:]:
+        name, separator, value = line.partition(b":")
+        if separator:
+            header_name = name.strip().decode("ascii", errors="ignore").lower()
+            headers[header_name] = value.strip().decode("ascii", errors="replace")
+    media_type = headers.get("content-type", "multipart/x-mixed-replace")
+    if not media_type.lower().startswith("multipart/x-mixed-replace"):
+        raise OSError("CaptureNode preview response is not an MJPEG stream")
+    chunked = "chunked" in headers.get("transfer-encoding", "").lower()
+    return media_type, chunked
+
+
+async def _chunked_body(reader: asyncio.StreamReader):
+    while True:
+        line = await reader.readline()
+        if not line:
+            raise OSError("CaptureNode preview ended before a chunk header")
+        try:
+            size = int(line.split(b";", 1)[0].strip(), 16)
+        except ValueError as exc:
+            raise OSError("CaptureNode preview has an invalid chunk header") from exc
+        if size < 0 or size > 16 * 1024 * 1024:
+            raise OSError("CaptureNode preview chunk is out of range")
+        if size == 0:
+            while trailer := await reader.readline():
+                if trailer == b"\r\n":
+                    return
+            return
+        remaining = size
+        while remaining:
+            data = await reader.read(min(64 * 1024, remaining))
+            if not data:
+                raise OSError("CaptureNode preview ended inside a chunk")
+            remaining -= len(data)
+            yield data
+        if await reader.readexactly(2) != b"\r\n":
+            raise OSError("CaptureNode preview chunk is missing its trailing CRLF")

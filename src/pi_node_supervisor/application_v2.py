@@ -133,7 +133,7 @@ class RuntimeControllerV2:
             return ()
         result = await self.engine.tick(now)
         if self.power is not None:
-            self.power.refresh(now or datetime.now(UTC))
+            await asyncio.to_thread(self.power.refresh, now or datetime.now(UTC))
         return result
 
     async def capture_all(self) -> tuple[RunRecordV2, ...]:
