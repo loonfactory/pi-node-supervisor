@@ -122,8 +122,8 @@ rename한다. 원격 저장에 실패해도 retry queue나 sync API는 만들지
     "defaults": {
       "captureNode": {
         "camera": {
-          "previewFps": 3,
-          "previewQuality": 60
+          "previewFps": 10,
+          "previewQuality": 75
         },
         "images": {
           "dng": { "embedMetadata": true }

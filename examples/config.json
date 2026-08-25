@@ -41,8 +41,8 @@
     "defaults": {
       "captureNode": {
         "camera": {
-          "previewFps": 3,
-          "previewQuality": 60
+          "previewFps": 10,
+          "previewQuality": 75
         },
         "images": {
           "dng": {
