@@ -78,7 +78,9 @@ class SupervisorServiceV2:
         if active is None:
             return None
         _revision_id, resolution = active
-        return resolution.source.model_dump(mode="json", by_alias=True)
+        return resolution.source.model_dump(
+            mode="json", by_alias=True, exclude_none=True
+        )
 
     def active_resolution(self) -> tuple[int, Resolution] | None:
         return self.store.active()

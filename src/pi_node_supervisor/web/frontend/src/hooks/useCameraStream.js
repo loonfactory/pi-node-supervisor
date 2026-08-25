@@ -59,6 +59,7 @@ export function useCameraStream(nodeId, enabled) {
         let buffer = new Uint8Array(0);
         let frames = 0;
         let started = performance.now();
+        let status = "실시간";
         while (active) {
           const { done, value } = await reader.read();
           if (done) throw new Error("카메라 스트림이 종료되었습니다.");
@@ -89,11 +90,8 @@ export function useCameraStream(nodeId, enabled) {
             currentUrl.current = url;
             frames += 1;
             const now = performance.now();
-            const status =
-              now - started >= 1000
-                ? `실시간 · ${((frames * 1000) / (now - started)).toFixed(1)} fps`
-                : "실시간";
             if (now - started >= 1000) {
+              status = `실시간 · ${((frames * 1000) / (now - started)).toFixed(1)} fps`;
               frames = 0;
               started = now;
             }

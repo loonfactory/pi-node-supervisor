@@ -292,7 +292,9 @@ class RevisionStoreV2:
 
 
 def _source_document(resolution: Resolution) -> dict[str, Any]:
-    return resolution.source.model_dump(mode="json", by_alias=True)
+    return resolution.source.model_dump(
+        mode="json", by_alias=True, exclude_none=True
+    )
 
 
 def _json_text(value: Any) -> str:

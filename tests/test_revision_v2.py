@@ -38,7 +38,11 @@ def test_revision_writes_source_resolved_and_generated_files(tmp_path: Path) -> 
     revision = service.apply_document(document())
 
     assert revision["status"] == "active"
-    assert service.active()["schemaVersion"] == 2
+    active = service.active()
+    assert active["schemaVersion"] == 2
+    assert "schedule" not in active["cameras"]["devices"]["rgb"]
+    active_file = json.loads((tmp_path / "etc/config.json").read_text())
+    assert "schedule" not in active_file["cameras"]["devices"]["rgb"]
     generated = json.loads((tmp_path / "generated/rgb.json").read_text())
     assert generated["camera"]["cameraNum"] == 0
     revision_dir = tmp_path / "state/revisions/00000001"
