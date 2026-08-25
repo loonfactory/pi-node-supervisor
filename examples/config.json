@@ -40,6 +40,10 @@
   "cameras": {
     "defaults": {
       "captureNode": {
+        "camera": {
+          "previewFps": 3,
+          "previewQuality": 60
+        },
         "images": {
           "dng": {
             "embedMetadata": true

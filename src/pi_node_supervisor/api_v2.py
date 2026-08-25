@@ -229,7 +229,8 @@ def create_app_v2(
 
         def chunks():
             try:
-                while chunk := upstream.read(64 * 1024):
+                read_available = getattr(upstream, "read1", upstream.read)
+                while chunk := read_available(64 * 1024):
                     yield chunk
             finally:
                 upstream.close()

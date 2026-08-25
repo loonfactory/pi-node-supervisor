@@ -35,6 +35,7 @@ export function useCameraStream(nodeId, enabled) {
     if (!enabled || !nodeId || !token()) return undefined;
     const controller = new AbortController();
     let active = true;
+    let retryTimer = null;
     setState((current) => ({
       ...current,
       status: "실시간 스트림 연결 중…",
@@ -62,6 +63,8 @@ export function useCameraStream(nodeId, enabled) {
           const { done, value } = await reader.read();
           if (done) throw new Error("카메라 스트림이 종료되었습니다.");
           buffer = concat(buffer, value);
+          if (buffer.length > 16 * 1024 * 1024)
+            throw new Error("프리뷰 버퍼가 제한을 초과했습니다.");
           for (;;) {
             const headerEnd = findBytes(buffer, separator);
             if (headerEnd < 0) break;
@@ -98,16 +101,22 @@ export function useCameraStream(nodeId, enabled) {
           }
         }
       } catch (error) {
-        if (active && error.name !== "AbortError")
+        if (active && error.name !== "AbortError") {
           setState((current) => ({
             ...current,
-            status: `스트림 실패 · ${friendlyError(error)}`,
+            status: `연결 재시도 중 · ${friendlyError(error)}`,
             error: friendlyError(error),
           }));
+          retryTimer = setTimeout(
+            () => setGeneration((value) => value + 1),
+            1500,
+          );
+        }
       }
     })();
     return () => {
       active = false;
+      if (retryTimer) clearTimeout(retryTimer);
       controller.abort();
       if (currentUrl.current) URL.revokeObjectURL(currentUrl.current);
       currentUrl.current = null;
