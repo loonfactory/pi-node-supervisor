@@ -2,13 +2,34 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
+import subprocess
+
+import pytest
 
 from pi_node_supervisor.config_v2 import resolve_configuration
-from pi_node_supervisor.power_v2 import PowerPlanV2, RuntimePowerCoordinator
+from pi_node_supervisor.power_v2 import (
+    PowerManagerCli,
+    PowerPlanV2,
+    RuntimePowerCoordinator,
+)
 from pi_node_supervisor.runtime_v2 import ActiveWork
 
 
 KST = timezone(timedelta(hours=9))
+
+
+def test_power_manager_failure_includes_exit_status_when_output_is_empty(
+    tmp_path: Path,
+) -> None:
+    manager = PowerManagerCli(
+        Path("/opt/pi-power-manager"),
+        tmp_path / "config.json",
+        tmp_path / "state.json",
+        runner=lambda *args, **kwargs: subprocess.CompletedProcess(args, 7, "", ""),
+    )
+
+    with pytest.raises(RuntimeError, match="exit status 7 with no output"):
+        manager.resume()
 
 
 def resolved():

@@ -34,6 +34,27 @@ def test_pipeline_saves_file_atomically_to_each_target(tmp_path: Path) -> None:
     assert (tmp_path / "second/2030/01/01/capture.dng").read_bytes() == b"capture"
 
 
+def test_local_storage_is_kept_below_managed_root(tmp_path: Path) -> None:
+    source = tmp_path / "source.dng"
+    source.write_bytes(b"capture")
+    storage = ResolvedStorage(
+        name="local",
+        type="local",
+        base_path="/",
+        path="rgb",
+        final_path="/rgb",
+        settings={"type": "local", "basePath": "/"},
+    )
+    pipeline = StoragePipeline.from_resolved(
+        (storage,), local_root=tmp_path / "managed"
+    )
+
+    result = pipeline.save_file(source, PurePosixPath("capture.dng"))
+
+    assert result[0].succeeded
+    assert (tmp_path / "managed/rgb/capture.dng").read_bytes() == b"capture"
+
+
 def test_failure_does_not_stop_later_storage_target(tmp_path: Path) -> None:
     class BrokenTarget:
         name = "broken"

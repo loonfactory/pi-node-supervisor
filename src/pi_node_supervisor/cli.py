@@ -26,6 +26,7 @@ DEFAULT_STATE = Path("/var/lib/pi-node-supervisor")
 DEFAULT_ACTIVE = Path("/etc/pi-node-supervisor/config.json")
 DEFAULT_GENERATED_CAPTURE = Path("/var/lib/pi-node-supervisor/capture-nodes")
 DEFAULT_STAGING = Path("/var/lib/pi-node-supervisor/staging")
+DEFAULT_LOCAL_STORAGE = Path("/var/lib/pi-node-supervisor/storage")
 DEFAULT_POWER_CONFIG = Path("/etc/pi-power-manager/config.json")
 DEFAULT_POWER_STATE = Path("/var/lib/pi-power-manager/state.json")
 
@@ -38,6 +39,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--generated-capture-dir", type=Path, default=DEFAULT_GENERATED_CAPTURE
     )
     parser.add_argument("--staging-dir", type=Path, default=DEFAULT_STAGING)
+    parser.add_argument(
+        "--local-storage-root", type=Path, default=DEFAULT_LOCAL_STORAGE
+    )
     parser.add_argument("--power-config", type=Path, default=DEFAULT_POWER_CONFIG)
     parser.add_argument("--power-state", type=Path, default=DEFAULT_POWER_STATE)
     parser.add_argument("--capture-node-executable", type=Path)
@@ -117,6 +121,7 @@ def _controller(
         service,
         capture_node_executable=args.capture_node_executable,
         staging_directory=args.staging_dir,
+        local_storage_root=args.local_storage_root,
         power_manager_executable=args.power_manager_executable,
         power_manager_state_path=args.power_state,
     )

@@ -26,12 +26,16 @@ class RuntimeControllerV2:
         *,
         capture_node_executable: Path | None,
         staging_directory: Path,
+        local_storage_root: Path | None = None,
         power_manager_executable: Path | None = None,
         power_manager_state_path: Path | None = None,
     ) -> None:
         self.service = service
         self.capture_node_executable = capture_node_executable
         self.staging_directory = staging_directory
+        self.local_storage_root = (
+            local_storage_root or staging_directory.parent / "storage"
+        )
         self.power_manager_executable = power_manager_executable
         self.power_manager_state_path = power_manager_state_path
         self.runtime = RuntimeStoreV2(service.store.database_path)
@@ -200,7 +204,9 @@ class RuntimeControllerV2:
                     shutil.rmtree(candidate)
 
     def _storage_pipeline(self, device_id: str, storages) -> StoragePipeline:
-        pipeline = StoragePipeline.from_resolved(storages)
+        pipeline = StoragePipeline.from_resolved(
+            storages, local_root=self.local_storage_root
+        )
         for result in pipeline.cleanup_temporary():
             if not result.succeeded:
                 self.runtime.append_event(

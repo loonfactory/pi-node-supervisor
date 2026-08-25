@@ -49,6 +49,7 @@ export PI_NODE_SUPERVISOR_API_TOKEN='replace-me'
   --active-config ./state/config.json \
   --generated-capture-dir ./state/capture-nodes \
   --staging-dir ./state/staging \
+  --local-storage-root ./state/storage \
   --power-config ./state/pi-power-manager.json \
   --capture-node-executable /path/to/capture-node-web \
   serve --host 127.0.0.1 --port 8080
@@ -57,6 +58,11 @@ export PI_NODE_SUPERVISOR_API_TOKEN='replace-me'
 The web client sends `Authorization: Bearer <token>`. Configure storage secrets
 through environment variables referenced by `passwordEnv`; never place passwords
 in `config.json`.
+
+Local `basePath` values are logical paths below `--local-storage-root`, not
+host filesystem destinations. For example, `basePath: "/"` with device path
+`rgb` writes below `<local-storage-root>/rgb`; it never writes directly below
+the host `/` directory.
 
 ## Runtime behavior
 

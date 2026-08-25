@@ -43,9 +43,19 @@ def _safe_relative(value: PurePosixPath) -> PurePosixPath:
 
 
 class LocalStorageTarget:
-    def __init__(self, storage: ResolvedStorage) -> None:
+    def __init__(
+        self, storage: ResolvedStorage, managed_root: Path | None = None
+    ) -> None:
         self.name = storage.name
-        self.root = Path(storage.final_path)
+        if managed_root is None:
+            self.root = Path(storage.final_path)
+        else:
+            root = managed_root.resolve()
+            logical = PurePosixPath(storage.final_path)
+            candidate = root.joinpath(*logical.parts[1:]).resolve()
+            if not candidate.is_relative_to(root):
+                raise ValueError("local Storage path escapes the managed root")
+            self.root = candidate
 
     def save_atomic(self, source: Path, relative_path: PurePosixPath) -> SaveResult:
         relative = _safe_relative(relative_path)
@@ -271,8 +281,13 @@ class StoragePipeline:
         self.targets = targets
 
     @classmethod
-    def from_resolved(cls, storages: tuple[ResolvedStorage, ...]) -> StoragePipeline:
-        return cls(tuple(build_storage_target(item) for item in storages))
+    def from_resolved(
+        cls,
+        storages: tuple[ResolvedStorage, ...],
+        *,
+        local_root: Path | None = None,
+    ) -> StoragePipeline:
+        return cls(tuple(build_storage_target(item, local_root=local_root) for item in storages))
 
     def save_file(
         self, source: Path, relative_path: PurePosixPath
@@ -336,9 +351,11 @@ class StoragePipeline:
         return tuple(results)
 
 
-def build_storage_target(storage: ResolvedStorage) -> StorageTarget:
+def build_storage_target(
+    storage: ResolvedStorage, *, local_root: Path | None = None
+) -> StorageTarget:
     if storage.type == "local":
-        return LocalStorageTarget(storage)
+        return LocalStorageTarget(storage, local_root)
     if storage.type == "sftp":
         return SftpStorageTarget(storage)
     return FtpsStorageTarget(storage)

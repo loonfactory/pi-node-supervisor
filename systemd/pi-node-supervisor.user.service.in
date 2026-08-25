@@ -8,7 +8,7 @@ Type=simple
 WorkingDirectory=%h/pi-node-supervisor
 EnvironmentFile=%h/pi-node-supervisor/config/supervisor.env
 Environment=PYTHONPATH=%h/pi-node-supervisor/current/vendor
-ExecStart=%h/pi-node-supervisor/current/.venv/bin/pi-node-supervisor --state-dir %h/pi-node-supervisor/state --active-config %h/pi-node-supervisor/config/config.json --generated-capture-dir %h/pi-node-supervisor/generated/capture-nodes --staging-dir %h/pi-node-supervisor/state/staging --power-config @POWER_CONFIG@ --power-state @POWER_STATE@ --capture-node-executable @CAPTURE_NODE_EXECUTABLE@ @POWER_MANAGER_ARGUMENT@ serve --host @BIND_HOST@ --port @PORT@
+ExecStart=%h/pi-node-supervisor/current/.venv/bin/pi-node-supervisor --state-dir %h/pi-node-supervisor/state --active-config %h/pi-node-supervisor/config/config.json --generated-capture-dir %h/pi-node-supervisor/generated/capture-nodes --staging-dir %h/pi-node-supervisor/state/staging --local-storage-root @LOCAL_STORAGE_ROOT@ --power-config @POWER_CONFIG@ --power-state @POWER_STATE@ --capture-node-executable @CAPTURE_NODE_EXECUTABLE@ @POWER_MANAGER_ARGUMENT@ serve --host @BIND_HOST@ --port @PORT@
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=90
@@ -16,7 +16,7 @@ UMask=0077
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
-ReadWritePaths=-/etc/pi-power-manager
+ReadWritePaths=-@LOCAL_STORAGE_ROOT@ -/etc/pi-power-manager
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 
 [Install]

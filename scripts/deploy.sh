@@ -7,9 +7,11 @@ target=${TARGET:-huintech@192.168.12.7}
 remote_base=${REMOTE_BASE:-/home/huintech/pi-node-supervisor}
 config_file=${CONFIG_FILE:-$project_root/examples/config.json}
 capture_executable=${CAPTURE_NODE_EXECUTABLE:-/home/huintech/capture-node/.venv/bin/capture-node-web}
+huintech_device_source=${HUINTECH_DEVICE_SOURCE:-$project_root/components/huintech-device/python}
 power_executable=${POWER_MANAGER_EXECUTABLE:-/opt/pi-power-manager/current/.venv/bin/pi-power-manager}
 power_config=${POWER_CONFIG:-}
 power_state=${POWER_STATE:-}
+local_storage_root=${LOCAL_STORAGE_ROOT:-}
 bind_host=${BIND_HOST:-0.0.0.0}
 port=${PORT:-8080}
 replace_config=false
@@ -22,9 +24,11 @@ usage() {
     "  --config FILE             v2 source config" \
     "  --replace-config          apply FILE even when an active config exists" \
     "  --capture-node-executable PATH" \
+    "  --huintech-device-source PATH" \
     "  --power-manager-executable PATH" \
     "  --power-config PATH" \
     "  --power-state PATH" \
+    "  --local-storage-root PATH" \
     "  --bind-host ADDRESS" \
     "  --port PORT"
 }
@@ -36,9 +40,11 @@ while (($#)); do
     --config|--initial-config) config_file=${2:?missing value}; shift 2 ;;
     --replace-config|--update-settings) replace_config=true; shift ;;
     --capture-node-executable) capture_executable=${2:?missing value}; shift 2 ;;
+    --huintech-device-source) huintech_device_source=${2:?missing value}; shift 2 ;;
     --power-manager-executable) power_executable=${2:?missing value}; shift 2 ;;
     --power-config) power_config=${2:?missing value}; shift 2 ;;
     --power-state) power_state=${2:?missing value}; shift 2 ;;
+    --local-storage-root) local_storage_root=${2:?missing value}; shift 2 ;;
     --bind-host) bind_host=${2:?missing value}; shift 2 ;;
     --port) port=${2:?missing value}; shift 2 ;;
     --without-power-manager) shift ;;
@@ -49,11 +55,19 @@ done
 
 power_config=${power_config:-$remote_base/generated/pi-power-manager.json}
 power_state=${power_state:-$remote_base/state/pi-power-manager.json}
+local_storage_root=${local_storage_root:-$remote_base/storage}
 
 [[ "$target" =~ ^[A-Za-z0-9._-]+@[A-Za-z0-9._:-]+$ ]] || { printf 'Invalid target\n' >&2; exit 2; }
 [[ "$remote_base" == /* && "$remote_base" != / ]] || { printf 'Invalid remote base\n' >&2; exit 2; }
 [[ -r "$config_file" ]] || { printf 'Config is unreadable: %s\n' "$config_file" >&2; exit 2; }
 [[ "$port" =~ ^[0-9]+$ ]] && ((port > 0 && port < 65536)) || { printf 'Invalid port\n' >&2; exit 2; }
+sensor_count=$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1], encoding="utf-8")).get("sensors", {}).get("devices", {})))' "$config_file")
+if ((sensor_count)); then
+  [[ -r "$huintech_device_source/huintech/sensors/soil/cwt_soil_thc_s.py" ]] || {
+    printf 'HUINTECHDEVICE sensor source is unavailable: %s\n' "$huintech_device_source" >&2
+    exit 2
+  }
+fi
 
 PYTHONPATH="$project_root/src" python3 -m pi_node_supervisor.cli validate-config "$config_file"
 frontend="$project_root/src/pi_node_supervisor/web/frontend"
@@ -61,6 +75,7 @@ frontend="$project_root/src/pi_node_supervisor/web/frontend"
 
 build_dir=$(mktemp -d /tmp/pi-node-supervisor-build.XXXXXX)
 remote_stage=''
+sensor_dependency_archive=''
 cleanup() {
   code=$?
   [[ -z "$remote_stage" ]] || ssh -o ConnectTimeout=10 "$target" rm -rf -- "$remote_stage" >/dev/null 2>&1 || true
@@ -81,23 +96,38 @@ fi
 wheel=$(find "$build_dir" -maxdepth 1 -name 'pi_node_supervisor-*.whl' -print -quit)
 [[ -n "$wheel" ]] || { printf 'Wheel build failed\n' >&2; exit 1; }
 release_id="$(date -u +%Y%m%dT%H%M%SZ)-$(sha256sum "$wheel" | cut -c1-12)"
+if ((sensor_count)); then
+  sensor_dependency_archive="$build_dir/huintech-device-python.tar.gz"
+  tar --exclude='__pycache__' --exclude='*.pyc' \
+    -C "$huintech_device_source" -czf "$sensor_dependency_archive" huintech
+fi
 remote_stage=$(ssh -o BatchMode=yes -o ConnectTimeout=10 "$target" mktemp -d /tmp/pi-node-supervisor-deploy.XXXXXX)
 scp -o ConnectTimeout=10 "$wheel" "$config_file" "$project_root/systemd/pi-node-supervisor.user.service.in" "$target:$remote_stage/"
+if [[ -n "$sensor_dependency_archive" ]]; then
+  scp -o ConnectTimeout=10 "$sensor_dependency_archive" "$target:$remote_stage/"
+fi
 
 ssh -o BatchMode=yes -o ConnectTimeout=10 "$target" bash -s -- \
   "$remote_base" "$remote_stage" "$release_id" "$capture_executable" \
-  "$power_executable" "$power_config" "$power_state" "$bind_host" "$port" "$replace_config" <<'REMOTE'
+  "$power_executable" "$power_config" "$power_state" "$bind_host" "$port" "$replace_config" "$local_storage_root" <<'REMOTE'
 set -Eeuo pipefail
 base=$1; stage=$2; release_id=$3; capture=$4; power=$5; power_config=$6
 power_state=$7; bind_host=$8; port=$9; replace_config=${10}
+local_storage_root=${11}
 case "$base" in "$HOME"/*) ;; *) printf 'Install root must be below HOME\n' >&2; exit 2;; esac
 wheel=$(find "$stage" -maxdepth 1 -name 'pi_node_supervisor-*.whl' -print -quit)
 config=$(find "$stage" -maxdepth 1 -name '*.json' -print -quit)
 template="$stage/pi-node-supervisor.user.service.in"
 release="$base/releases/$release_id"
-install -d -m 700 "$release" "$base/config" "$base/state" "$base/generated/capture-nodes" "$HOME/.config/systemd/user"
+install -d -m 700 "$release" "$base/config" "$base/state" "$base/generated/capture-nodes" "$local_storage_root" "$HOME/.config/systemd/user"
 python3 -m venv "$release/.venv"
 "$release/.venv/bin/python" -m pip install "$wheel[web,sensor,remote]"
+if [[ -r "$stage/huintech-device-python.tar.gz" ]]; then
+  install -d -m 700 "$release/vendor"
+  tar -xzf "$stage/huintech-device-python.tar.gz" -C "$release/vendor"
+  PYTHONPATH="$release/vendor" "$release/.venv/bin/python" -c \
+    'from huintech.sensors.soil.cwt_soil_thc_s import CWTSoilTHCS'
+fi
 "$release/.venv/bin/pi-node-supervisor" validate-config "$config"
 if [[ ! -s "$base/config/supervisor.env" ]]; then
   umask 077
@@ -120,6 +150,7 @@ fi
 sed -e "s|@BIND_HOST@|$bind_host|g" -e "s|@PORT@|$port|g" \
   -e "s|@CAPTURE_NODE_EXECUTABLE@|$capture|g" \
   -e "s|@POWER_MANAGER_ARGUMENT@|$power_argument|g" \
+  -e "s|@LOCAL_STORAGE_ROOT@|$local_storage_root|g" \
   -e "s|@POWER_CONFIG@|$power_config|g" -e "s|@POWER_STATE@|$power_state|g" \
   "$template" > "$HOME/.config/systemd/user/pi-node-supervisor.service"
 systemctl --user daemon-reload

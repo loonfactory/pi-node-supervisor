@@ -69,6 +69,8 @@ class PowerManagerCli:
         )
         if result.returncode != 0:
             detail = (result.stderr or result.stdout).strip()[:1000]
+            if not detail:
+                detail = f"exit status {result.returncode} with no output"
             raise RuntimeError(f"pi-power-manager {command} failed: {detail}")
 
 
