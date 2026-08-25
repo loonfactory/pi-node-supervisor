@@ -1,49 +1,116 @@
 {
-  "schema_version": 1,
-  "timezone": "Asia/Seoul",
+  "schemaVersion": 2,
   "policies": {
-    "boot-lead-seconds": 120,
-    "shutdown-grace-seconds": 60,
-    "merge-power-gaps-shorter-than-seconds": 300,
-    "minimum-lead-seconds": 60,
-    "clock-tolerance-seconds": 5
+    "clockToleranceSeconds": 10
   },
-  "activities": [
-    {
-      "id": "morning-capture",
-      "type": "capture",
-      "at": "2030-01-01T08:00:00",
-      "node": "camera0",
-      "profile": "default"
+  "schedules": {
+    "ndviDaytime": [
+      {
+        "type": "interval",
+        "startTime": "05:00:00",
+        "endTime": "20:00:00",
+        "intervalSeconds": 1800
+      }
+    ],
+    "soilAllDay": [
+      {
+        "type": "interval",
+        "intervalSeconds": 1800
+      }
+    ]
+  },
+  "storages": {
+    "local": {
+      "type": "local",
+      "basePath": "/data/capture"
     },
-    {
-      "id": "remote-maintenance",
-      "type": "maintenance-window",
-      "start": "2030-01-01T13:00:00",
-      "end": "2030-01-01T15:00:00"
+    "nasFtps": {
+      "type": "ftps",
+      "host": "192.168.12.2",
+      "port": 21,
+      "username": "captureftp",
+      "passwordEnv": "CAPTURE_FTPS_PASSWORD",
+      "basePath": "/capture",
+      "tlsMode": "explicit",
+      "verifyTls": false,
+      "connectTimeoutSeconds": 10,
+      "operationTimeoutSeconds": 120
     }
-  ],
-  "sensor_schedules": [
-    {
-      "id": "environment0-temperature-humidity",
-      "node": "environment0",
-      "profile": "temperature-humidity",
-      "mode": "daily",
-      "daily_times": [
-        "00:00:00", "00:30:00", "01:00:00", "01:30:00",
-        "02:00:00", "02:30:00", "03:00:00", "03:30:00",
-        "04:00:00", "04:30:00", "05:00:00", "05:30:00",
-        "06:00:00", "06:30:00", "07:00:00", "07:30:00",
-        "08:00:00", "08:30:00", "09:00:00", "09:30:00",
-        "10:00:00", "10:30:00", "11:00:00", "11:30:00",
-        "12:00:00", "12:30:00", "13:00:00", "13:30:00",
-        "14:00:00", "14:30:00", "15:00:00", "15:30:00",
-        "16:00:00", "16:30:00", "17:00:00", "17:30:00",
-        "18:00:00", "18:30:00", "19:00:00", "19:30:00",
-        "20:00:00", "20:30:00", "21:00:00", "21:30:00",
-        "22:00:00", "22:30:00", "23:00:00", "23:30:00"
-      ],
-      "timezone": "Asia/Seoul"
+  },
+  "cameras": {
+    "defaults": {
+      "captureNode": {
+        "images": {
+          "dng": {
+            "embedMetadata": true
+          }
+        }
+      },
+      "schedule": "ndviDaytime",
+      "storages": [
+        {
+          "extends": "#/storages/local"
+        },
+        {
+          "extends": "#/storages/nasFtps"
+        }
+      ]
+    },
+    "devices": {
+      "rgb": {
+        "captureNode": {
+          "camera": {
+            "type": "picamera2",
+            "cameraNum": 0
+          }
+        }
+      },
+      "noir": {
+        "captureNode": {
+          "camera": {
+            "type": "picamera2",
+            "cameraNum": 1
+          }
+        }
+      }
     }
-  ]
+  },
+  "sensors": {
+    "defaults": {
+      "schedule": "soilAllDay",
+      "storages": [
+        {
+          "extends": "#/storages/local"
+        },
+        {
+          "extends": "#/storages/nasFtps"
+        }
+      ]
+    },
+    "devices": {
+      "soil": {
+        "driver": {
+          "name": "cwt_soil_thc_s",
+          "port": "/dev/ttyAMA0",
+          "baudRate": 4800,
+          "unitId": 1
+        }
+      }
+    }
+  },
+  "power": {
+    "bootLeadSeconds": 45,
+    "shutdownGraceSeconds": 30,
+    "minOffSeconds": 300,
+    "windows": [
+      {
+        "startTime": "00:30:00",
+        "endTime": "01:30:00"
+      },
+      {
+        "startTime": "09:00:00",
+        "endTime": "09:30:00"
+      }
+    ]
+  }
 }

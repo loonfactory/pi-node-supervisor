@@ -45,21 +45,6 @@ export default function AdvancedConfigEditor() {
           className="ghost"
           onClick={() =>
             action(async () => {
-              const value = parse();
-              value.capture_node_settings = await api(
-                "/api/settings/capture-nodes",
-              );
-              setText(JSON.stringify(value, null, 2));
-              notify("현재 카메라 설정을 가져왔습니다.");
-            })
-          }
-        >
-          현재 카메라 설정 가져오기
-        </button>
-        <button
-          className="ghost"
-          onClick={() =>
-            action(async () => {
               await api("/api/plan/preview", { method: "POST", body: text });
               notify("계획 검증이 완료되었습니다.");
             })

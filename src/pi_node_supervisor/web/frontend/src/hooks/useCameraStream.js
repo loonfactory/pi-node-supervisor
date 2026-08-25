@@ -45,7 +45,7 @@ export function useCameraStream(nodeId, enabled) {
         const response = await fetch(
           `/api/nodes/${encodeURIComponent(nodeId)}/preview/stream`,
           {
-            headers: { "X-Supervisor-Token": token() },
+            headers: { Authorization: `Bearer ${token()}` },
             cache: "no-store",
             signal: controller.signal,
           },

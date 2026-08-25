@@ -16,7 +16,7 @@ function CameraCard({ node, generation }) {
           <h2>{node.id}</h2>
           <span>{node.endpoint || "loopback"}</span>
         </div>
-        <Status value={node.health?.healthy ? "healthy" : "unhealthy"} />
+        <Status value={node.active ? "healthy" : "unhealthy"} />
       </div>
       <div className="camera-frame">
         {stream.src ? (
@@ -41,16 +41,17 @@ export default function CamerasPage() {
   const { nodes, notify } = useSupervisor();
   const [busy, setBusy] = useState(false);
   const [generation, setGeneration] = useState(0);
-  const cameras = nodes.filter((node) => node.kind === "capture-node");
+  const cameras = nodes.filter((node) => node.kind === "camera");
   const captureAll = async () => {
     setBusy(true);
     try {
       const result = await api("/api/captures/manual", { method: "POST" });
+      const failed = result.items.filter((item) => item.status !== "succeeded");
       notify(
-        result.failed
-          ? `${result.succeeded}대 촬영 완료, ${result.failed}대 실패`
-          : `모든 카메라 ${result.succeeded}대의 촬영과 저장이 완료되었습니다.`,
-        Boolean(result.failed),
+        failed.length
+          ? `${result.items.length - failed.length}대 촬영 완료, ${failed.length}대 실패`
+          : `모든 카메라 ${result.items.length}대의 촬영과 저장이 완료되었습니다.`,
+        Boolean(failed.length),
       );
     } catch (error) {
       notify(friendlyError(error), true);

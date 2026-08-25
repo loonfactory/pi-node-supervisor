@@ -1,190 +1,168 @@
-# `config.json` 설정 안내
+네이밍
+- 키는 camelCase, 시간 값은 …Seconds 접미사
+- 값 중 식별자(driver.name 등)는 정책 대상 아님
 
-`config.json`은 Pi Node Supervisor가 실행할 일회성 작업, 반복 촬영·센서 수집,
-전원 유지 구간과 CaptureNode 공통 설정을 정의한다. 장치 연결 정보는
-`nodes.json`, API 토큰과 비밀번호는 환경 파일에 두며 이 문서에는 저장하지 않는다.
+시각
+- 모든 시각은 시스템 로컬 시간 (로더는 시작 시 타임존·현재 시각을 로그)
+- interval: start + k × intervalSeconds, k ≥ 0, ≤ end (양끝 포함)
+- start/end 생략 시 00:00:00 / 23:59:59
+- end <= start 이면 end는 익일
+- end 비교는 예정 시각 기준, 실제 실행 시각 아님
 
-실행 가능한 예제는 [`examples/config.json`](examples/config.json), 최초 배포용
-기본값은 [`examples/config.empty.json`](examples/config.empty.json)에서 확인할 수
-있다. 현재 스키마는 아래에 정의되지 않은 속성을 거절한다.
+병합
+- section.defaults → 모든 devices 항목에 암묵 deep merge
+- extends → 해당 위치에 JSON Pointer 대상을 deep merge, #/storages/* 만 허용
+- 우선순위: defaults < extends 대상 < 디바이스 명시값
+- object 재귀, scalar/array 교체
+- defaults 금지 키: cameraNum, port, unitId, storage.path
 
-## 전체 구조
+기타
+- basePath + path 결합 규칙
+- site 블록은 추후 추가 (순수 추가라 버전 유지)
+
+## 최상위 구조
+
+`config.json`은 `schemaVersion`, `policies`, `schedules`, `storages`,
+`cameras`, `sensors`, `power`로 구성한다. 카메라와 센서는 별도 registry가
+없으며 `devices`의 키가 Supervisor 내부 장치 ID가 된다.
 
 ```json
 {
-  "schema_version": 1,
-  "timezone": "Asia/Seoul",
+  "schemaVersion": 2,
   "policies": {
-    "boot-lead-seconds": 120,
-    "shutdown-grace-seconds": 60,
-    "merge-power-gaps-shorter-than-seconds": 300,
-    "minimum-lead-seconds": 60,
-    "clock-tolerance-seconds": 5,
-    "recurrence-horizon-hours": 168
+    "clockToleranceSeconds": 10
   },
-  "activities": [],
-  "capture_schedules": [],
-  "sensor_schedules": [],
-  "power_keep_schedules": [],
-  "capture_node_settings": {
-    "common": {},
-    "nodes": {}
+  "schedules": {},
+  "storages": {},
+  "cameras": { "defaults": {}, "devices": {} },
+  "sensors": { "defaults": {}, "devices": {} },
+  "power": {
+    "bootLeadSeconds": 45,
+    "shutdownGraceSeconds": 30,
+    "minOffSeconds": 300,
+    "windows": []
   }
 }
 ```
 
-| 속성 | 필수 | 기본값 | 설명 |
-| --- | --- | --- | --- |
-| `schema_version` | 선택 | `1` | 현재 `1`만 허용한다. |
-| `timezone` | 필수 | 없음 | 일정 해석에 사용할 IANA 시간대다. 예: `Asia/Seoul`. |
-| `policies` | 선택 | 아래 표 | 전원 계획과 반복 일정 계산 정책이다. |
-| `activities` | 선택 | `[]` | 특정 날짜·시각에 실행할 일회성 작업이다. |
-| `capture_schedules` | 선택 | `[]` | CaptureNode가 수행할 반복 촬영 일정이다. |
-| `sensor_schedules` | 선택 | `[]` | Supervisor가 수행할 반복 센서 수집 일정이다. |
-| `power_keep_schedules` | 선택 | `[]` | 작업과 관계없이 매일 전원을 유지할 구간이다. |
-| `capture_node_settings` | 선택 | 빈 overlay | 관리 중인 CaptureNode 설정에 병합할 공통·개별 값이다. |
+## 스케줄
 
-모든 작업과 일정의 `id`는 문서 전체에서 서로 달라야 한다. `id`, `node`,
-`profile`은 영문·숫자로 시작하고 영문·숫자·점·밑줄·하이픈만 사용할 수 있다.
-
-## 전원 계획 정책
-
-| 속성 | 기본값 | 제약 | 설명 |
-| --- | ---: | --- | --- |
-| `boot-lead-seconds` | `120` | 0 이상 | 작업 전에 Pi 전원을 미리 켜는 시간이다. |
-| `shutdown-grace-seconds` | `60` | 0 이상 | 마지막 작업 후 전원을 유지하는 시간이다. |
-| `merge-power-gaps-shorter-than-seconds` | `300` | 0 이상 | 인접 전원 구간의 간격이 이 값보다 짧으면 합친다. |
-| `minimum-lead-seconds` | `60` | 1 이상 | RTC 기동 예약에 필요한 최소 여유 시간이다. |
-| `clock-tolerance-seconds` | `5` | 0 이상 | 시스템 시각과 RTC 시각의 허용 오차다. |
-| `recurrence-horizon-hours` | `168` | 24~744 | 반복 일정을 전원 계획으로 미리 전개할 범위다. |
-
-## 일회성 작업: `activities`
-
-촬영과 센서 수집은 각각 `capture`, `sensor-collection` 타입을 사용한다.
+하나의 preset은 규칙 배열이다. `interval`은 선택적인 시작·종료 시각과
+초 단위 간격을 사용하고, `daily`는 하루 한 번의 시각을 사용한다.
 
 ```json
 {
-  "id": "morning-capture",
-  "type": "capture",
-  "node": "camera0",
-  "profile": "default",
-  "at": "2030-01-01T08:00:00",
-  "duration_seconds": 10,
-  "parameters": {}
+  "schedules": {
+    "daytime": [
+      {
+        "type": "interval",
+        "startTime": "05:00:00",
+        "endTime": "20:00:00",
+        "intervalSeconds": 1800
+      }
+    ],
+    "noon": [{ "type": "daily", "time": "12:00:00" }]
+  }
 }
 ```
 
-유지보수 구간은 시작과 종료를 지정한다. `node`와 `profile`은 선택 속성이다.
+장치는 `"schedule": "daytime"`처럼 preset 이름을 참조한다. 여러 장치가
+같은 preset을 사용해도 실행과 실패 경계는 장치별로 독립적이다.
+
+## 저장소
+
+로컬 저장소는 `basePath`, 원격 저장소는 원격 루트인 `basePath`를 가진다.
+장치의 `storage` 또는 `storages` 항목에서 이를 확장하고 상대 `path`를
+더한다. 여러 대상은 선언 순서대로 시도하며 한 대상의 실패가 다음 대상을
+막지 않는다.
 
 ```json
 {
-  "id": "remote-maintenance",
-  "type": "maintenance-window",
-  "start": "2030-01-01T13:00:00",
-  "end": "2030-01-01T15:00:00"
+  "storages": {
+    "local": {
+      "type": "local",
+      "basePath": "/data/capture"
+    },
+    "nasSftp": {
+      "type": "sftp",
+      "host": "nas.local",
+      "port": 22,
+      "username": "collector",
+      "passwordEnv": "SUPERVISOR_NAS_PASSWORD",
+      "basePath": "/volume1/field"
+    },
+    "nasFtps": {
+      "type": "ftps",
+      "host": "nas.local",
+      "port": 21,
+      "username": "collector",
+      "passwordEnv": "SUPERVISOR_NAS_PASSWORD",
+      "basePath": "/field",
+      "tlsMode": "explicit",
+      "verifyTls": true
+    }
+  }
 }
 ```
 
-UTC offset이 없는 날짜·시각은 최상위 `timezone`으로 해석한다. DST 때문에
-존재하지 않거나 중복되는 지역 시각은 거절하므로 명시적인 offset을 사용해야 한다.
+SFTP/FTPS 계정은 대상 파일에 대한 읽기·수정·rename 권한이 필요하다.
+센서 CSV는 해당 날짜 파일을 읽고 마지막 행을 추가한 임시 파일을 올린 뒤
+rename한다. 원격 저장에 실패해도 retry queue나 sync API는 만들지 않는다.
 
-## 반복 촬영: `capture_schedules`
+## 카메라와 CaptureNode
 
-한 CaptureNode에는 하나의 반복 촬영 정의만 둘 수 있다.
-
-```json
-{
-  "id": "camera0-daily",
-  "node": "camera0",
-  "profile": "default",
-  "mode": "daily",
-  "daily_times": ["05:00:00", "05:30:00", "06:00:00"],
-  "timezone": "Asia/Seoul",
-  "duration_seconds": 10,
-  "parameters": {}
-}
-```
-
-연속 간격 촬영은 양수 `interval_seconds`와 기준 시각 `anchor_at`이 필요하다.
+`captureNode`는 Supervisor 필드가 아니라 CaptureNode 네이티브 설정 문서의
+경계다. defaults와 장치 설정을 deep merge한 뒤 카메라마다 별도 JSON을
+생성하고 CaptureNode를 `--config`로 시작한다. 생성 문서에서는
+`captures`와 `storages`를 항상 제거한다.
 
 ```json
 {
-  "id": "camera0-interval",
-  "node": "camera0",
-  "profile": "default",
-  "mode": "interval",
-  "interval_seconds": 1800,
-  "daily_times": [],
-  "timezone": "Asia/Seoul",
-  "anchor_at": "2030-01-01T00:00:00+09:00",
-  "parameters": {}
-}
-```
-
-- `daily`: `interval_seconds`를 사용하지 않는다.
-- `interval`: `daily_times`가 비어 있어야 한다.
-- `disabled`: `interval_seconds`와 `daily_times`를 모두 비운다.
-- `daily_times`: 중복되지 않은 offset 없는 `HH:MM:SS` 목록이다.
-
-## 반복 센서 수집: `sensor_schedules`
-
-센서 노드 하나에는 하나의 정의만 둘 수 있으며 현재 `daily`, `disabled`를 지원한다.
-
-```json
-{
-  "id": "environment0-temperature-humidity",
-  "node": "environment0",
-  "profile": "temperature-humidity",
-  "mode": "daily",
-  "daily_times": ["00:00:00", "00:30:00", "01:00:00"],
-  "timezone": "Asia/Seoul",
-  "duration_seconds": 5,
-  "parameters": {}
-}
-```
-
-`disabled`에서는 `daily_times`가 비어 있어야 한다. 센서 직렬 포트와 CSV 저장소는
-`nodes.json`의 `sensor_serial`, `sensor_storage`에서 설정한다.
-
-## 전원 유지: `power_keep_schedules`
-
-```json
-{
-  "id": "morning-maintenance",
-  "start": "08:50:00",
-  "end": "09:30:00",
-  "timezone": "Asia/Seoul"
-}
-```
-
-매일 `start`부터 `end`까지 작업과 관계없이 전원을 유지한다. 시각은 offset 없는
-`HH:MM:SS`이며 `end`는 `start`보다 늦어야 한다. 자정을 넘는 구간은 지원하지 않는다.
-
-## CaptureNode overlay: `capture_node_settings`
-
-`common`을 모든 카메라에 먼저 재귀 병합하고 `nodes.<node-id>`를 그 위에 병합한다.
-object는 재귀 병합하며 배열과 scalar는 전체를 교체한다.
-
-```json
-{
-  "capture_node_settings": {
-    "common": {
-      "storages": [
-        {
-          "type": "file",
-          "name": "local",
-          "directory": "captures/{camera}",
-          "layout": "daily"
+  "cameras": {
+    "defaults": {
+      "captureNode": {
+        "images": {
+          "dng": { "embedMetadata": true }
         }
+      },
+      "schedule": "daytime",
+      "storages": [
+        { "extends": "#/storages/local" },
+        { "extends": "#/storages/nasSftp" }
       ]
     },
-    "nodes": {
-      "camera1": {
-        "camera": {
-          "params": {
-            "horizontal_flip": true,
-            "vertical_flip": true
-          }
+    "devices": {
+      "rgb": {
+        "captureNode": { "type": "picamera2", "cameraNum": 0 },
+        "storages": [
+          { "extends": "#/storages/local", "path": "rgb" }
+        ]
+      }
+    }
+  }
+}
+```
+
+일반 촬영 요청은 `formats`를 보내지 않으므로 위 `images`가 적용된다.
+노출·flip 같은 카메라 고유 설정은 `captureNode` 안에 두며, 수동 촬영의
+`parameters`는 해당 요청에만 적용된다.
+
+## 센서
+
+```json
+{
+  "sensors": {
+    "defaults": {
+      "schedule": "soilAllDay",
+      "storages": [{ "extends": "#/storages/nasSftp", "path": "soil" }]
+    },
+    "devices": {
+      "soil": {
+        "driver": {
+          "name": "cwt_soil_thc_s",
+          "port": "/dev/ttyAMA0",
+          "baudRate": 4800,
+          "unitId": 1
         }
       }
     }
@@ -192,18 +170,22 @@ object는 재귀 병합하며 배열과 scalar는 전체를 교체한다.
 }
 ```
 
-`{camera}`는 적용 대상 노드 ID로 치환된다. 비밀번호 값은 넣지 않고
-`password_env` 같은 환경변수 이름만 기록한다. Overlay 속성은 설치된 CaptureNode
-버전의 설정 계약을 따르므로 CaptureNode 업그레이드 시 함께 검토해야 한다.
+센서 파일은 `YYYY/MM/YYYY-MM-DD.csv`이며 취득 시각, 온도, 습도를 append한다.
+같은 serial port는 bus lock을 공유하고 센서별 저장 append는 직렬화한다.
 
-## 검증과 적용
+## 전원 유지 구간
 
-Web의 **설정 → 고급 설정 · JSON 직접 편집**에서 다음 순서로 적용한다.
+```json
+{
+  "power": {
+    "windows": [
+      { "startTime": "00:30:00", "endTime": "01:30:00" },
+      { "startTime": "09:00:00", "endTime": "09:30:00" }
+    ]
+  }
+}
+```
 
-1. `JSON 검증`으로 스키마와 파생 전원 계획을 확인한다.
-2. `초안 저장`으로 Draft를 저장한다.
-3. `JSON 적용`으로 새 revision을 활성화한다.
-
-동일한 API 흐름은 `POST /api/plan/preview`, `PUT /api/config/draft`,
-`POST /api/revisions/apply`다. 외부 설정 갱신이나 CaptureNode 재시작이 실패하면
-기존 파일과 Active revision을 복구한다.
+촬영·센서 스케줄에서 계산한 작업 구간과 위 고정 구간을 합쳐
+pi-power-manager 설정을 생성한다. 촬영, 센서 취득, 저장 중에는 종료 준비를
+시작하지 않는다.

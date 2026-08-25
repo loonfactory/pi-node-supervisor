@@ -6,8 +6,7 @@ project_root=$(cd -- "$script_dir/.." && pwd)
 power_source=${POWER_MANAGER_SOURCE:-$project_root/components/pi-power-manager}
 target=${TARGET:-huintech@192.168.12.7}
 remote_base=${REMOTE_BASE:-}
-nodes_file=${NODES_FILE:-}
-initial_config=${INITIAL_CONFIG:-}
+config_file=${CONFIG_FILE:-}
 capture_node_executable=${CAPTURE_NODE_EXECUTABLE:-}
 enable_timer=false
 install_only=false
@@ -21,8 +20,7 @@ usage() {
     "  --target USER@HOST       SSH destination (default: $target)" \
     "  --remote-base PATH       Supervisor root (default: /home/TARGET_USER/pi-node-supervisor)" \
     "  --power-source PATH      Local pi-power-manager source" \
-    "  --nodes FILE             Node registry passed to Supervisor deployment" \
-    "  --initial-config FILE    Initial Supervisor configuration" \
+    "  --config FILE            Supervisor v2 configuration" \
     "  --capture-node-executable PATH  Target CaptureNode Web executable" \
     "  --enable                 Enable automatic shutdown after diagnostics" \
     "  --preserve-enablement    Keep the target timer's current enabled state" \
@@ -35,8 +33,7 @@ while (($#)); do
     --target) target=${2:?missing value for --target}; shift 2 ;;
     --remote-base) remote_base=${2:?missing value for --remote-base}; shift 2 ;;
     --power-source) power_source=${2:?missing value for --power-source}; shift 2 ;;
-    --nodes) nodes_file=${2:?missing value for --nodes}; shift 2 ;;
-    --initial-config) initial_config=${2:?missing value for --initial-config}; shift 2 ;;
+    --config|--initial-config) config_file=${2:?missing value for --config}; shift 2 ;;
     --capture-node-executable) capture_node_executable=${2:?missing value for --capture-node-executable}; shift 2 ;;
     --enable) enable_timer=true; shift ;;
     --preserve-enablement) enable_timer=preserve; shift ;;
@@ -53,8 +50,7 @@ operator=${target%@*}
 remote_base=${remote_base:-/home/$operator/pi-node-supervisor}
 [[ "$remote_base" == /* && "$remote_base" != / ]] || { printf 'Invalid remote base.\n' >&2; exit 2; }
 capture_node_executable=${capture_node_executable:-/home/$operator/capture-node/.venv/bin/capture-node-web}
-[[ -z "$nodes_file" || -r "$nodes_file" ]] || { printf 'Node registry is unreadable.\n' >&2; exit 2; }
-[[ -z "$initial_config" || -r "$initial_config" ]] || { printf 'Initial configuration is unreadable.\n' >&2; exit 2; }
+[[ -z "$config_file" || -r "$config_file" ]] || { printf 'Configuration is unreadable.\n' >&2; exit 2; }
 build_dir=$(mktemp -d /tmp/pi-power-manager-build.XXXXXX)
 remote_stage=''
 cleanup() {
@@ -104,8 +100,7 @@ deploy_arguments=(
   --capture-node-executable "$capture_node_executable"
   --without-power-manager
 )
-[[ -z "$nodes_file" ]] || deploy_arguments+=(--nodes "$nodes_file")
-[[ -z "$initial_config" ]] || deploy_arguments+=(--initial-config "$initial_config")
+[[ -z "$config_file" ]] || deploy_arguments+=(--config "$config_file")
 "$script_dir/deploy.sh" "${deploy_arguments[@]}"
 
 printf 'RTC integration complete. timer_enabled=%s\n' "$enable_timer"

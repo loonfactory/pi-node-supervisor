@@ -33,13 +33,6 @@ export function SupervisorProvider({ children }) {
     offset: 0,
     limit: 25,
   });
-  const [sensors, setSensors] = useState({
-    data: [],
-    delivery: { counts: {}, items: [] },
-    settings: [],
-    restartRequired: false,
-    error: null,
-  });
 
   const notify = useCallback((message, error = false) => {
     setToast({ message, error, key: Date.now() });
@@ -72,26 +65,6 @@ export function SupervisorProvider({ children }) {
     },
     [data.limit, data.offset],
   );
-
-  const loadSensors = useCallback(async () => {
-    try {
-      const [measurements, delivery, settings] = await Promise.all([
-        api("/api/sensor-data?limit=100"),
-        api("/api/sensor-storage"),
-        api("/api/sensor-settings"),
-      ]);
-      setSensors({
-        data: measurements.items,
-        delivery,
-        settings: settings.items,
-        restartRequired: settings.restart_required,
-        error: null,
-      });
-    } catch (error) {
-      setSensors((current) => ({ ...current, error: friendlyError(error) }));
-      throw error;
-    }
-  }, []);
 
   const refresh = useCallback(async () => {
     try {
@@ -130,7 +103,6 @@ export function SupervisorProvider({ children }) {
         items: nextData.items,
         total: nextData.total ?? nextData.items.length,
       }));
-      loadSensors().catch(() => {});
     } catch (error) {
       setConnection("failed");
       notify(friendlyError(error), true);
@@ -140,7 +112,6 @@ export function SupervisorProvider({ children }) {
     data.offset,
     events.limit,
     events.offset,
-    loadSensors,
     notify,
   ]);
 
@@ -176,11 +147,9 @@ export function SupervisorProvider({ children }) {
       configuration,
       events,
       data,
-      sensors,
       refresh,
       loadEvents,
       loadData,
-      loadSensors,
       saveToken,
     }),
     [
@@ -195,11 +164,9 @@ export function SupervisorProvider({ children }) {
       configuration,
       events,
       data,
-      sensors,
       refresh,
       loadEvents,
       loadData,
-      loadSensors,
       saveToken,
     ],
   );

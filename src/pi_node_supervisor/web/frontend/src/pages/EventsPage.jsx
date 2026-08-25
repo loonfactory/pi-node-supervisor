@@ -8,13 +8,10 @@ import { useSupervisor } from "../SupervisorContext.jsx";
 import { fmt } from "../utils.js";
 
 const LABELS = {
-  "configuration.capture_schedule_updated": "촬영 설정 변경",
-  "configuration.power_settings_updated": "전원 설정 변경",
-  "configuration.revision_applied": "고급 설정 변경",
-  "power.schedule_disabled": "자동 전원 계획 비활성화",
-  "power.schedule_enabled": "자동 전원 계획 활성화",
-  "node.config.update_failed": "촬영 설정 적용 실패",
-  "node.config.rollback_failed": "촬영 설정 복구 실패",
+  "run.started": "작업 시작",
+  "run.succeeded": "작업 완료",
+  "run.failed": "작업 실패",
+  "runtime.interrupted": "재시작으로 중단",
 };
 
 export default function EventsPage() {
@@ -44,17 +41,17 @@ export default function EventsPage() {
               {events.items.map((event) => (
                 <tr
                   key={
-                    event.event_id || `${event.occurred_at}-${event.event_type}`
+                    event.id || `${event.occurredAt}-${event.eventType}`
                   }
                 >
-                  <td>{fmt(event.occurred_at)}</td>
-                  <td>{event.node_id || "—"}</td>
+                  <td>{fmt(event.occurredAt)}</td>
+                  <td>{event.deviceId || "—"}</td>
                   <td>
                     <Status value={event.severity} />
                   </td>
                   <td>
                     <strong>
-                      {LABELS[event.event_type] || event.event_type}
+                      {LABELS[event.eventType] || event.eventType}
                     </strong>
                   </td>
                   <td>

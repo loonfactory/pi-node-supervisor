@@ -4,7 +4,7 @@ export const token = () => sessionStorage.getItem("supervisor-token") || "";
 
 export async function api(path, options = {}) {
   const headers = { ...(options.headers || {}) };
-  if (token()) headers["X-Supervisor-Token"] = token();
+  if (token()) headers.Authorization = `Bearer ${token()}`;
   if (options.body && !headers["Content-Type"])
     headers["Content-Type"] = "application/json";
   let response;

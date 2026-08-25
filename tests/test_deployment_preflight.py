@@ -4,54 +4,34 @@ from pathlib import Path
 
 import pytest
 
+from pi_node_supervisor.config_v2 import resolve_configuration
 from pi_node_supervisor.deployment_preflight import (
     SensorPreflightError,
     prepare_sensor_environment,
 )
-from pi_node_supervisor.models import NodeRegistryDocument
 
 
-def sensor_registry(*, required: bool) -> NodeRegistryDocument:
-    return NodeRegistryDocument.model_validate(
+def test_missing_configured_sensor_blocks_deployment() -> None:
+    resolved = resolve_configuration(
         {
-            "schema_version": 1,
-            "nodes": [
-                {
-                    "id": "environment0",
-                    "kind": "sensor-node",
-                    "activity_types": ["sensor-collection"],
-                    "profiles": ["temperature-humidity"],
-                    "required": required,
-                    "sensor_serial": {
-                        "driver": "cwt-soil-thc-s",
-                        "port": "/dev/ttyAMA99999",
-                    },
-                    "sensor_storage": {
-                        "local_directory": "sensors",
-                    },
+            "schemaVersion": 2,
+            "sensors": {
+                "devices": {
+                    "soil": {
+                        "driver": {
+                            "name": "cwt_soil_thc_s",
+                            "port": "/dev/ttyAMA99999",
+                            "unitId": 1,
+                        }
+                    }
                 }
-            ],
+            },
+            "power": {"minOffSeconds": 300},
         }
-    )
+    ).resolved
 
-
-def test_optional_missing_sensor_is_reported_without_blocking_deployment(
-    tmp_path: Path,
-) -> None:
-    findings = prepare_sensor_environment(
-        sensor_registry(required=False),
-        tmp_path,
-    )
-
-    assert len(findings) == 1
-    assert findings[0].node_id == "environment0"
-    assert findings[0].port == Path("/dev/ttyAMA99999")
-    assert not (tmp_path / "sensors").exists()
-
-
-def test_required_missing_sensor_blocks_deployment(tmp_path: Path) -> None:
     with pytest.raises(SensorPreflightError) as raised:
-        prepare_sensor_environment(sensor_registry(required=True), tmp_path)
+        prepare_sensor_environment(resolved)
 
-    assert raised.value.finding.node_id == "environment0"
+    assert raised.value.finding.device_id == "soil"
     assert raised.value.finding.port == Path("/dev/ttyAMA99999")

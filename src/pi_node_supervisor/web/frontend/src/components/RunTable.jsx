@@ -16,28 +16,27 @@ export default function RunTable({ items }) {
       </thead>
       <tbody>
         {items.map((run) => {
-          const indexed = run.result?.indexed_data_count;
+          const saved = run.result?.storageSucceeded;
+          const attempted = run.result?.storageAttempted;
           const result =
             run.error ||
             (run.status === "succeeded"
-              ? `촬영 완료${Number.isInteger(indexed) ? ` · 파일 ${indexed}개` : ""}`
-              : run.external_id || "—");
+              ? `완료${Number.isInteger(saved) ? ` · 저장 ${saved}/${attempted}` : ""}`
+              : "—");
           return (
-            <tr key={run.run_id}>
+            <tr key={run.runId}>
               <td>
                 <Status value={run.status} />
               </td>
               <td>
                 <strong>
-                  {run.activity_id.startsWith("native-")
-                    ? "정기 촬영"
-                    : run.activity_id}
+                  {run.deviceKind === "camera" ? "카메라 촬영" : "센서 수집"}
                 </strong>
                 <br />
-                <code>{run.run_id.slice(0, 12)}</code>
+                <code>{run.runId.slice(0, 12)}</code>
               </td>
-              <td>{run.node_id}</td>
-              <td>{fmt(run.scheduled_at)}</td>
+              <td>{run.deviceId}</td>
+              <td>{fmt(run.scheduledAt)}</td>
               <td>{result}</td>
             </tr>
           );

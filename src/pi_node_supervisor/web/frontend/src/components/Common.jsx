@@ -130,7 +130,7 @@ export function TokenDialog() {
         <input
           type="password"
           autoComplete="current-password"
-          placeholder="X-Supervisor-Token"
+          placeholder="API token"
           value={value}
           onChange={(event) => setValue(event.target.value)}
         />

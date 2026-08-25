@@ -1,52 +1,22 @@
 {
-  "schema_version": 1,
-  "timezone": "Asia/Seoul",
+  "schemaVersion": 2,
   "policies": {
-    "boot-lead-seconds": 120,
-    "shutdown-grace-seconds": 60,
-    "merge-power-gaps-shorter-than-seconds": 300,
-    "minimum-lead-seconds": 60,
-    "clock-tolerance-seconds": 5
+    "clockToleranceSeconds": 10
   },
-  "activities": [],
-  "capture_node_settings": {
-    "common": {
-      "storages": [
-        {
-          "type": "file",
-          "name": "local",
-          "directory": "captures/{camera}",
-          "layout": "daily"
-        },
-        {
-          "type": "ftps",
-          "name": "archive",
-          "host": "192.168.12.2",
-          "port": 21,
-          "username": "captureftp",
-          "remote_directory": "/",
-          "password_env": "CAPTURE_NODE_FTPS_PASSWORD",
-          "verify_tls": false,
-          "connect_timeout_seconds": 10,
-          "operation_timeout_seconds": 30,
-          "layout": "daily"
-        }
-      ]
-    },
-    "nodes": {}
+  "schedules": {},
+  "storages": {},
+  "cameras": {
+    "defaults": {},
+    "devices": {}
   },
-  "power_keep_schedules": [
-    {
-      "id": "default-morning-power",
-      "start": "08:50:00",
-      "end": "09:30:00",
-      "timezone": "Asia/Seoul"
-    },
-    {
-      "id": "default-evening-power",
-      "start": "17:20:00",
-      "end": "18:10:00",
-      "timezone": "Asia/Seoul"
-    }
-  ]
+  "sensors": {
+    "defaults": {},
+    "devices": {}
+  },
+  "power": {
+    "bootLeadSeconds": 45,
+    "shutdownGraceSeconds": 30,
+    "minOffSeconds": 300,
+    "windows": []
+  }
 }

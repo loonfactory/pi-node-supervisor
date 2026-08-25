@@ -8,7 +8,7 @@ Type=simple
 User=pi-node-supervisor
 Group=pi-node-supervisor
 EnvironmentFile=/etc/pi-node-supervisor/supervisor.env
-ExecStart=/opt/pi-node-supervisor/.venv/bin/pi-node-supervisor --nodes /etc/pi-node-supervisor/nodes.json --state-dir /var/lib/pi-node-supervisor --active-config /etc/pi-node-supervisor/config.json --power-config /etc/pi-power-manager/config.json serve --host 127.0.0.1 --port 8080
+ExecStart=/opt/pi-node-supervisor/.venv/bin/pi-node-supervisor --state-dir /var/lib/pi-node-supervisor --active-config /etc/pi-node-supervisor/config.json --generated-capture-dir /var/lib/pi-node-supervisor/capture-nodes --staging-dir /var/lib/pi-node-supervisor/staging --power-config /etc/pi-power-manager/config.json --power-state /var/lib/pi-power-manager/state.json --capture-node-executable /opt/capture-node/.venv/bin/capture-node-web --power-manager-executable /opt/pi-power-manager/current/.venv/bin/pi-power-manager serve --host 127.0.0.1 --port 8080
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=90
@@ -23,7 +23,7 @@ ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
-ReadWritePaths=/etc/pi-node-supervisor /var/lib/pi-node-supervisor /etc/pi-power-manager/config.json
+ReadWritePaths=/etc/pi-node-supervisor /var/lib/pi-node-supervisor /etc/pi-power-manager/config.json /var/lib/pi-power-manager/state.json
 
 [Install]
 WantedBy=multi-user.target

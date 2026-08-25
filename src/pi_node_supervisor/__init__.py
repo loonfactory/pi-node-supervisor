@@ -1,8 +1,7 @@
-"""Raspberry Pi local node supervisor."""
+"""Raspberry Pi local node supervisor, schema v2."""
 
-from .planner import Planner
-from .service import SupervisorService
+from .config_v2 import Resolution, resolve_configuration
+from .service_v2 import SupervisorServiceV2
 
-__all__ = ["Planner", "SupervisorService"]
-__version__ = "0.1.0"
-
+__all__ = ["Resolution", "SupervisorServiceV2", "resolve_configuration"]
+__version__ = "0.2.0"

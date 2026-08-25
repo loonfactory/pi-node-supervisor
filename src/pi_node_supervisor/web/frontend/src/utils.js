@@ -1,19 +1,16 @@
 export const DEFAULT_CONFIGURATION = {
-  schema_version: 1,
-  timezone: "Asia/Seoul",
+  schemaVersion: 2,
   policies: {
-    "boot-lead-seconds": 120,
-    "shutdown-grace-seconds": 60,
-    "merge-power-gaps-shorter-than-seconds": 300,
-    "minimum-lead-seconds": 60,
-    "clock-tolerance-seconds": 5,
-    "recurrence-horizon-hours": 168,
+    bootLeadSeconds: 45,
+    shutdownGraceSeconds: 30,
+    mergePowerGapsShorterThanSeconds: 300,
+    clockToleranceSeconds: 10,
   },
-  activities: [],
-  capture_schedules: [],
-  sensor_schedules: [],
-  power_keep_schedules: [],
-  capture_node_settings: { common: {}, nodes: {} },
+  schedules: {},
+  storages: {},
+  cameras: { defaults: {}, devices: {} },
+  sensors: { defaults: {}, devices: {} },
+  power: { windows: [] },
 };
 
 export const DEFAULT_CAPTURE_RANGE = {
