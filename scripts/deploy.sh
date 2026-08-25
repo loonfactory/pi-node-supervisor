@@ -71,8 +71,12 @@ trap cleanup EXIT INT TERM
 
 if python3 -c 'import build' >/dev/null 2>&1; then
   python3 -m build --wheel --outdir "$build_dir" "$project_root"
-else
+elif python3 -c 'import hatchling' >/dev/null 2>&1; then
   python3 -m pip wheel --no-deps --no-build-isolation --wheel-dir "$build_dir" "$project_root"
+else
+  python3 -m venv "$build_dir/builder"
+  "$build_dir/builder/bin/python" -m pip install build
+  "$build_dir/builder/bin/python" -m build --wheel --outdir "$build_dir" "$project_root"
 fi
 wheel=$(find "$build_dir" -maxdepth 1 -name 'pi_node_supervisor-*.whl' -print -quit)
 [[ -n "$wheel" ]] || { printf 'Wheel build failed\n' >&2; exit 1; }
@@ -119,12 +123,21 @@ sed -e "s|@BIND_HOST@|$bind_host|g" -e "s|@PORT@|$port|g" \
   -e "s|@POWER_CONFIG@|$power_config|g" -e "s|@POWER_STATE@|$power_state|g" \
   "$template" > "$HOME/.config/systemd/user/pi-node-supervisor.service"
 systemctl --user daemon-reload
-systemctl --user enable --now pi-node-supervisor.service
+systemctl --user enable pi-node-supervisor.service >/dev/null
+systemctl --user disable --now \
+  capture-node-web@camera0.service capture-node-web@camera1.service >/dev/null 2>&1 || true
+systemctl --user restart pi-node-supervisor.service
+health=''
 for _ in $(seq 1 120); do
-  curl -fsS "http://127.0.0.1:$port/api/health" >/dev/null && break
+  candidate=$(curl -fsS "http://127.0.0.1:$port/api/health" 2>/dev/null || true)
+  if python3 -c 'import json,sys; raise SystemExit(json.loads(sys.argv[1]).get("schemaVersion") != 2)' "$candidate" 2>/dev/null; then
+    health=$candidate
+    break
+  fi
   sleep 1
 done
-curl -fsS "http://127.0.0.1:$port/api/health"
+[[ -n "$health" ]] || { systemctl --user --no-pager --full status pi-node-supervisor.service >&2; exit 1; }
+printf '%s\n' "$health"
 REMOTE
 
 printf '\nDeployment complete: http://%s:%s/\n' "${target#*@}" "$port"
