@@ -17,6 +17,8 @@ bind_host=${BIND_HOST:-0.0.0.0}
 port=${PORT:-8080}
 replace_config=false
 without_power_manager=false
+install_power_manager=false
+enable_power_manager=false
 
 usage() {
   printf '%s\n' \
@@ -31,6 +33,8 @@ usage() {
     "  --power-config PATH" \
     "  --power-state PATH" \
     "  --power-hold PATH" \
+    "  --install-power-manager  Install/update root integration; preserve timer state" \
+    "  --enable-power-manager   Install root integration and enable real shutdown timer" \
     "  --local-storage-root PATH" \
     "  --bind-host ADDRESS" \
     "  --port PORT"
@@ -48,6 +52,8 @@ while (($#)); do
     --power-config) power_config=${2:?missing value}; shift 2 ;;
     --power-state) power_state=${2:?missing value}; shift 2 ;;
     --power-hold) power_hold=${2:?missing value}; shift 2 ;;
+    --install-power-manager) install_power_manager=true; shift ;;
+    --enable-power-manager) install_power_manager=true; enable_power_manager=true; shift ;;
     --local-storage-root) local_storage_root=${2:?missing value}; shift 2 ;;
     --bind-host) bind_host=${2:?missing value}; shift 2 ;;
     --port) port=${2:?missing value}; shift 2 ;;
@@ -82,6 +88,19 @@ if ((sensor_count)); then
 fi
 
 PYTHONPATH="$project_root/src" python3 -m pi_node_supervisor.cli validate-config "$config_file"
+if [[ "$install_power_manager" == true ]]; then
+  power_install_arguments=(
+    --target "$target"
+    --remote-base "$remote_base"
+    --install-only
+  )
+  if [[ "$enable_power_manager" == true ]]; then
+    power_install_arguments+=(--enable)
+  else
+    power_install_arguments+=(--preserve-enablement)
+  fi
+  "$script_dir/install-power-manager.sh" "${power_install_arguments[@]}"
+fi
 frontend="$project_root/src/pi_node_supervisor/web/frontend"
 (cd "$frontend" && npm run build)
 

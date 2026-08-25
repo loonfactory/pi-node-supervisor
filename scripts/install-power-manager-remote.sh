@@ -42,11 +42,6 @@ state_path="$state_dir/state.json"
 source_config="$supervisor_base/generated/pi-power-manager.json"
 hold_path="$config_dir/supervisor.hold"
 
-if [[ ! -r "$config_path" && ! -r "$source_config" ]]; then
-  printf 'No existing or staged power configuration is available: %s\n' "$source_config" >&2
-  exit 1
-fi
-
 install -d -m 0755 /opt/pi-power-manager /opt/pi-power-manager/releases "$release"
 python3 -m venv "$release/.venv"
 "$release/.venv/bin/python" -m pip install --no-deps "$wheel"
@@ -57,7 +52,20 @@ mv -Tf /opt/pi-power-manager/current.next /opt/pi-power-manager/current
 # service owns RTC access, runtime state, and shutdown requests.
 install -d -o "$operator" -g "$operator" -m 0750 "$config_dir"
 if [[ ! -r "$config_path" ]]; then
-  install -o "$operator" -g "$operator" -m 0640 "$source_config" "$config_path"
+  if [[ -r "$source_config" ]]; then
+    install -o "$operator" -g "$operator" -m 0640 "$source_config" "$config_path"
+  else
+    # A first deployment has not generated its derived plan yet. Start with no
+    # shutdown windows and keep the Supervisor hold in place until deployment
+    # publishes the real plan.
+    temporary_config="$config_dir/.config.json.initial.$$"
+    printf '%s\n' \
+      '{"schema_version":2,"timezone":"UTC","minimum_lead_seconds":60,"clock_tolerance_seconds":5,"power_schedule":[]}' \
+      >"$temporary_config"
+    chown "$operator:$operator" "$temporary_config"
+    chmod 0640 "$temporary_config"
+    mv -f "$temporary_config" "$config_path"
+  fi
 else
   chown "$operator:$operator" "$config_path"
   chmod 0640 "$config_path"

@@ -95,6 +95,15 @@ scripts/install-power-manager.sh --target USER@HOST --enable
 This command requests administrator authentication for the root systemd unit.
 The normal Supervisor deployment remains unprivileged.
 
+The same installation is available as one combined deployment command:
+
+```bash
+scripts/deploy.sh --target USER@HOST --enable-power-manager
+```
+
+Use `--install-power-manager` instead to install or update the root integration
+while preserving whether its timer is currently enabled.
+
 ## API
 
 Unauthenticated: `GET /api/health`.

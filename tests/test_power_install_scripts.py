@@ -28,3 +28,18 @@ def test_root_power_service_uses_supervisor_hold_interlock() -> None:
     assert "ExecCondition=/usr/bin/test ! -e $hold_path" in installer
     assert "ExecStartPre=/usr/bin/touch $hold_path" in installer
     assert "install -o \"$operator\" -g \"$operator\" -m 0600 /dev/null \"$hold_path\"" in installer
+
+
+def test_deploy_can_install_and_enable_power_integration() -> None:
+    deploy = (ROOT / "scripts/deploy.sh").read_text()
+
+    assert "--enable-power-manager) install_power_manager=true; enable_power_manager=true" in deploy
+    assert '"$script_dir/install-power-manager.sh" "${power_install_arguments[@]}"' in deploy
+    assert "power_install_arguments+=(--enable)" in deploy
+
+
+def test_first_power_install_starts_with_an_empty_fail_safe_plan() -> None:
+    installer = (ROOT / "scripts/install-power-manager-remote.sh").read_text()
+
+    assert '"power_schedule":[]' in installer
+    assert "until deployment" in installer
