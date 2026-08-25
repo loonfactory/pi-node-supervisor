@@ -12,6 +12,8 @@ const LABELS = {
   "run.succeeded": "작업 완료",
   "run.failed": "작업 실패",
   "runtime.interrupted": "재시작으로 중단",
+  "storage.failed": "저장 실패",
+  "storage.temporary_cleanup_failed": "임시 파일 정리 실패",
 };
 
 export default function EventsPage() {

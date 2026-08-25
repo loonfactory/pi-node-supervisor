@@ -12,8 +12,9 @@ import ssl
 import stat
 import tempfile
 from dataclasses import dataclass
+from ftplib import CRLF, Error
 from pathlib import Path, PurePosixPath
-from typing import Protocol
+from typing import BinaryIO, Callable, Protocol
 
 from .config_v2 import ResolvedStorage
 
@@ -215,7 +216,7 @@ class FtpsStorageTarget:
         if not self.settings.get("verifyTls", True):
             context.check_hostname = False
             context.verify_mode = ssl.CERT_NONE
-        ftp = ftplib.FTP_TLS(
+        ftp = _CompatibleFTP_TLS(
             context=context, timeout=self.settings.get("connectTimeoutSeconds", 10)
         )
         ftp.connect(self.settings["host"], self.settings.get("port", 21))
@@ -442,7 +443,9 @@ def _ftps_cleanup(ftp, directory: str) -> int:
     except ftplib.error_perm as exc:
         if str(exc).startswith("550"):
             return 0
-        raise
+        if not _ftps_command_unsupported(exc):
+            raise
+        entries = list(_ftps_fallback_entries(ftp, directory))
     for name, facts in entries:
         path = str(PurePosixPath(directory) / name)
         if facts.get("type") == "dir":
@@ -451,6 +454,111 @@ def _ftps_cleanup(ftp, directory: str) -> int:
             ftp.delete(path)
             removed += 1
     return removed
+
+
+def _ftps_fallback_entries(ftp, directory: str):
+    """List entries on older FTP servers that do not implement MLSD."""
+    try:
+        listed = ftp.nlst(directory)
+    except ftplib.error_perm as exc:
+        if str(exc).startswith("550"):
+            return
+        raise
+    for listed_name in listed:
+        name = PurePosixPath(listed_name.rstrip("/")).name
+        if name in {"", ".", ".."}:
+            continue
+        path = posixpath.join(directory, name)
+        try:
+            ftp.size(path)
+        except ftplib.error_perm:
+            try:
+                ftp.cwd(path)
+            except ftplib.error_perm:
+                continue
+            yield name, {"type": "dir"}
+        else:
+            yield name, {"type": "file"}
+
+
+def _ftps_command_unsupported(exc: ftplib.error_perm) -> bool:
+    return str(exc)[:3] in {"500", "501", "502", "504"}
+
+
+_DATA_TLS_SHUTDOWN_TIMEOUT_SECONDS = 1.0
+
+
+class _CompatibleFTP_TLS(ftplib.FTP_TLS):
+    """Tolerate FTPS servers that omit the data-channel TLS close notification."""
+
+    def retrbinary(
+        self,
+        cmd: str,
+        callback: Callable[[bytes], object],
+        blocksize: int = 8192,
+        rest: str | None = None,
+    ) -> str:
+        self.voidcmd("TYPE I")
+        with self.transfercmd(cmd, rest) as connection:
+            while block := connection.recv(blocksize):
+                callback(block)
+            _finish_tls_data_channel(connection)
+        return self.voidresp()
+
+    def retrlines(
+        self,
+        cmd: str,
+        callback: Callable[[str], object] | None = None,
+    ) -> str:
+        callback = callback or print
+        self.sendcmd("TYPE A")
+        with self.transfercmd(cmd) as connection:
+            with connection.makefile("r", encoding=self.encoding) as stream:
+                while True:
+                    line = stream.readline(self.maxline + 1)
+                    if len(line) > self.maxline:
+                        raise Error(f"got more than {self.maxline} bytes")
+                    if not line:
+                        break
+                    if line.endswith(CRLF):
+                        line = line[:-2]
+                    elif line.endswith("\n"):
+                        line = line[:-1]
+                    callback(line)
+            _finish_tls_data_channel(connection)
+        return self.voidresp()
+
+    def storbinary(
+        self,
+        cmd: str,
+        fp: BinaryIO,
+        blocksize: int = 8192,
+        callback: Callable[[bytes], object] | None = None,
+        rest: str | None = None,
+    ) -> str:
+        self.voidcmd("TYPE I")
+        with self.transfercmd(cmd, rest) as connection:
+            while block := fp.read(blocksize):
+                connection.sendall(block)
+                if callback is not None:
+                    callback(block)
+            _finish_tls_data_channel(connection)
+        return self.voidresp()
+
+
+def _finish_tls_data_channel(connection: object) -> None:
+    if not isinstance(connection, ssl.SSLSocket):
+        return
+    current_timeout = connection.gettimeout()
+    shutdown_timeout = _DATA_TLS_SHUTDOWN_TIMEOUT_SECONDS
+    if current_timeout is not None:
+        shutdown_timeout = min(current_timeout, shutdown_timeout)
+    connection.settimeout(shutdown_timeout)
+    try:
+        raw_socket = connection.unwrap()
+    except (TimeoutError, ssl.SSLEOFError):
+        return
+    raw_socket.close()
 
 
 def _close_ftp(ftp) -> None:

@@ -127,5 +127,13 @@ def test_capture_run_finishes_after_storage_attempt_even_when_target_fails(
     assert completed.status == "succeeded"
     assert completed.result["storageSucceeded"] == 0
     assert completed.result["storageAttempted"] == 1
+    failure = runtime.list_storage_results(run.run_id)[0]
+    assert failure["target"] == "nas"
+    assert failure["succeeded"] is False
+    event = runtime.list_events()[0]
+    assert event.event_type == "run.succeeded"
+    storage_event = runtime.list_events()[1]
+    assert storage_event.event_type == "storage.failed"
+    assert storage_event.payload["target"] == "nas"
     assert active.count == 0
     assert not staged.exists()

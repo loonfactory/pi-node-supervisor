@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import ssl
+from ftplib import error_perm
 from pathlib import Path, PurePosixPath
 
+import pytest
+
 from pi_node_supervisor.config_v2 import ResolvedStorage
+from pi_node_supervisor import storage_v2
 from pi_node_supervisor.storage_v2 import LocalStorageTarget, SaveResult, StoragePipeline
 
 
@@ -116,3 +121,67 @@ def test_startup_cleanup_removes_only_incomplete_storage_files(tmp_path: Path) -
     assert result[0].succeeded
     assert not incomplete.exists()
     assert completed.read_bytes() == b"complete"
+
+
+def test_ftps_cleanup_falls_back_to_nlst_when_mlsd_is_unsupported() -> None:
+    class LegacyFtps:
+        def __init__(self) -> None:
+            self.files = {
+                "/capture/.partial.1.uploading",
+                "/capture/complete.dng",
+                "/capture/day/.nested.2.uploading",
+            }
+
+        def mlsd(self, _directory):
+            raise error_perm("500 Command not understood.")
+
+        def nlst(self, directory):
+            prefix = f"{directory.rstrip('/')}/"
+            entries = {path for path in self.files if path.startswith(prefix)}
+            if directory == "/capture":
+                entries.add("/capture/day")
+            return [path for path in entries if "/" not in path[len(prefix):]]
+
+        def size(self, path):
+            if path not in self.files:
+                raise error_perm("550 not a file")
+            return 1
+
+        def cwd(self, path):
+            if path != "/capture/day":
+                raise error_perm("550 not a directory")
+
+        def delete(self, path):
+            self.files.remove(path)
+
+    ftp = LegacyFtps()
+
+    removed = storage_v2._ftps_cleanup(ftp, "/capture")
+
+    assert removed == 2
+    assert ftp.files == {"/capture/complete.dng"}
+
+
+@pytest.mark.parametrize("failure", [TimeoutError(), ssl.SSLEOFError()])
+def test_ftps_tolerates_missing_data_channel_close_notify(
+    monkeypatch: pytest.MonkeyPatch, failure: BaseException
+) -> None:
+    class FakeTlsSocket:
+        def __init__(self) -> None:
+            self.timeout = 30.0
+
+        def gettimeout(self):
+            return self.timeout
+
+        def settimeout(self, timeout):
+            self.timeout = timeout
+
+        def unwrap(self):
+            raise failure
+
+    monkeypatch.setattr(storage_v2.ssl, "SSLSocket", FakeTlsSocket)
+    connection = FakeTlsSocket()
+
+    storage_v2._finish_tls_data_channel(connection)
+
+    assert connection.timeout == 1.0

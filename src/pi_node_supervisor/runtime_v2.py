@@ -448,6 +448,30 @@ class RuntimeStoreV2:
             raise PersistenceError(f"cannot list v2 runs: {exc}") from exc
         return tuple(_run(row) for row in rows)
 
+    def list_storage_results(self, run_id: str) -> tuple[dict[str, Any], ...]:
+        try:
+            with self._connect() as connection:
+                rows = connection.execute(
+                    """
+                    SELECT target, path, succeeded, size, error, completed_at
+                    FROM storage_results WHERE run_id=? ORDER BY id
+                    """,
+                    (run_id,),
+                ).fetchall()
+        except sqlite3.Error as exc:
+            raise PersistenceError(f"cannot list Storage results: {exc}") from exc
+        return tuple(
+            {
+                "target": row["target"],
+                "path": row["path"],
+                "succeeded": bool(row["succeeded"]),
+                "size": row["size"],
+                "error": row["error"],
+                "completed_at": row["completed_at"],
+            }
+            for row in rows
+        )
+
     def list_events(self, limit: int = 100, offset: int = 0) -> tuple[EventRecordV2, ...]:
         try:
             with self._connect() as connection:

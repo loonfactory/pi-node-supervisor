@@ -168,8 +168,18 @@ def create_app_v2(
     @app.get("/api/runs", dependencies=[Depends(authenticated)])
     async def runs(limit: int = 100, offset: int = 0) -> dict[str, Any]:
         counts = controller.runtime.counts()
+        records = controller.runtime.list_runs(limit, offset)
         return {
-            "items": [_document(item) for item in controller.runtime.list_runs(limit, offset)],
+            "items": [
+                {
+                    **_document(item),
+                    "storageResults": [
+                        _document(result)
+                        for result in controller.runtime.list_storage_results(item.run_id)
+                    ],
+                }
+                for item in records
+            ],
             "total": counts["runs"],
         }
 

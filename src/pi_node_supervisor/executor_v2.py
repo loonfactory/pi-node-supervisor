@@ -132,6 +132,22 @@ class CameraWorker:
                 size=result.size,
                 error=result.error,
             )
+            self._record_failure_event(run_id, result)
+
+    def _record_failure_event(self, run_id: str, result: SaveResult) -> None:
+        if result.succeeded:
+            return
+        self.runtime.append_event(
+            "storage.failed",
+            severity="error",
+            run_id=run_id,
+            device_id=self.configuration.device_id,
+            payload={
+                "target": result.target,
+                "path": result.path,
+                "error": result.error,
+            },
+        )
 
 
 class SensorWorker:
@@ -197,6 +213,18 @@ class SensorWorker:
                     size=result.size,
                     error=result.error,
                 )
+                if not result.succeeded:
+                    self.runtime.append_event(
+                        "storage.failed",
+                        severity="error",
+                        run_id=run.run_id,
+                        device_id=run.device_id,
+                        payload={
+                            "target": result.target,
+                            "path": result.path,
+                            "error": result.error,
+                        },
+                    )
             result_document = {
                 "observedAt": reading.observed_at.isoformat(),
                 "temperatureC": reading.temperature_c,

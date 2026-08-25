@@ -18,6 +18,7 @@ export default function RunTable({ items }) {
         {items.map((run) => {
           const saved = run.result?.storageSucceeded;
           const attempted = run.result?.storageAttempted;
+          const failures = (run.storageResults || []).filter((item) => !item.succeeded);
           const result =
             run.error ||
             (run.status === "succeeded"
@@ -37,7 +38,14 @@ export default function RunTable({ items }) {
               </td>
               <td>{run.deviceId}</td>
               <td>{fmt(run.scheduledAt)}</td>
-              <td>{result}</td>
+              <td>
+                {result}
+                {failures.map((failure, index) => (
+                  <div className="storage-error" key={`${failure.target}-${index}`}>
+                    {failure.target}: {failure.error || "저장 실패"}
+                  </div>
+                ))}
+              </td>
             </tr>
           );
         })}

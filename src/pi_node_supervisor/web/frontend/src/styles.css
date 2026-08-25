@@ -428,6 +428,14 @@ td code {
   white-space: normal;
   overflow-wrap: anywhere;
 }
+
+.storage-error {
+  margin-top: 0.35rem;
+  color: var(--danger, #b42318);
+  font-size: 0.78rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
 .data-table {
   min-width: 780px;
   table-layout: fixed;

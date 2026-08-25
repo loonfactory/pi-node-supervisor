@@ -40,7 +40,7 @@ export default function SensorsPage() {
     <MetricGrid items={metrics} />
     <article className="panel sensor-data-panel">
       {measurements.length ? <table className="sensor-data-table"><thead><tr><th>취득 시각</th><th>센서</th><th>온도 °C</th><th>습도 %</th><th>저장</th></tr></thead><tbody>
-        {measurements.map((run) => <tr key={run.runId}><td>{fmt(run.result.observedAt)}</td><td><strong>{run.deviceId}</strong></td><td>{run.result.temperatureC}</td><td>{run.result.humidityPercent}</td><td><Status value={run.status} /> {run.result.storageSucceeded}/{run.result.storageAttempted}</td></tr>)}
+        {measurements.map((run) => { const failures = (run.storageResults || []).filter((item) => !item.succeeded); return <tr key={run.runId}><td>{fmt(run.result.observedAt)}</td><td><strong>{run.deviceId}</strong></td><td>{run.result.temperatureC}</td><td>{run.result.humidityPercent}</td><td><Status value={run.status} /> {run.result.storageSucceeded}/{run.result.storageAttempted}{failures.map((failure, index) => <div className="storage-error" key={`${failure.target}-${index}`}>{failure.target}: {failure.error || "저장 실패"}</div>)}</td></tr>; })}
       </tbody></table> : <Empty>표시할 센서 측정값이 없습니다.</Empty>}
     </article>
   </section>;
