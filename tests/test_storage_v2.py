@@ -162,6 +162,67 @@ def test_ftps_cleanup_falls_back_to_nlst_when_mlsd_is_unsupported() -> None:
     assert ftp.files == {"/capture/complete.dng"}
 
 
+def test_ftps_replaces_existing_file_without_server_side_overwrite() -> None:
+    class NoOverwriteFtps:
+        def __init__(self) -> None:
+            self.files = {
+                "/capture/.data.csv.42.uploading": b"new",
+                "/capture/data.csv": b"old",
+            }
+
+        def rename(self, source, destination):
+            if destination in self.files:
+                raise error_perm("550 Cannot create a file when that file already exists")
+            self.files[destination] = self.files.pop(source)
+
+        def delete(self, path):
+            del self.files[path]
+
+    ftp = NoOverwriteFtps()
+
+    storage_v2._ftps_replace(
+        ftp,
+        "/capture/.data.csv.42.uploading",
+        "/capture/data.csv",
+        "/capture/.data.csv.42.replacing",
+    )
+
+    assert ftp.files == {"/capture/data.csv": b"new"}
+
+
+def test_ftps_cleanup_restores_replacement_interrupted_before_commit() -> None:
+    class InterruptedFtps:
+        def __init__(self) -> None:
+            self.files = {
+                "/capture/.data.csv.42.uploading": b"new",
+                "/capture/.data.csv.42.replacing": b"old",
+            }
+
+        def mlsd(self, directory):
+            prefix = f"{directory.rstrip('/')}/"
+            for path in list(self.files):
+                if path.startswith(prefix) and "/" not in path[len(prefix):]:
+                    yield path[len(prefix):], {"type": "file"}
+
+        def size(self, path):
+            if path not in self.files:
+                raise error_perm("550 missing")
+            return len(self.files[path])
+
+        def rename(self, source, destination):
+            self.files[destination] = self.files.pop(source)
+
+        def delete(self, path):
+            del self.files[path]
+
+    ftp = InterruptedFtps()
+
+    removed = storage_v2._ftps_cleanup(ftp, "/capture")
+
+    assert removed == 2
+    assert ftp.files == {"/capture/data.csv": b"old"}
+
+
 @pytest.mark.parametrize("failure", [TimeoutError(), ssl.SSLEOFError()])
 def test_ftps_tolerates_missing_data_channel_close_notify(
     monkeypatch: pytest.MonkeyPatch, failure: BaseException

@@ -229,13 +229,14 @@ class FtpsStorageTarget:
     def save_atomic(self, source: Path, relative_path: PurePosixPath) -> SaveResult:
         final = _remote_final(self.root, relative_path)
         temporary = _temporary_remote(final)
+        backup = _replacement_backup(final)
         ftp = self._connect()
         try:
             _ftps_mkdirs(ftp, str(PurePosixPath(final).parent))
             try:
                 with source.open("rb") as stream:
                     ftp.storbinary(f"STOR {temporary}", stream)
-                ftp.rename(temporary, final)
+                _ftps_replace(ftp, temporary, final, backup)
             except BaseException:
                 try:
                     ftp.delete(temporary)
@@ -393,6 +394,11 @@ def _temporary_remote(final: str) -> str:
     return str(path.with_name(f".{path.name}.{os.getpid()}.uploading"))
 
 
+def _replacement_backup(final: str) -> str:
+    path = PurePosixPath(final)
+    return str(path.with_name(f".{path.name}.{os.getpid()}.replacing"))
+
+
 def _sftp_mkdirs(sftp, directory: str) -> None:
     current = PurePosixPath(directory)
     parts: list[str] = []
@@ -446,14 +452,75 @@ def _ftps_cleanup(ftp, directory: str) -> int:
         if not _ftps_command_unsupported(exc):
             raise
         entries = list(_ftps_fallback_entries(ftp, directory))
+    files: list[tuple[str, str]] = []
     for name, facts in entries:
         path = str(PurePosixPath(directory) / name)
         if facts.get("type") == "dir":
             removed += _ftps_cleanup(ftp, path)
-        elif name.startswith(".") and name.endswith(".uploading"):
+        elif facts.get("type") == "file":
+            files.append((name, path))
+    for name, path in files:
+        if name.startswith(".") and name.endswith(".replacing"):
+            final_name = _replacement_final_name(name)
+            if final_name is None:
+                continue
+            final = str(PurePosixPath(directory) / final_name)
+            if _ftps_file_exists(ftp, final):
+                ftp.delete(path)
+            else:
+                ftp.rename(path, final)
+            removed += 1
+    for name, path in files:
+        if name.startswith(".") and name.endswith(".uploading"):
             ftp.delete(path)
             removed += 1
     return removed
+
+
+def _ftps_replace(ftp, temporary: str, final: str, backup: str) -> None:
+    """Replace a file on servers whose RNTO cannot overwrite an existing path."""
+    existing_moved = False
+    try:
+        try:
+            ftp.rename(final, backup)
+            existing_moved = True
+        except ftplib.error_perm as exc:
+            if not str(exc).startswith("550"):
+                raise
+        ftp.rename(temporary, final)
+        if existing_moved:
+            ftp.delete(backup)
+    except BaseException:
+        if existing_moved:
+            try:
+                ftp.delete(final)
+            except ftplib.all_errors:
+                pass
+            try:
+                ftp.rename(backup, final)
+            except ftplib.all_errors:
+                pass
+        raise
+
+
+def _replacement_final_name(name: str) -> str | None:
+    if not name.startswith(".") or not name.endswith(".replacing"):
+        return None
+    body = name[1 : -len(".replacing")]
+    final_name, separator, process_id = body.rpartition(".")
+    if not separator or not final_name or not process_id.isdigit():
+        return None
+    return final_name
+
+
+def _ftps_file_exists(ftp, path: str) -> bool:
+    try:
+        ftp.size(path)
+        return True
+    except ftplib.error_perm as exc:
+        if str(exc).startswith("550"):
+            return False
+        raise
 
 
 def _ftps_fallback_entries(ftp, directory: str):
