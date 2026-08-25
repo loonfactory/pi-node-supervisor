@@ -100,6 +100,7 @@ Authenticated endpoints:
 - `GET /api/nodes/{device_id}/preview`
 - `GET /api/nodes/{device_id}/preview/stream`
 - `POST /api/captures/manual`
+- `POST /api/sensors/collect`
 
 The v1 sensor settings, sensor storage sync, data sync, capture schedule, and
 camera storage APIs do not exist in v2.

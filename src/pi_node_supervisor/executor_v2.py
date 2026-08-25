@@ -294,6 +294,28 @@ class ExecutionEngineV2:
             raise RuntimeError("manual capture run could not be claimed")
         return await asyncio.to_thread(worker.execute, run, parameters=parameters)
 
+    async def collect_now(self, device_id: str) -> RunRecordV2:
+        worker = self.sensor_workers.get(device_id)
+        if worker is None:
+            raise ValueError(f"sensor does not exist: {device_id}")
+        now = datetime.now(UTC)
+        run = self.runtime.claim_run(
+            revision_id=self.revision_id,
+            device_id=device_id,
+            device_kind="sensor",
+            scheduled_at=now,
+            trigger="manual",
+        )
+        if run is None:
+            raise RuntimeError("manual sensor run could not be claimed")
+        self.runtime.append_event(
+            "run.started",
+            run_id=run.run_id,
+            device_id=run.device_id,
+            payload={"trigger": "manual"},
+        )
+        return await worker.execute(run)
+
     def _task_for(
         self, occurrence: Occurrence, run: RunRecordV2
     ) -> asyncio.Task[RunRecordV2]:

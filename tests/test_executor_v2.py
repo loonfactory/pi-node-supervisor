@@ -6,8 +6,8 @@ from datetime import UTC, datetime, timezone
 from pathlib import Path
 
 from pi_node_supervisor.capture_v2 import StagedArtifact, StagedCaptureBundle
-from pi_node_supervisor.config_v2 import ResolvedCamera
-from pi_node_supervisor.executor_v2 import CameraWorker
+from pi_node_supervisor.config_v2 import ResolvedCamera, resolve_configuration
+from pi_node_supervisor.executor_v2 import CameraWorker, ExecutionEngineV2
 from pi_node_supervisor.runtime_v2 import ActiveWork, RuntimeStoreV2
 from pi_node_supervisor.storage_v2 import SaveResult, StoragePipeline
 
@@ -28,6 +28,52 @@ class FailedStorage:
 
     def save_atomic(self, _source, relative):
         raise OSError(f"cannot store {relative}")
+
+
+def test_manual_sensor_collection_creates_run_and_executes_worker(
+    tmp_path: Path,
+) -> None:
+    runtime = RuntimeStoreV2(tmp_path / "runtime.db")
+
+    class SensorWorker:
+        async def execute(self, run):
+            return runtime.complete_run(
+                run.run_id,
+                status="succeeded",
+                result={"observedAt": datetime.now(UTC).isoformat()},
+            )
+
+    configuration = resolve_configuration(
+        {
+            "schemaVersion": 2,
+            "sensors": {
+                "devices": {
+                    "soil": {
+                        "driver": {
+                            "name": "cwt_soil_thc_s",
+                            "port": "/dev/ttyAMA0",
+                            "unitId": 1,
+                        }
+                    }
+                }
+            },
+            "power": {"minOffSeconds": 300},
+        }
+    ).resolved
+    engine = ExecutionEngineV2(
+        configuration,
+        1,
+        runtime,
+        {},
+        {"soil": SensorWorker()},
+        local_timezone=timezone.utc,
+    )
+
+    completed = asyncio.run(engine.collect_now("soil"))
+
+    assert completed.status == "succeeded"
+    assert completed.device_kind == "sensor"
+    assert completed.trigger == "manual"
 
 
 def test_capture_run_finishes_after_storage_attempt_even_when_target_fails(

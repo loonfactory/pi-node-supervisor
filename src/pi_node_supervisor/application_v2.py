@@ -156,6 +156,15 @@ class RuntimeControllerV2:
             raise ValueError("runtime is not active")
         return await self.engine.capture_now(device_id, parameters)
 
+    async def collect_all_sensors(self) -> tuple[RunRecordV2, ...]:
+        if self.engine is None or not self.engine.sensor_workers:
+            raise ValueError("no sensors are active")
+        tasks = [
+            asyncio.create_task(self.engine.collect_now(device_id))
+            for device_id in sorted(self.engine.sensor_workers)
+        ]
+        return tuple(await asyncio.gather(*tasks))
+
     def node_documents(self) -> list[dict[str, Any]]:
         active = self.service.active_resolution()
         if active is None:

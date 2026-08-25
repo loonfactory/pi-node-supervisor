@@ -265,6 +265,14 @@ def create_app_v2(
             return {"items": [_document(result)]}
         return {"items": [_document(item) for item in await controller.capture_all()]}
 
+    @app.post("/api/sensors/collect", dependencies=[Depends(authenticated)])
+    async def collect_sensors() -> dict[str, Any]:
+        return {
+            "items": [
+                _document(item) for item in await controller.collect_all_sensors()
+            ]
+        }
+
     web_dist = static_directory or Path(__file__).with_name("web") / "static"
     if web_dist.is_dir():
         assets = web_dist / "assets"
