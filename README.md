@@ -80,6 +80,20 @@ the host `/` directory.
   Incomplete staging files are not considered valid results.
 - Power shutdown preparation is rejected while capture, sensor acquisition, or
   storage work is active. New work is blocked once shutdown draining begins.
+- On deployed devices, Supervisor atomically publishes the derived plan to
+  `/etc/pi-power-manager/config.json` and keeps
+  `/etc/pi-power-manager/supervisor.hold` present while work or an on-window is
+  active. The root timer programs and verifies the RTC only after Supervisor
+  removes that hold; it recreates the hold before every privileged evaluation.
+
+Install or update the privileged RTC integration and then deploy Supervisor:
+
+```bash
+scripts/install-power-manager.sh --target USER@HOST --enable
+```
+
+This command requests administrator authentication for the root systemd unit.
+The normal Supervisor deployment remains unprivileged.
 
 ## API
 

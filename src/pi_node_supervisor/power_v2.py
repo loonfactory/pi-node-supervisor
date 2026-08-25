@@ -34,18 +34,26 @@ class PowerManagerCli:
         executable: Path,
         config_path: Path,
         state_path: Path,
+        hold_path: Path | None = None,
         *,
         runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
     ) -> None:
         self.executable = executable
         self.config_path = config_path
         self.state_path = state_path
+        self.hold_path = hold_path
         self.runner = runner
 
     def suspend(self) -> None:
+        if self.hold_path is not None:
+            _create_hold(self.hold_path)
+            return
         self._run("suspend")
 
     def resume(self) -> None:
+        if self.hold_path is not None:
+            self.hold_path.unlink(missing_ok=True)
+            return
         self._run("resume")
 
     def validate(self) -> None:
@@ -165,6 +173,9 @@ class RuntimePowerCoordinator:
         self.timezone_name = timezone_name
         self.manager.suspend()
 
+    def suspend(self) -> None:
+        self.manager.suspend()
+
     def refresh(self, now: datetime) -> dict[str, Any]:
         document = self.plan.manager_document(now, timezone_name=self.timezone_name)
         _atomic_json(self.config_path, document)
@@ -235,3 +246,11 @@ def _atomic_json(path: Path, document: dict[str, Any]) -> None:
         os.replace(temporary, path)
     finally:
         temporary.unlink(missing_ok=True)
+
+
+def _create_hold(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o750)
+    if path.exists():
+        return
+    descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    os.close(descriptor)

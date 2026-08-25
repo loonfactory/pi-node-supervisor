@@ -44,6 +44,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--power-config", type=Path, default=DEFAULT_POWER_CONFIG)
     parser.add_argument("--power-state", type=Path, default=DEFAULT_POWER_STATE)
+    parser.add_argument("--power-hold", type=Path)
     parser.add_argument("--capture-node-executable", type=Path)
     parser.add_argument("--power-manager-executable", type=Path)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -124,6 +125,7 @@ def _controller(
         local_storage_root=args.local_storage_root,
         power_manager_executable=args.power_manager_executable,
         power_manager_state_path=args.power_state,
+        power_manager_hold_path=args.power_hold,
     )
 
 

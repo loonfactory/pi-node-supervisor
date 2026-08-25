@@ -40,6 +40,7 @@ config_path="$config_dir/config.json"
 state_dir=/var/lib/pi-power-manager
 state_path="$state_dir/state.json"
 source_config="$supervisor_base/generated/pi-power-manager.json"
+hold_path="$config_dir/supervisor.hold"
 
 if [[ ! -r "$config_path" && ! -r "$source_config" ]]; then
   printf 'No existing or staged power configuration is available: %s\n' "$source_config" >&2
@@ -62,6 +63,9 @@ else
   chmod 0640 "$config_path"
 fi
 install -d -o root -g root -m 0750 "$state_dir"
+# Power management starts blocked. The Supervisor removes this hold only after
+# it has published a valid plan and confirmed that no work is active.
+install -o "$operator" -g "$operator" -m 0600 /dev/null "$hold_path"
 
 install -d -o root -g root -m 0755 /usr/local/libexec
 install -m 0755 /dev/stdin /usr/local/libexec/pi-power-manager-gpio26-gate <<'GATE'
@@ -137,6 +141,8 @@ Wants=pi-power-manager-interlock.service
 [Service]
 Type=oneshot
 ExecCondition=/usr/local/libexec/pi-power-manager-gpio26-gate check
+ExecCondition=/usr/bin/test ! -e $hold_path
+ExecStartPre=/usr/bin/touch $hold_path
 ExecStart=/opt/pi-power-manager/current/.venv/bin/pi-power-manager --config=$config_path --state=$state_path --rtc=/sys/class/rtc/rtc0 tick --execute --json
 User=root
 Group=root
@@ -146,8 +152,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
 ProtectSystem=strict
-ReadOnlyPaths=$config_dir
-ReadWritePaths=$state_dir /sys/class/rtc/rtc0/wakealarm
+ReadWritePaths=$config_dir $state_dir /sys/class/rtc/rtc0/wakealarm
 UNIT
 
 install -m 0644 /dev/stdin /etc/systemd/system/pi-power-manager.timer <<'TIMER'

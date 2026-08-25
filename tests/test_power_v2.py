@@ -32,6 +32,35 @@ def test_power_manager_failure_includes_exit_status_when_output_is_empty(
         manager.resume()
 
 
+def test_power_manager_hold_blocks_and_releases_privileged_timer(
+    tmp_path: Path,
+) -> None:
+    calls = []
+    hold = tmp_path / "supervisor.hold"
+    manager = PowerManagerCli(
+        Path("/opt/pi-power-manager"),
+        tmp_path / "config.json",
+        tmp_path / "state.json",
+        hold,
+        runner=lambda *args, **kwargs: calls.append(args)
+        or subprocess.CompletedProcess(args, 0, "", ""),
+    )
+
+    manager.suspend()
+    manager.suspend()
+
+    assert hold.is_file()
+    assert calls == []
+
+    manager.resume()
+
+    assert not hold.exists()
+
+    manager.validate()
+
+    assert len(calls) == 1
+
+
 def resolved():
     return resolve_configuration(
         {

@@ -11,10 +11,12 @@ huintech_device_source=${HUINTECH_DEVICE_SOURCE:-$project_root/components/huinte
 power_executable=${POWER_MANAGER_EXECUTABLE:-/opt/pi-power-manager/current/.venv/bin/pi-power-manager}
 power_config=${POWER_CONFIG:-}
 power_state=${POWER_STATE:-}
+power_hold=${POWER_HOLD:-}
 local_storage_root=${LOCAL_STORAGE_ROOT:-}
 bind_host=${BIND_HOST:-0.0.0.0}
 port=${PORT:-8080}
 replace_config=false
+without_power_manager=false
 
 usage() {
   printf '%s\n' \
@@ -28,6 +30,7 @@ usage() {
     "  --power-manager-executable PATH" \
     "  --power-config PATH" \
     "  --power-state PATH" \
+    "  --power-hold PATH" \
     "  --local-storage-root PATH" \
     "  --bind-host ADDRESS" \
     "  --port PORT"
@@ -44,17 +47,26 @@ while (($#)); do
     --power-manager-executable) power_executable=${2:?missing value}; shift 2 ;;
     --power-config) power_config=${2:?missing value}; shift 2 ;;
     --power-state) power_state=${2:?missing value}; shift 2 ;;
+    --power-hold) power_hold=${2:?missing value}; shift 2 ;;
     --local-storage-root) local_storage_root=${2:?missing value}; shift 2 ;;
     --bind-host) bind_host=${2:?missing value}; shift 2 ;;
     --port) port=${2:?missing value}; shift 2 ;;
-    --without-power-manager) shift ;;
+    --without-power-manager) without_power_manager=true; shift ;;
     -h|--help) usage; exit 0 ;;
     *) printf 'Unknown option: %s\n' "$1" >&2; usage >&2; exit 2 ;;
   esac
 done
 
-power_config=${power_config:-$remote_base/generated/pi-power-manager.json}
-power_state=${power_state:-$remote_base/state/pi-power-manager.json}
+if [[ "$without_power_manager" == true ]]; then
+  power_executable=''
+  power_config=${power_config:-$remote_base/generated/pi-power-manager.json}
+  power_state=${power_state:-$remote_base/state/pi-power-manager.json}
+  power_hold=''
+else
+  power_config=${power_config:-/etc/pi-power-manager/config.json}
+  power_state=${power_state:-/var/lib/pi-power-manager/state.json}
+  power_hold=${power_hold:-/etc/pi-power-manager/supervisor.hold}
+fi
 local_storage_root=${local_storage_root:-$remote_base/storage}
 
 [[ "$target" =~ ^[A-Za-z0-9._-]+@[A-Za-z0-9._:-]+$ ]] || { printf 'Invalid target\n' >&2; exit 2; }
@@ -109,11 +121,13 @@ fi
 
 ssh -o BatchMode=yes -o ConnectTimeout=10 "$target" bash -s -- \
   "$remote_base" "$remote_stage" "$release_id" "$capture_executable" \
-  "$power_executable" "$power_config" "$power_state" "$bind_host" "$port" "$replace_config" "$local_storage_root" <<'REMOTE'
+  "$power_executable" "$power_config" "$power_state" "$bind_host" "$port" \
+  "$replace_config" "$local_storage_root" "$power_hold" <<'REMOTE'
 set -Eeuo pipefail
 base=$1; stage=$2; release_id=$3; capture=$4; power=$5; power_config=$6
 power_state=$7; bind_host=$8; port=$9; replace_config=${10}
 local_storage_root=${11}
+power_hold=${12}
 case "$base" in "$HOME"/*) ;; *) printf 'Install root must be below HOME\n' >&2; exit 2;; esac
 wheel=$(find "$stage" -maxdepth 1 -name 'pi_node_supervisor-*.whl' -print -quit)
 config=$(find "$stage" -maxdepth 1 -name '*.json' -print -quit)
@@ -147,9 +161,14 @@ power_argument=''
 if [[ -x "$power" ]]; then
   power_argument="--power-manager-executable $power"
 fi
+power_hold_argument=''
+if [[ -n "$power_hold" ]]; then
+  power_hold_argument="--power-hold $power_hold"
+fi
 sed -e "s|@BIND_HOST@|$bind_host|g" -e "s|@PORT@|$port|g" \
   -e "s|@CAPTURE_NODE_EXECUTABLE@|$capture|g" \
   -e "s|@POWER_MANAGER_ARGUMENT@|$power_argument|g" \
+  -e "s|@POWER_HOLD_ARGUMENT@|$power_hold_argument|g" \
   -e "s|@LOCAL_STORAGE_ROOT@|$local_storage_root|g" \
   -e "s|@POWER_CONFIG@|$power_config|g" -e "s|@POWER_STATE@|$power_state|g" \
   "$template" > "$HOME/.config/systemd/user/pi-node-supervisor.service"

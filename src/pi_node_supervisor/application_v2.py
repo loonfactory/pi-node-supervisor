@@ -29,6 +29,7 @@ class RuntimeControllerV2:
         local_storage_root: Path | None = None,
         power_manager_executable: Path | None = None,
         power_manager_state_path: Path | None = None,
+        power_manager_hold_path: Path | None = None,
     ) -> None:
         self.service = service
         self.capture_node_executable = capture_node_executable
@@ -38,6 +39,7 @@ class RuntimeControllerV2:
         )
         self.power_manager_executable = power_manager_executable
         self.power_manager_state_path = power_manager_state_path
+        self.power_manager_hold_path = power_manager_hold_path
         self.runtime = RuntimeStoreV2(service.store.database_path)
         self.active_work = ActiveWork()
         self.process_manager: CaptureNodeProcessManagerV2 | None = None
@@ -57,6 +59,7 @@ class RuntimeControllerV2:
                 self.power_manager_executable,
                 self.service.power_configuration_path,
                 self.power_manager_state_path,
+                self.power_manager_hold_path,
             )
             self.power = RuntimePowerCoordinator(
                 PowerPlanV2(
@@ -115,6 +118,9 @@ class RuntimeControllerV2:
         )
 
     def stop(self) -> None:
+        if self.power is not None:
+            self.power.suspend()
+            self.power = None
         for provider in self.providers:
             try:
                 provider.close()
@@ -125,7 +131,6 @@ class RuntimeControllerV2:
             self.process_manager.stop()
             self.process_manager = None
         self.engine = None
-        self.power = None
 
     def reload(self) -> None:
         self.stop()

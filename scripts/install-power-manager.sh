@@ -15,7 +15,7 @@ usage() {
   printf '%s\n' \
     "Usage: scripts/install-power-manager.sh [options]" \
     "" \
-    "Installs the privileged RTC service. The timer stays disabled by default." \
+    "Installs the privileged RTC service and Supervisor hold interlock." \
     "" \
     "  --target USER@HOST       SSH destination (default: $target)" \
     "  --remote-base PATH       Supervisor root (default: /home/TARGET_USER/pi-node-supervisor)" \
@@ -97,8 +97,10 @@ deploy_arguments=(
   --target "$target"
   --remote-base "$remote_base"
   --power-config /etc/pi-power-manager/config.json
+  --power-state /var/lib/pi-power-manager/state.json
+  --power-hold /etc/pi-power-manager/supervisor.hold
   --capture-node-executable "$capture_node_executable"
-  --without-power-manager
+  --power-manager-executable /opt/pi-power-manager/current/.venv/bin/pi-power-manager
 )
 [[ -z "$config_file" ]] || deploy_arguments+=(--config "$config_file")
 "$script_dir/deploy.sh" "${deploy_arguments[@]}"
