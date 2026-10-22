@@ -5,9 +5,10 @@ from __future__ import annotations
 import asyncio
 import shutil
 import threading
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, tzinfo
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 from .capture_v2 import CaptureNodeBundleClient
 from .executor_v2 import CameraWorker, ExecutionEngineV2, SensorWorker
@@ -17,6 +18,9 @@ from .runtime_v2 import ActiveWork, RunRecordV2, RuntimeStoreV2
 from .sensor_v2 import CwtSensorProviderV2
 from .service_v2 import SupervisorServiceV2
 from .storage_v2 import StoragePipeline
+
+
+_T = TypeVar("_T")
 
 
 class RuntimeControllerV2:
@@ -148,27 +152,51 @@ class RuntimeControllerV2:
     async def capture_all(self) -> tuple[RunRecordV2, ...]:
         if self.engine is None or not self.engine.camera_workers:
             raise ValueError("no cameras are active")
-        tasks = [
-            asyncio.create_task(self.engine.capture_now(device_id))
-            for device_id in sorted(self.engine.camera_workers)
-        ]
-        return tuple(await asyncio.gather(*tasks))
+
+        async def capture() -> tuple[RunRecordV2, ...]:
+            tasks = [
+                asyncio.create_task(self.engine.capture_now(device_id))
+                for device_id in sorted(self.engine.camera_workers)
+            ]
+            return tuple(await asyncio.gather(*tasks))
+
+        return await self._manual_operation(capture)
 
     async def capture_one(
         self, device_id: str, parameters: dict[str, Any] | None = None
     ) -> RunRecordV2:
         if self.engine is None:
             raise ValueError("runtime is not active")
-        return await self.engine.capture_now(device_id, parameters)
+
+        async def capture() -> RunRecordV2:
+            return await self.engine.capture_now(device_id, parameters)
+
+        return await self._manual_operation(capture)
 
     async def collect_all_sensors(self) -> tuple[RunRecordV2, ...]:
         if self.engine is None or not self.engine.sensor_workers:
             raise ValueError("no sensors are active")
-        tasks = [
-            asyncio.create_task(self.engine.collect_now(device_id))
-            for device_id in sorted(self.engine.sensor_workers)
-        ]
-        return tuple(await asyncio.gather(*tasks))
+
+        async def collect() -> tuple[RunRecordV2, ...]:
+            tasks = [
+                asyncio.create_task(self.engine.collect_now(device_id))
+                for device_id in sorted(self.engine.sensor_workers)
+            ]
+            return tuple(await asyncio.gather(*tasks))
+
+        return await self._manual_operation(collect)
+
+    async def _manual_operation(
+        self, operation: Callable[[], Awaitable[_T]]
+    ) -> _T:
+        power = self.power
+        if power is None:
+            return await operation()
+        await asyncio.to_thread(power.begin_manual_override)
+        try:
+            return await operation()
+        finally:
+            await asyncio.to_thread(power.end_manual_override, datetime.now(UTC))
 
     def node_documents(self) -> list[dict[str, Any]]:
         active = self.service.active_resolution()

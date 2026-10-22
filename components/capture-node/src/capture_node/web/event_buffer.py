@@ -34,8 +34,8 @@ class EventBuffer(logging.Handler):
     def latest_capture_id(self) -> str | None:
         with self._events_lock:
             for event in self._events:
-                if event.get("event_type") == "capture.succeeded":
-                    capture_id = event.get("capture_id")
+                if event.get("eventType") == "capture.succeeded":
+                    capture_id = event.get("captureId")
                     return capture_id if isinstance(capture_id, str) else None
         return None
 

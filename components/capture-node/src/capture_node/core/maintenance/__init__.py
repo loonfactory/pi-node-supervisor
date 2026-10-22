@@ -1,9 +1,6 @@
 """Storage retention policies and their independent scheduler."""
 
-from capture_node.core.maintenance.options import (
-    MaintenanceOptions,
-    RetentionOptions,
-)
+from capture_node.core.maintenance.options import RetentionOptions
 from capture_node.core.maintenance.retention import (
     RetentionFailure,
     RetentionResult,
@@ -12,7 +9,6 @@ from capture_node.core.maintenance.retention import (
 from capture_node.core.maintenance.scheduler import MaintenanceScheduler
 
 __all__ = [
-    "MaintenanceOptions",
     "MaintenanceScheduler",
     "RetentionFailure",
     "RetentionOptions",

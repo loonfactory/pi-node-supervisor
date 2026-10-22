@@ -187,6 +187,11 @@ class RuntimeStoreV2:
                         payload_json TEXT NOT NULL
                     );
 
+                    CREATE TABLE IF NOT EXISTS acknowledged_failed_runs (
+                        run_id TEXT PRIMARY KEY REFERENCES runs(run_id),
+                        acknowledged_at TEXT NOT NULL
+                    );
+
                     CREATE TABLE IF NOT EXISTS temporary_power_windows (
                         id TEXT PRIMARY KEY,
                         start_at TEXT NOT NULL,
@@ -512,6 +517,7 @@ class RuntimeStoreV2:
     def counts(self) -> dict[str, int]:
         try:
             with self._connect() as connection:
+                failed_statuses = "('failed','interrupted','missed')"
                 return {
                     "runs": int(connection.execute("SELECT COUNT(*) FROM runs").fetchone()[0]),
                     "running": int(
@@ -521,7 +527,19 @@ class RuntimeStoreV2:
                     ),
                     "failedRuns": int(
                         connection.execute(
-                            "SELECT COUNT(*) FROM runs WHERE status IN ('failed','interrupted','missed')"
+                            f"""
+                            SELECT COUNT(*) FROM runs r
+                            WHERE r.status IN {failed_statuses}
+                              AND NOT EXISTS (
+                                  SELECT 1 FROM acknowledged_failed_runs a
+                                  WHERE a.run_id=r.run_id
+                              )
+                            """
+                        ).fetchone()[0]
+                    ),
+                    "totalFailedRuns": int(
+                        connection.execute(
+                            f"SELECT COUNT(*) FROM runs WHERE status IN {failed_statuses}"
                         ).fetchone()[0]
                     ),
                     "artifacts": int(
@@ -538,6 +556,36 @@ class RuntimeStoreV2:
                 }
         except sqlite3.Error as exc:
             raise PersistenceError(f"cannot count v2 runtime records: {exc}") from exc
+
+    def acknowledge_failed_runs(self) -> int:
+        """Mark current failed runs as seen without removing their history."""
+        try:
+            with self._connect() as connection:
+                unacknowledged = int(
+                    connection.execute(
+                        """
+                        SELECT COUNT(*) FROM runs r
+                        WHERE r.status IN ('failed','interrupted','missed')
+                          AND NOT EXISTS (
+                              SELECT 1 FROM acknowledged_failed_runs a
+                              WHERE a.run_id=r.run_id
+                          )
+                        """
+                    ).fetchone()[0]
+                )
+                connection.execute(
+                    """
+                    INSERT OR IGNORE INTO acknowledged_failed_runs(run_id, acknowledged_at)
+                    SELECT run_id, ? FROM runs
+                    WHERE status IN ('failed','interrupted','missed')
+                    """,
+                    (datetime.now(UTC).isoformat(),),
+                )
+                return unacknowledged
+        except sqlite3.Error as exc:
+            raise PersistenceError(
+                f"cannot acknowledge failed runtime records: {exc}"
+            ) from exc
 
 
 def _aware_utc(value: datetime) -> datetime:

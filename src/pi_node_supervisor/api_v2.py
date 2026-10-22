@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
 from .application_v2 import RuntimeControllerV2
-from .errors import ApplyError, SupervisorError
+from .errors import ApplyError, ManualOperationUnavailable, SupervisorError
 from .service_v2 import SupervisorServiceV2
 
 
@@ -81,6 +81,10 @@ def create_app_v2(
     async def supervisor_error(_request, exc: SupervisorError):
         return JSONResponse(status_code=422, content={"detail": str(exc)})
 
+    @app.exception_handler(ManualOperationUnavailable)
+    async def manual_operation_unavailable(_request, exc: ManualOperationUnavailable):
+        return JSONResponse(status_code=409, content={"detail": str(exc)})
+
     @app.get("/api/health")
     async def health() -> dict[str, Any]:
         return {
@@ -97,6 +101,13 @@ def create_app_v2(
             "activeWork": controller.active_work.count,
             "nodes": controller.node_documents(),
         }
+
+    @app.post(
+        "/api/dashboard/acknowledge-failures",
+        dependencies=[Depends(authenticated)],
+    )
+    async def acknowledge_dashboard_failures() -> dict[str, int]:
+        return {"acknowledged": controller.runtime.acknowledge_failed_runs()}
 
     @app.get("/api/config/draft", dependencies=[Depends(authenticated)])
     async def get_draft() -> dict[str, Any]:

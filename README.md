@@ -78,8 +78,13 @@ the host `/` directory.
   pending row, or sync API.
 - On startup, runs left in `running` become `interrupted`; they are not replayed.
   Incomplete staging files are not considered valid results.
+- Dashboard failure acknowledgement only resets the unseen failure counter. Run
+  and event history remains available, and later failures increment the counter.
 - Power shutdown preparation is rejected while capture, sensor acquisition, or
-  storage work is active. New work is blocked once shutdown draining begins.
+  storage work is active. Scheduled work is blocked once shutdown draining begins.
+- Authenticated manual capture and sensor collection are operator overrides. They
+  reassert the power hold before accepting work and retain it for
+  `shutdownGraceSeconds` after the operation completes.
 - On deployed devices, Supervisor atomically publishes the derived plan to
   `/etc/pi-power-manager/config.json` and keeps
   `/etc/pi-power-manager/supervisor.hold` present while work or an on-window is
@@ -101,6 +106,15 @@ The same installation is available as one combined deployment command:
 scripts/deploy.sh --target USER@HOST --enable-power-manager
 ```
 
+`scripts/deploy.sh` also installs or updates the bundled CaptureNode runtime before
+activating Supervisor. A successful CaptureNode deployment records a deterministic
+source ID on the device; later deployments skip its tests, frontend build, transfer,
+and activation when that ID is already current. Existing CaptureNode configuration,
+captures, secrets, and virtual-environment dependencies are preserved. Use
+`--capture-node-source PATH` to select another compatible source tree, or
+`--skip-capture-node-deploy` together with `--capture-node-executable PATH` when the
+runtime is managed externally.
+
 Use `--install-power-manager` instead to install or update the root integration
 while preserving whether its timer is currently enabled.
 
@@ -116,6 +130,7 @@ Authenticated endpoints:
 - `POST /api/revisions/apply`, `GET /api/revisions`
 - `GET /api/power-manager/config`
 - `GET /api/dashboard`
+- `POST /api/dashboard/acknowledge-failures`
 - `POST /api/runtime/tick`, `POST /api/runtime/recover`
 - `GET /api/runs`, `GET /api/events`, `GET /api/data`
 - `GET /api/nodes`

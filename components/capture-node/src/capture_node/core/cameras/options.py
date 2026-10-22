@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import Field, model_validator
 
@@ -17,6 +17,8 @@ class Picamera2Options(StrictModel):
     height: int | None = Field(default=None, gt=0)
     preview_fps: float = Field(default=10, gt=0)
     preview_quality: int = Field(default=75, ge=1, le=100)
+    calibration: dict[str, Any] = Field(default_factory=dict)
+    params: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_size(self) -> Picamera2Options:
@@ -39,6 +41,8 @@ class V4L2CameraOptions(StrictModel):
     height: int = Field(default=1080, gt=0)
     frame_rate: float = Field(default=24, gt=0)
     startup_timeout_seconds: float = Field(default=10, gt=0)
+    calibration: dict[str, Any] = Field(default_factory=dict)
+    params: dict[str, Any] = Field(default_factory=dict)
 
 
 CameraOptions = Annotated[

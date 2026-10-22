@@ -8,6 +8,8 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
+from pydantic.alias_generators import to_camel
+
 LOGGER_NAME = "capture_node"
 EVENT_ATTRIBUTE = "capture_event"
 SCHEMA_VERSION = 1
@@ -60,10 +62,10 @@ class EventEmitter:
 
     def emit(self, event_type: EventType, **fields: Any) -> dict[str, Any]:
         payload = {
-            "schema_version": SCHEMA_VERSION,
-            "event_type": event_type.value,
+            "schemaVersion": SCHEMA_VERSION,
+            "eventType": event_type.value,
             "timestamp": datetime.now(UTC).isoformat(),
-            **fields,
+            **{to_camel(name): value for name, value in fields.items()},
         }
         self._logger.log(
             LEVELS[event_type],

@@ -149,11 +149,12 @@ def make_configuration(
     options = Options.model_validate(
         document
         or {
-            "capture": {"interval_seconds": 60, "params": {}},
-            "image": {
-                "format": "jpeg",
+            "captures": [{"type": "interval", "interval": 60}],
+            "images": {
+              "jpeg": {
                 "quality": 90,
-                "embed_metadata": True,
+                "embedMetadata": True,
+              }
             },
             "storages": [],
         }

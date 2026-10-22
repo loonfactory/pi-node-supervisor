@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 import logging
 import statistics
 import threading
 import tracemalloc
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from io import BytesIO
 
@@ -15,6 +17,7 @@ from PIL import Image
 from capture_node.core import CaptureNode
 from capture_node.core.events import EventEmitter, EventType
 from capture_node.core.storages import SaveResult
+from capture_node.core.storages.file_storage import FileStorage
 from conftest import (
     FakeCamera,
     FakeCameraProvider,
@@ -38,11 +41,13 @@ def build_core(
     configuration = make_configuration(
         tmp_path / "config.json",
         {
-            "capture": {"interval_seconds": interval, "params": params or {}},
-            "image": {
-                "format": "jpeg",
-                "quality": 90,
-                "embed_metadata": True,
+            "camera": {"type": "picamera2", "params": params or {}},
+            "captures": [{"type": "interval", "interval": interval}],
+            "images": {
+                "jpeg": {
+                    "quality": 90,
+                    "embedMetadata": True,
+                },
             },
             "storages": [],
         },
@@ -75,7 +80,7 @@ def test_b1_normal_collection_reaches_completed_terminal_state(
     result = node.collect_once()
     wait_until(
         lambda: any(
-            item["event_type"] == EventType.TERMINAL_COMPLETED for item in emitted
+            item["eventType"] == EventType.TERMINAL_COMPLETED for item in emitted
         )
     )
 
@@ -83,80 +88,81 @@ def test_b1_normal_collection_reaches_completed_terminal_state(
     assert result.error is None
     assert result.captured_at is not None
     assert len(storage.calls) == 1
-    assert [item["event_type"] for item in emitted] == [
+    assert [item["eventType"] for item in emitted] == [
         EventType.CAPTURE_SUCCEEDED,
         EventType.TERMINAL_COMPLETED,
     ]
 
 
-def test_png_and_dng_are_distributed_as_one_capture_bundle(
+def test_png_jpeg_and_dng_are_distributed_as_one_capture_bundle(
     tmp_path: Path,
     event_output,
 ) -> None:
     storage = FakeStorage("local")
     node, emitted = build_core(tmp_path, FakeCamera(), (storage,), event_output)
     document = node.options.model_dump(mode="json")
-    document["image"] = {
-        "format": "png",
-        "compression": 7,
-        "embed_metadata": True,
-        "raw": {"enabled": True, "format": "dng"},
+    document["images"] = {
+        "png": {"compression": 7, "embedMetadata": True},
+        "jpeg": {"quality": 90, "embedMetadata": True},
+        "dng": {"embedMetadata": True},
     }
     assert node.update_options(document).succeeded
 
     result = node.collect_once()
     wait_until(
         lambda: any(
-            item["event_type"] == EventType.TERMINAL_COMPLETED for item in emitted
+            item["eventType"] == EventType.TERMINAL_COMPLETED for item in emitted
         )
     )
 
     assert result.error is None
-    assert len(storage.calls) == 2
+    assert len(storage.calls) == 3
     names = [name for _data, name in storage.calls]
     assert names[0].endswith(".png")
-    assert names[1].endswith(".dng")
-    assert names[0].removesuffix(".png") == names[1].removesuffix(".dng")
-    assert storage.calls[1][0] == b"fake-dng"
+    assert names[1].endswith(".jpeg")
+    assert names[2].endswith(".dng")
+    stems = {
+        name.removesuffix(extension)
+        for name, extension in zip(names, (".png", ".jpeg", ".dng"), strict=True)
+    }
+    assert len(stems) == 1
+    assert storage.calls[2][0] == b"fake-dng"
     png_parameters = json.loads(
         Image.open(BytesIO(storage.calls[0][0])).getexif()[37510][8:]
     )
-    assert png_parameters["capture_id"] == result.capture_id
+    assert png_parameters["captureId"] == result.capture_id
     completed = next(
-        item for item in emitted if item["event_type"] == EventType.TERMINAL_COMPLETED
+        item for item in emitted if item["eventType"] == EventType.TERMINAL_COMPLETED
     )
     assert completed["artifacts"] == names
 
 
-def test_dng_policy_distributes_only_the_sensor_raw_artifact(
+def test_dng_only_capture_distributes_only_the_camera_raw_artifact(
     tmp_path: Path,
     event_output,
 ) -> None:
     storage = FakeStorage("local")
     node, emitted = build_core(tmp_path, FakeCamera(), (storage,), event_output)
     document = node.options.model_dump(mode="json")
-    document["image"] = {"format": "dng"}
+    document["images"] = {"dng": {"embedMetadata": True}}
     assert node.update_options(document).succeeded
 
     result = node.collect_once()
     wait_until(
         lambda: any(
-            item["event_type"] == EventType.TERMINAL_COMPLETED for item in emitted
+            item["eventType"] == EventType.TERMINAL_COMPLETED for item in emitted
         )
     )
 
     assert result.error is None
-    assert storage.calls == [
-        (
-            b"fake-dng",
-            next(
-                item["artifacts"][0]
-                for item in emitted
-                if item["event_type"] == EventType.TERMINAL_COMPLETED
-            ),
-        )
-    ]
-    assert storage.calls[0][1].endswith(".dng")
+    assert len(storage.calls) == 1
+    data, name = storage.calls[0]
+    assert data == b"fake-dng"
+    assert name.endswith(".dng")
+    completed = next(
+        item for item in emitted if item["eventType"] == EventType.TERMINAL_COMPLETED
+    )
+    assert completed["artifacts"] == [name]
 
 
 @pytest.mark.covers("STO-001", "STO-003")
@@ -186,7 +192,7 @@ def test_c1_capture_failure_is_observable_and_next_cycle_continues(
     assert isinstance(first.error, RuntimeError)
     assert second.error is None
     failure = emitted[0]
-    assert failure["event_type"] == EventType.CAPTURE_FAILED
+    assert failure["eventType"] == EventType.CAPTURE_FAILED
     assert failure["cause"]["code"] == "RuntimeError"
     assert "injected" in failure["cause"]["message"]
 
@@ -205,13 +211,13 @@ def test_c2_storage_failure_emits_discard_with_cause(
     result = node.collect_once()
     wait_until(
         lambda: any(
-            item["event_type"] == EventType.TERMINAL_DISCARDED for item in emitted
+            item["eventType"] == EventType.TERMINAL_DISCARDED for item in emitted
         )
     )
 
     assert result.error is None
     terminal = emitted[-1]
-    assert terminal["event_type"] == EventType.TERMINAL_DISCARDED
+    assert terminal["eventType"] == EventType.TERMINAL_DISCARDED
     assert terminal["failures"][0]["target"] == "offline"
     assert terminal["failures"][0]["cause"]["code"] == "ConnectionError"
 
@@ -234,9 +240,9 @@ def test_c5_delayed_storage_skips_due_ticks_without_overlap(
     time.sleep(0.19)
     node.stop()
 
-    event_types = [item["event_type"] for item in emitted]
+    event_types = [item["eventType"] for item in emitted]
     assert EventType.CAPTURE_SKIPPED in event_types
-    assert all(item["pending_elapsed"] >= 0 for item in emitted if item["event_type"] == EventType.CAPTURE_SKIPPED)
+    assert all(item["pendingElapsed"] >= 0 for item in emitted if item["eventType"] == EventType.CAPTURE_SKIPPED)
     assert len(storage.calls) == 2
 
 
@@ -259,7 +265,7 @@ def test_c6_collection_resumes_after_delayed_terminal_state(
     node.stop()
 
     completed = [
-        item for item in emitted if item["event_type"] == EventType.TERMINAL_COMPLETED
+        item for item in emitted if item["eventType"] == EventType.TERMINAL_COMPLETED
     ]
     assert len(completed) >= 2
 
@@ -314,10 +320,60 @@ def test_a4_start_with_no_targets_emits_warning(
     node.start()
     node.stop()
 
-    assert [item["event_type"] for item in emitted] == [
+    assert [item["eventType"] for item in emitted] == [
         EventType.STARTED,
         EventType.NO_STORAGE_TARGETS,
         EventType.STOPPED,
+    ]
+
+
+def test_storage_scoped_maintenance_runs_for_its_own_target(
+    tmp_path: Path,
+    event_output,
+) -> None:
+    root = tmp_path / "captures"
+    root.mkdir()
+    expired = root / "expired.png"
+    expired.write_bytes(b"expired")
+    modified_at = datetime.now(UTC) - timedelta(days=8)
+    os.utime(expired, (modified_at.timestamp(), modified_at.timestamp()))
+    configuration = make_configuration(
+        tmp_path / "config.json",
+        {
+            "captures": [{"type": "interval", "interval": 3600}],
+            "storages": [
+                {
+                    "type": "file",
+                    "name": "local",
+                    "directory": str(root),
+                    "layout": "flat",
+                    "maintenance": {
+                        "intervalSeconds": 3600,
+                        "maxAgeDays": 7,
+                    },
+                }
+            ],
+        },
+    )
+    emitter, collector = event_output
+    node = CaptureNode(
+        FakeCameraProvider(FakeCamera()),
+        configuration,
+        FakeStorageProvider(FileStorage("local", root, "flat")),
+        emitter=emitter,
+    )
+
+    node.start()
+    wait_until(lambda: not expired.exists())
+    node.stop()
+
+    completed = [
+        item
+        for item in collector.items
+        if item["eventType"] == EventType.RETENTION_COMPLETED
+    ]
+    assert completed[0]["deleted"] == [
+        {"target": "local", "name": "expired.png"}
     ]
 
 
@@ -348,7 +404,7 @@ def test_stop_rejects_new_work_and_drains_background_storage(
     stopping.join(timeout=1)
     assert not stopping.is_alive()
     assert not node.is_pending
-    assert [item["event_type"] for item in emitted][-2:] == [
+    assert [item["eventType"] for item in emitted][-2:] == [
         EventType.TERMINAL_COMPLETED,
         EventType.STOPPED,
     ]
@@ -380,16 +436,14 @@ def test_d1_node_applies_runtime_capture_settings(
     camera = FakeCamera()
     node, emitted = build_core(tmp_path, camera, (), event_output)
     document = node.options.model_dump(mode="json")
-    document["capture"] = {
-        "interval_seconds": 4,
-        "params": {"Brightness": 0.4},
-    }
+    document["captures"] = [{"type": "interval", "interval": 4}]
+    document["camera"]["params"] = {"Brightness": 0.4}
 
     result = node.update_options(document)
 
     assert result.succeeded
     assert camera.applied[-1] == {"Brightness": 0.4}
-    assert emitted[-1]["event_type"] == EventType.CONFIG_CHANGED
+    assert emitted[-1]["eventType"] == EventType.CONFIG_CHANGED
 
 
 @pytest.mark.covers("CAP-001", "CAP-008", "CAP-009", "CFG-009")
@@ -406,16 +460,12 @@ def test_runtime_preview_only_mode_keeps_manual_capture_and_image_policy(
         event_output,
     )
     document = node.options.model_dump(mode="json")
-    document["capture"] = {
-        **document["capture"],
-        "mode": "disabled",
-        "interval_seconds": None,
-        "daily_times": [],
-    }
-    document["image"] = {
-        "format": "png",
-        "compression": 7,
-        "embed_metadata": False,
+    document["captures"] = []
+    document["images"] = {
+        "png": {
+            "compression": 7,
+            "embedMetadata": False,
+        },
     }
 
     update = node.update_options(document)
@@ -443,10 +493,8 @@ def test_d4_camera_apply_failure_rolls_back_parameters(
     )
     camera.apply_failure = RuntimeError("rejected")
     document = node.options.model_dump(mode="json")
-    document["capture"] = {
-        "interval_seconds": 4,
-        "params": {"new": True},
-    }
+    document["captures"] = [{"type": "interval", "interval": 4}]
+    document["camera"]["params"] = {"new": True}
 
     result = node.update_options(document)
 

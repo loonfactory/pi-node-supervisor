@@ -148,6 +148,7 @@ def test_x4_picamera_still_and_preview_share_the_main_source(
     implementation = FakePicamera.instances[0]
     assert implementation.camera_num == 1
     assert implementation.configured["main"]["format"] == "BGR888"
+    assert implementation.configured["main"]["size"] == (4608, 2592)
     assert implementation.configured["transform"].hflip
     assert implementation.configured["transform"].vflip
     assert implementation.applied_controls == {"ExposureTime": 5_000}
@@ -175,7 +176,7 @@ def test_picamera_discovery_returns_selectable_options(monkeypatch) -> None:
     ]
     assert [device.name for device in devices] == ["imx708_noir", "imx219"]
     assert [device.options.camera_num for device in devices] == [0, 1]
-    assert devices[0].options.size == (1920, 1080)
+    assert devices[0].options.size is None
 
 
 def test_picamera_raw_capture_returns_dng_from_full_sensor_mode(monkeypatch) -> None:

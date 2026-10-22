@@ -6,12 +6,14 @@ import json
 import os
 import subprocess
 import tempfile
+import threading
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta, tzinfo
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
 from .config_v2 import ResolvedConfiguration
+from .errors import ManualOperationUnavailable
 from .runtime_v2 import ActiveWork
 from .schedule_v2 import ScheduleEngine
 
@@ -171,31 +173,75 @@ class RuntimePowerCoordinator:
         self.manager = manager
         self.config_path = config_path
         self.timezone_name = timezone_name
+        self._lock = threading.RLock()
+        self._manual_hold_until: datetime | None = None
         self.manager.suspend()
 
     def suspend(self) -> None:
-        self.manager.suspend()
+        with self._lock:
+            self.manager.suspend()
+
+    def begin_manual_override(self) -> None:
+        """Reassert the power hold and reserve work before a manual operation."""
+        with self._lock:
+            try:
+                self.manager.suspend()
+            except Exception as exc:
+                raise ManualOperationUnavailable(
+                    f"manual operation could not cancel shutdown preparation: {exc}"
+                ) from exc
+            self.active_work.cancel_shutdown()
+            self.active_work.acquire()
+
+    def end_manual_override(self, now: datetime) -> None:
+        """Release a manual reservation while retaining a post-work grace period."""
+        with self._lock:
+            grace = self.plan.configuration.power.shutdown_grace_seconds
+            hold_until = now.astimezone(UTC) + timedelta(seconds=grace)
+            if self._manual_hold_until is None or hold_until > self._manual_hold_until:
+                self._manual_hold_until = hold_until
+            try:
+                self.manager.suspend()
+            finally:
+                self.active_work.release()
 
     def refresh(self, now: datetime) -> dict[str, Any]:
+        with self._lock:
+            return self._refresh_locked(now)
+
+    def _refresh_locked(self, now: datetime) -> dict[str, Any]:
+        now_utc = now.astimezone(UTC)
         document = self.plan.manager_document(now, timezone_name=self.timezone_name)
         _atomic_json(self.config_path, document)
         self.manager.validate()
+        if self._manual_hold_until is not None:
+            if now_utc <= self._manual_hold_until:
+                self.manager.suspend()
+                self.active_work.cancel_shutdown()
+                return {
+                    "state": "manual-grace",
+                    "activeWork": self.active_work.count,
+                    "holdUntil": self._manual_hold_until.isoformat(),
+                }
+            self._manual_hold_until = None
         intervals = self.plan.intervals(
             now - timedelta(days=1), now + timedelta(days=7)
         )
         current = next(
-            (item for item in intervals if item.start <= now.astimezone(UTC) <= item.end),
+            (item for item in intervals if item.start <= now_utc <= item.end),
             None,
         )
         if current is not None:
+            self.manager.suspend()
+            self.active_work.cancel_shutdown()
             return {"state": "within-window", "activeWork": self.active_work.count}
-        future = [item for item in intervals if item.start > now.astimezone(UTC)]
+        future = [item for item in intervals if item.start > now_utc]
         if not future:
             return {"state": "no-future-window", "activeWork": self.active_work.count}
         if self.active_work.count:
             return {"state": "waiting-for-work", "activeWork": self.active_work.count}
         next_interval = future[0]
-        remaining = (next_interval.start - now.astimezone(UTC)).total_seconds()
+        remaining = (next_interval.start - now_utc).total_seconds()
         if remaining < self.plan.configuration.power.min_off_seconds:
             return {
                 "state": "too-close-to-next-window",

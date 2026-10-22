@@ -39,7 +39,7 @@ def test_retention_deletes_only_files_older_than_the_policy(tmp_path: Path) -> N
     storage = FileStorage("local", tmp_path)
     maintenance = StorageMaintenance(
         FakeStorageProvider(storage),
-        (RetentionOptions(target="local", max_age_days=180),),
+        (RetentionOptions(target="local", maxAgeDays=180),),
     )
 
     result = maintenance.run(now)
@@ -72,7 +72,7 @@ def test_retention_does_not_delete_from_a_target_without_a_policy(
             FileStorage("local", local_root),
             FileStorage("archive", archive_root),
         ),
-        (RetentionOptions(target="local", max_age_days=365),),
+        (RetentionOptions(target="local", maxAgeDays=365),),
     )
 
     result = maintenance.run(now)

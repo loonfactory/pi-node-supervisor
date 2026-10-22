@@ -8,14 +8,21 @@ from typing import Any
 from capture_node.core.cameras import Capture
 from capture_node.core.encodings.contracts import EncodedImage
 from capture_node.core.encodings.exif import capture_exif
-from capture_node.core.encodings.options import ImageOptions, PngImageOptions
+from capture_node.core.encodings.options import (
+    PngImageOptions,
+    ProcessedImageOptions,
+)
 
 
 class PngEncoding:
     format = "png"
     extension = "png"
 
-    def encode(self, capture: Capture, options: ImageOptions) -> EncodedImage:
+    def encode(
+        self,
+        capture: Capture,
+        options: ProcessedImageOptions,
+    ) -> EncodedImage:
         if not isinstance(options, PngImageOptions):
             raise TypeError("PNG encoding requires PngImageOptions")
         output = BytesIO()

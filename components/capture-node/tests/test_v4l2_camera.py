@@ -126,12 +126,12 @@ def test_v4l2_camera_shares_mjpeg_source_and_applies_controls(
     assert preview.data == source
     assert captured.image.size == (12, 8)
     assert captured.parameters["brightness"] == 140
-    assert captured.parameters["observed_controls"] == {
+    assert captured.parameters["observedControls"] == {
         "gain": 28,
         "auto_exposure": 3,
         "exposure_time_absolute": 83,
     }
-    assert captured.parameters["control_snapshot_at"].endswith("+00:00")
+    assert captured.parameters["controlSnapshotAt"].endswith("+00:00")
     assert any(
         "--set-ctrl=brightness=140,white_balance_automatic=0" in command
         for command, _kwargs in control_calls
@@ -183,13 +183,13 @@ def test_v4l2_flip_prefers_hardware_per_axis_and_uses_software_fallback(
         expected = decoded.convert("RGB").transpose(Image.Transpose.FLIP_TOP_BOTTOM)
         expected.load()
     assert captured.image.tobytes() == expected.tobytes()
-    assert captured.parameters["flip_application"] == {
+    assert captured.parameters["flipApplication"] == {
         "horizontal_flip": "hardware",
         "vertical_flip": "software",
     }
     assert captured.parameters["horizontal_flip"] is True
     assert captured.parameters["vertical_flip"] is True
-    assert captured.parameters["observed_controls"] == {
+    assert captured.parameters["observedControls"] == {
         "horizontal_flip": True
     }
     assert preview.data == source
@@ -243,10 +243,10 @@ def test_v4l2_control_snapshot_failure_does_not_discard_capture(
     captured = camera.capture()
 
     assert captured.image.size == (12, 8)
-    assert captured.parameters["control_snapshot_error"] == (
+    assert captured.parameters["controlSnapshotError"] == (
         "cannot read V4L2 controls: control query failed"
     )
-    assert "observed_controls" not in captured.parameters
+    assert "observedControls" not in captured.parameters
     camera.close()
 
 
@@ -288,7 +288,7 @@ def test_missing_v4l2_ctl_warns_once_and_keeps_capture_available(
     }
     assert control_calls == 1
     assert captured.image.size == (12, 8)
-    assert captured.parameters["control_snapshot_error"] == (
+    assert captured.parameters["controlSnapshotError"] == (
         "v4l2-ctl is unavailable; capture and preview remain active"
     )
     assert sum("v4l2-ctl is unavailable" in record.message for record in caplog.records) == 1

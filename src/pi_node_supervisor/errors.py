@@ -16,3 +16,6 @@ class PersistenceError(SupervisorError):
 class ApplyError(SupervisorError):
     """A candidate revision could not be activated."""
 
+
+class ManualOperationUnavailable(SupervisorError):
+    """A manual operation cannot safely override the pending power handoff."""

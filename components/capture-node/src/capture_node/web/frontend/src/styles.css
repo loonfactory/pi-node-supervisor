@@ -563,6 +563,14 @@ textarea {
   border-bottom: 1px solid #303539;
 }
 
+.image-format-editor {
+  display: grid;
+  gap: 9px;
+  padding: 10px;
+  border: 1px solid #303539;
+  border-radius: 7px;
+}
+
 .image-quality-control > div {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 68px;

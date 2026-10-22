@@ -137,3 +137,39 @@ def test_capture_run_finishes_after_storage_attempt_even_when_target_fails(
     assert storage_event.payload["target"] == "nas"
     assert active.count == 0
     assert not staged.exists()
+
+
+def test_shutdown_rejection_finishes_claimed_camera_run_as_failed(
+    tmp_path: Path,
+) -> None:
+    runtime = RuntimeStoreV2(tmp_path / "runtime.db")
+    active = ActiveWork()
+    assert active.begin_shutdown_if_idle()
+    run = runtime.claim_run(
+        revision_id=1,
+        device_id="rgb",
+        device_kind="camera",
+        scheduled_at=datetime(2030, 1, 1, 12, tzinfo=UTC),
+        trigger="manual",
+    )
+    assert run is not None
+    worker = CameraWorker(
+        ResolvedCamera(
+            device_id="rgb",
+            capture_node={},
+            schedule_name=None,
+            schedule=(),
+            storages=(),
+        ),
+        FakeClient(None),
+        StoragePipeline(()),
+        runtime,
+        active,
+        local_timezone=timezone.utc,
+    )
+
+    completed = worker.execute(run)
+
+    assert completed.status == "failed"
+    assert "shutdown is being prepared" in completed.error
+    assert runtime.counts()["running"] == 0

@@ -29,7 +29,7 @@ def sample_capture() -> Capture:
             "ExposureTime": 10_000,
             "AnalogueGain": 2.0,
             "Mode": "test",
-            "observed_controls": {
+            "observedControls": {
                 "gain": 28,
                 "exposure_time_absolute": 83,
             },
@@ -41,12 +41,12 @@ def sample_capture() -> Capture:
 def test_b1_encodes_jpeg_with_standard_metadata() -> None:
     encoded = ImageEncoder().encode(
         sample_capture(),
-        JpegImageOptions(quality=83, embed_metadata=True),
+        JpegImageOptions(quality=83, embedMetadata=True),
     )
     image = Image.open(BytesIO(encoded.data))
     exif = image.getexif()
 
-    assert encoded.extension == "jpg"
+    assert encoded.extension == "jpeg"
     assert image.format == "JPEG"
     assert exif[36867] == "2026-07-24T10:11:12+00:00"
     assert json.loads(exif[37510][8:])["Mode"] == "test"
@@ -56,7 +56,7 @@ def test_b1_encodes_jpeg_with_standard_metadata() -> None:
 def test_b1_2_encodes_png_with_readable_metadata() -> None:
     encoded = ImageEncoder().encode(
         sample_capture(),
-        PngImageOptions(compression=9, embed_metadata=True),
+        PngImageOptions(compression=9, embedMetadata=True),
     )
     image = Image.open(BytesIO(encoded.data))
     exif = image.getexif()
@@ -66,7 +66,7 @@ def test_b1_2_encodes_png_with_readable_metadata() -> None:
     assert exif[36867] == "2026-07-24T10:11:12+00:00"
     parameters = json.loads(exif[37510][8:])
     assert parameters["Mode"] == "test"
-    assert parameters["observed_controls"] == {
+    assert parameters["observedControls"] == {
         "gain": 28,
         "exposure_time_absolute": 83,
     }
@@ -76,8 +76,8 @@ def test_b1_2_encodes_png_with_readable_metadata() -> None:
 @pytest.mark.covers("CAP-009")
 def test_b1_3_metadata_can_be_omitted() -> None:
     for options in (
-        JpegImageOptions(embed_metadata=False),
-        PngImageOptions(embed_metadata=False),
+        JpegImageOptions(embedMetadata=False),
+        PngImageOptions(embedMetadata=False),
     ):
         encoded = ImageEncoder().encode(
             sample_capture(),

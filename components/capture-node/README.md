@@ -111,10 +111,9 @@ The example configuration keeps the `local` target for 7 days and runs
 maintenance once per day; remote archive targets are not deleted automatically.
 
 PNG and JPEG use independent image settings. PNG defaults to
-`"compression": 7`, while JPEG defaults to `"quality": 90`. Set
-`"image": {"format": "dng"}` to store only the Picamera2 sensor-native DNG.
-PNG/JPEG can still request a paired DNG with `image.raw.enabled`; unsupported
-camera types reject both DNG modes.
+`"compression": 7`, while JPEG defaults to `"quality": 90`. Picamera2 can
+also save a sensor-native DNG from the same request by setting
+`image.raw.enabled` to `true`; unsupported camera types reject that setting.
 
 ## SFTP storage
 
@@ -129,11 +128,11 @@ variable name in JSON:
   "host": "storage.example.local",
   "port": 22,
   "username": "capture-node",
-  "remote_directory": "/captures",
-  "password_env": "CAPTURE_NODE_SFTP_PASSWORD",
-  "known_hosts": "/home/huintech/.ssh/known_hosts",
-  "connect_timeout_seconds": 10,
-  "operation_timeout_seconds": 30,
+  "remoteDirectory": "/captures",
+  "passwordEnv": "CAPTURE_NODE_SFTP_PASSWORD",
+  "knownHosts": "/home/huintech/.ssh/known_hosts",
+  "connectTimeoutSeconds": 10,
+  "operationTimeoutSeconds": 30,
   "layout": "daily"
 }
 ```
@@ -152,9 +151,9 @@ The service loads `.env.local` first and then
 `instances/<instance>.env`. Therefore an instance file can declare the same
 variable to override the common value. The deployment script creates missing
 files with mode `0600` and preserves existing contents. Private-key
-authentication is available through `private_key`; encrypted keys reference
-a passphrase through `private_key_passphrase_env`. SFTP always verifies the
-server against the configured `known_hosts` file.
+authentication is available through `privateKey`; encrypted keys reference
+a passphrase through `privateKeyPassphraseEnv`. SFTP always verifies the
+server against the configured `knownHosts` file.
 
 ## Explicit FTPS storage
 
@@ -170,24 +169,24 @@ the control connection.
   "host": "localhost",
   "port": 21,
   "username": "capture-node",
-  "remote_directory": "/captures",
-  "password_env": "CAPTURE_NODE_FTPS_PASSWORD",
-  "verify_tls": true,
-  "ca_file": "~/.config/capture-node/ftps-ca.pem",
-  "connect_timeout_seconds": 10,
-  "operation_timeout_seconds": 30,
+  "remoteDirectory": "/captures",
+  "passwordEnv": "CAPTURE_NODE_FTPS_PASSWORD",
+  "verifyTls": true,
+  "caFile": "~/.config/capture-node/ftps-ca.pem",
+  "connectTimeoutSeconds": 10,
+  "operationTimeoutSeconds": 30,
   "layout": "daily"
 }
 ```
 
-`ca_file` can be omitted for certificates issued by a CA already trusted by the
+`caFile` can be omitted for certificates issued by a CA already trusted by the
 operating system. A self-signed server certificate must be supplied as a PEM CA
 file. The configured server must support `AUTH TLS`, protected passive data
 connections, and file rename. Listings prefer `MLSD`; servers without it must
 support `NLST`, `SIZE`, and `MDTM`.
 
 For a physically isolated wired segment containing only the server and Capture
-Node, `"verify_tls": false` may be set explicitly. Any configured `ca_file` is
+Node, `"verifyTls": false` may be set explicitly. Any configured `caFile` is
 then retained but ignored, so verification can be restored by changing one
 setting. TLS and `PROT P` remain enabled, but the client no longer authenticates
 the server. Do not use that setting on a shared LAN or an externally reachable
@@ -204,7 +203,7 @@ PowerShell session:
 ```
 
 Use `-CertIpAddress` when CaptureNode connects by IP so the certificate contains
-an IPAddress SAN. The script exports `CaptureFTP-cert.pem` for `ca_file` and
+an IPAddress SAN. The script exports `CaptureFTP-cert.pem` for `caFile` and
 does not report success until certificate validation and passive upload, list,
 download, content comparison, and deletion have all succeeded. Keep real
 passwords outside the script and rotate any credential that has been committed

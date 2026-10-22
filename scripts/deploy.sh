@@ -4,9 +4,10 @@ set -Eeuo pipefail
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 project_root=$(cd -- "$script_dir/.." && pwd)
 target=${TARGET:-huintech@192.168.12.7}
-remote_base=${REMOTE_BASE:-/home/huintech/pi-node-supervisor}
+remote_base=${REMOTE_BASE:-}
 config_file=${CONFIG_FILE:-$project_root/examples/config.json}
-capture_executable=${CAPTURE_NODE_EXECUTABLE:-/home/huintech/capture-node/.venv/bin/capture-node-web}
+capture_source=${CAPTURE_NODE_SOURCE:-$project_root/components/capture-node}
+capture_executable=${CAPTURE_NODE_EXECUTABLE:-}
 huintech_device_source=${HUINTECH_DEVICE_SOURCE:-$project_root/components/huintech-device/python}
 power_executable=${POWER_MANAGER_EXECUTABLE:-/opt/pi-power-manager/current/.venv/bin/pi-power-manager}
 power_config=${POWER_CONFIG:-}
@@ -19,6 +20,7 @@ replace_config=false
 without_power_manager=false
 install_power_manager=false
 enable_power_manager=false
+deploy_capture_node=true
 
 usage() {
   printf '%s\n' \
@@ -27,7 +29,9 @@ usage() {
     "  --remote-base PATH" \
     "  --config FILE             v2 source config" \
     "  --replace-config          apply FILE even when an active config exists" \
+    "  --capture-node-source PATH" \
     "  --capture-node-executable PATH" \
+    "  --skip-capture-node-deploy  Use an externally managed CaptureNode" \
     "  --huintech-device-source PATH" \
     "  --power-manager-executable PATH" \
     "  --power-config PATH" \
@@ -46,7 +50,9 @@ while (($#)); do
     --remote-base) remote_base=${2:?missing value}; shift 2 ;;
     --config|--initial-config) config_file=${2:?missing value}; shift 2 ;;
     --replace-config|--update-settings) replace_config=true; shift ;;
+    --capture-node-source) capture_source=${2:?missing value}; shift 2 ;;
     --capture-node-executable) capture_executable=${2:?missing value}; shift 2 ;;
+    --skip-capture-node-deploy) deploy_capture_node=false; shift ;;
     --huintech-device-source) huintech_device_source=${2:?missing value}; shift 2 ;;
     --power-manager-executable) power_executable=${2:?missing value}; shift 2 ;;
     --power-config) power_config=${2:?missing value}; shift 2 ;;
@@ -63,6 +69,9 @@ while (($#)); do
   esac
 done
 
+[[ "$target" =~ ^[A-Za-z0-9._-]+@[A-Za-z0-9._:-]+$ ]] || { printf 'Invalid target\n' >&2; exit 2; }
+operator=${target%@*}
+remote_base=${remote_base:-/home/$operator/pi-node-supervisor}
 if [[ "$without_power_manager" == true ]]; then
   power_executable=''
   power_config=${power_config:-$remote_base/generated/pi-power-manager.json}
@@ -75,9 +84,22 @@ else
 fi
 local_storage_root=${local_storage_root:-$remote_base/storage}
 
-[[ "$target" =~ ^[A-Za-z0-9._-]+@[A-Za-z0-9._:-]+$ ]] || { printf 'Invalid target\n' >&2; exit 2; }
 [[ "$remote_base" == /* && "$remote_base" != / ]] || { printf 'Invalid remote base\n' >&2; exit 2; }
 [[ -r "$config_file" ]] || { printf 'Config is unreadable: %s\n' "$config_file" >&2; exit 2; }
+managed_capture_executable="/home/$operator/capture-node/.venv/bin/capture-node-web"
+capture_executable=${capture_executable:-$managed_capture_executable}
+if [[ "$deploy_capture_node" == true ]]; then
+  [[ -x "$capture_source/eng/deploy.sh" ]] || {
+    printf 'CaptureNode source is unavailable: %s\n' "$capture_source" >&2
+    exit 2
+  }
+  [[ "$capture_executable" == "$managed_capture_executable" ]] || {
+    printf '%s\n' \
+      'Automatic CaptureNode deployment requires the standard target executable.' \
+      'Use --skip-capture-node-deploy with a custom --capture-node-executable.' >&2
+    exit 2
+  }
+fi
 [[ "$port" =~ ^[0-9]+$ ]] && ((port > 0 && port < 65536)) || { printf 'Invalid port\n' >&2; exit 2; }
 sensor_count=$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1], encoding="utf-8")).get("sensors", {}).get("devices", {})))' "$config_file")
 if ((sensor_count)); then
@@ -132,6 +154,17 @@ if ((sensor_count)); then
   tar --exclude='__pycache__' --exclude='*.pyc' \
     -C "$huintech_device_source" -czf "$sensor_dependency_archive" huintech
 fi
+
+if [[ "$deploy_capture_node" == true ]]; then
+  printf '==> Ensuring CaptureNode runtime is current\n'
+  "$capture_source/eng/deploy.sh" \
+    --skip-tests \
+    --skip-linger \
+    --skip-if-current \
+    --supervisor-managed \
+    "$target"
+fi
+
 remote_stage=$(ssh -o BatchMode=yes -o ConnectTimeout=10 "$target" mktemp -d /tmp/pi-node-supervisor-deploy.XXXXXX)
 scp -o ConnectTimeout=10 "$wheel" "$config_file" "$project_root/systemd/pi-node-supervisor.user.service.in" "$target:$remote_stage/"
 if [[ -n "$sensor_dependency_archive" ]]; then

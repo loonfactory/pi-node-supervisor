@@ -19,6 +19,7 @@ from capture_node.core.storages.options import (
     FileStorageOptions,
     FtpsStorageOptions,
     SftpStorageOptions,
+    StorageMaintenanceOptions,
     StorageOptions,
 )
 from capture_node.core.storages.provider import ConfiguredStorageProvider
@@ -40,6 +41,7 @@ __all__ = [
     "SftpStorageOptions",
     "Storage",
     "StorageListResult",
+    "StorageMaintenanceOptions",
     "StorageOptions",
     "StorageProvider",
     "StorageRegistration",

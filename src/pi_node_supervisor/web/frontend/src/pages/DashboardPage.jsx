@@ -1,6 +1,10 @@
+import { useState } from "react";
+
+import { api } from "../api-client.js";
 import { Empty, MetricGrid, PageHeading, Status } from "../components/Common.jsx";
 import RunTable from "../components/RunTable.jsx";
 import { useSupervisor } from "../SupervisorContext.jsx";
+import { friendlyError } from "../utils.js";
 
 function ScheduleSummary({ configuration }) {
   const schedules = Object.entries(configuration?.schedules || {});
@@ -21,16 +25,29 @@ function ScheduleSummary({ configuration }) {
 
 export default function DashboardPage() {
   const { dashboard, runs, configuration, refresh, notify, setView } = useSupervisor();
+  const [acknowledging, setAcknowledging] = useState(false);
   const nodes = dashboard?.nodes || [];
   const activeNodes = nodes.filter((node) => node.active).length;
   const metrics = [
     ["관리 장치", `${activeNodes}/${nodes.length}`, activeNodes === nodes.length ? "good" : "alert"],
     ["실행 이력", dashboard?.runs || 0, ""],
     ["산출물", dashboard?.artifacts || 0, ""],
-    ["오류·중단", dashboard?.failedRuns || 0, dashboard?.failedRuns ? "alert" : "good"],
+    ["미확인 오류·중단", dashboard?.failedRuns || 0, dashboard?.failedRuns ? "alert" : "good"],
   ];
+  const acknowledgeAndRefresh = async () => {
+    setAcknowledging(true);
+    try {
+      await api("/api/dashboard/acknowledge-failures", { method: "POST" });
+      await refresh();
+      notify("기존 오류·중단을 확인 처리하고 상태를 갱신했습니다.");
+    } catch (error) {
+      notify(friendlyError(error), true);
+    } finally {
+      setAcknowledging(false);
+    }
+  };
   return <section className="view active">
-    <PageHeading eyebrow="SYSTEM OVERVIEW" title="장치 운영 현황" actions={<button onClick={() => refresh().then(() => notify("상태를 갱신했습니다."))}>상태 갱신</button>} />
+    <PageHeading eyebrow="SYSTEM OVERVIEW" title="장치 운영 현황" actions={<button disabled={acknowledging} onClick={acknowledgeAndRefresh}>{acknowledging ? "확인 처리 중…" : "상태 갱신"}</button>} />
     <MetricGrid items={metrics} />
     <div className="two-column">
       <article className="panel"><div className="panel-title"><h2>일정</h2><span>Active revision</span></div><ScheduleSummary configuration={configuration} /></article>

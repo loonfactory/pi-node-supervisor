@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
 import json
 import logging
 import threading
@@ -10,6 +12,7 @@ import pytest
 
 pytest.importorskip("fastapi")
 from fastapi import Request
+from fastapi.exceptions import RequestValidationError
 
 from capture_node.core import CaptureNode
 from capture_node.core.cameras import (
@@ -20,6 +23,7 @@ from capture_node.core.cameras import (
     V4L2CameraOptions,
 )
 from capture_node.core.cameras.unavailable import UnavailableCamera
+from capture_node.core.encodings import ImageEncoder
 from capture_node.core.events import EventEmitter, EventType, LOGGER_NAME
 from capture_node.core.storages import (
     ConfiguredStorageProvider,
@@ -27,7 +31,7 @@ from capture_node.core.storages import (
 )
 from capture_node.web.event_buffer import EventBuffer
 from capture_node.web.problems import ApiProblem
-from capture_node.web.server import _multipart_frames, create_app
+from capture_node.web.server import CaptureRequest, _multipart_frames, create_app
 from conftest import (
     FakeCamera,
     FakeCameraProvider,
@@ -55,7 +59,7 @@ class DiscoverableCameraProvider(ReplaceableCameraProvider):
                 identifier="picamera2:1",
                 name="imx219",
                 options=Picamera2Options(
-                    camera_num=1,
+                    cameraNum=1,
                     width=1920,
                     height=1080,
                 ),
@@ -107,6 +111,25 @@ def problem_response(app, path: str, problem: ApiProblem):
     )
     handler = app.exception_handlers[ApiProblem]
     return asyncio.run(handler(request, problem))
+
+
+async def streaming_body(response) -> bytes:
+    chunks = []
+    async for chunk in response.body_iterator:
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+def multipart_parts(body: bytes) -> list[tuple[dict[str, str], bytes]]:
+    parts = []
+    for segment in body.split(b"--capture")[1:-1]:
+        header_block, data = segment.removeprefix(b"\r\n").split(b"\r\n\r\n", 1)
+        headers = {}
+        for line in header_block.decode("ascii").split("\r\n"):
+            name, value = line.split(":", 1)
+            headers[name.lower()] = value.strip()
+        parts.append((headers, data.removesuffix(b"\r\n")))
+    return parts
 
 
 @pytest.mark.covers("WEB-001", "WEB-002", "IF-CAP-003")
@@ -220,8 +243,8 @@ def test_web_reports_disconnected_camera_and_rejects_capture(
 
     assert health == {
         "status": "running",
-        "camera_connected": False,
-        "camera_detail": "V4L2 device does not exist: /dev/video0",
+        "cameraConnected": False,
+        "cameraDetail": "V4L2 device does not exist: /dev/video0",
     }
     with pytest.raises(ApiProblem) as preview_error:
         endpoint(app, "/api/preview")()
@@ -243,24 +266,22 @@ def test_e2_web_reads_and_updates_runtime_settings(tmp_path: Path) -> None:
     )
 
     document = endpoint(app, "/api/config")()
-    document["capture"] = {
-        "interval_seconds": 2.5,
-        "params": {"Contrast": 1.2},
-    }
-    document["image"] = {
-        "format": "png",
-        "compression": 7,
-        "embed_metadata": False,
-        "raw": {"enabled": False, "format": "dng"},
+    document["captures"] = [{"type": "interval", "interval": 2.5}]
+    document["camera"]["params"] = {"Contrast": 1.2}
+    document["images"] = {
+        "png": {
+            "compression": 7,
+            "embedMetadata": False,
+        },
     }
     response = asyncio.run(endpoint(app, "/api/config", "PUT")(document))
 
-    assert response["capture"]["interval_seconds"] == 2.5
-    assert response["image"] == {
-        "format": "png",
-        "compression": 7,
-        "embed_metadata": False,
-        "raw": {"enabled": False, "format": "dng"},
+    assert response["captures"] == [{"type": "interval", "interval": 2.5}]
+    assert response["images"] == {
+        "png": {
+            "compression": 7,
+            "embedMetadata": False,
+        },
     }
     assert camera.applied[-1] == {"Contrast": 1.2}
 
@@ -278,7 +299,7 @@ def test_e2_web_displays_update_failure_as_http_error(tmp_path: Path) -> None:
     )
 
     document = endpoint(app, "/api/config")()
-    document["capture"]["params"] = {"Invalid": 1}
+    document["camera"]["params"] = {"Invalid": 1}
 
     with pytest.raises(ApiProblem) as raised:
         asyncio.run(endpoint(app, "/api/config", "PUT")(document))
@@ -301,8 +322,8 @@ def test_web_replaces_camera_through_provider(tmp_path: Path) -> None:
                 "device": "/dev/video7",
                 "width": 1920,
                 "height": 1080,
-                "frame_rate": 24,
-                "startup_timeout_seconds": 10,
+                "frameRate": 24,
+                "startupTimeoutSeconds": 10,
             }
         )
     )
@@ -330,11 +351,13 @@ def test_web_returns_all_registered_camera_devices(tmp_path: Path) -> None:
             "name": "imx219",
             "options": {
                 "type": "picamera2",
-                "camera_num": 1,
+                "cameraNum": 1,
                 "width": 1920,
                 "height": 1080,
-                "preview_fps": 10.0,
-                "preview_quality": 75,
+                "previewFps": 10.0,
+                "previewQuality": 75,
+                "calibration": {},
+                "params": {},
             },
         },
         {
@@ -346,8 +369,10 @@ def test_web_returns_all_registered_camera_devices(tmp_path: Path) -> None:
                 "device": "/dev/video7",
                 "width": 1920,
                 "height": 1080,
-                "frame_rate": 24.0,
-                "startup_timeout_seconds": 10.0,
+                "frameRate": 24.0,
+                "startupTimeoutSeconds": 10.0,
+                "calibration": {},
+                "params": {},
             },
         },
     ]
@@ -365,7 +390,7 @@ def test_e3_event_buffer_retains_only_current_process_events() -> None:
     emitter.emit(EventType.CAPTURE_SUCCEEDED, capture_id="one")
     emitter.emit(EventType.TERMINAL_COMPLETED, capture_id="one", targets=[])
 
-    assert [item["event_type"] for item in handler.snapshot()] == [
+    assert [item["eventType"] for item in handler.snapshot()] == [
         EventType.TERMINAL_COMPLETED,
         EventType.CAPTURE_SUCCEEDED,
     ]
@@ -388,10 +413,10 @@ def test_e3_event_buffer_paginates_with_a_bounded_page_size() -> None:
     third, _total = handler.page(3, 10)
 
     assert total == 23
-    assert [item["capture_id"] for item in first] == [
+    assert [item["captureId"] for item in first] == [
         str(index) for index in range(22, 12, -1)
     ]
-    assert [item["capture_id"] for item in third] == ["2", "1", "0"]
+    assert [item["captureId"] for item in third] == ["2", "1", "0"]
     with pytest.raises(ValueError):
         handler.page(0, 10)
     with pytest.raises(ValueError):
@@ -425,9 +450,262 @@ def test_web_can_request_one_immediate_capture(tmp_path: Path) -> None:
 
     response = endpoint(app, "/api/capture", "POST")()
 
-    assert response["capture_id"]
-    assert response["captured_at"]
+    assert response["captureId"]
+    assert response["capturedAt"]
     assert "terminal_state" not in response
+
+
+def test_supervisor_capture_streams_deterministic_verified_bundle(
+    tmp_path: Path,
+) -> None:
+    camera = PreviewCamera()
+    configuration = make_configuration(
+        tmp_path / "config.json",
+        {
+            "camera": {
+                "type": "picamera2",
+                "params": {"ExposureTime": 8_000},
+            },
+            "images": {
+                "png": {"compression": 7, "embedMetadata": True},
+                "jpeg": {"quality": 90, "embedMetadata": True},
+                "dng": {"embedMetadata": True},
+            },
+        },
+    )
+    provider = FakeCameraProvider(camera)
+    storages = FakeStorageProvider()
+    node = CaptureNode(provider, configuration, storages)
+    app = create_app(node, provider, storages, manage_lifecycle=False)
+
+    response = endpoint(app, "/api/captures", "POST")(
+        CaptureRequest.model_validate({
+            "requestId": "supervisor-run-1",
+            "parameters": {"AnalogueGain": 1.5},
+        })
+    )
+
+    assert node.is_pending
+    assert response.media_type == "multipart/mixed; boundary=capture"
+    assert response.headers["x-request-id"] == "supervisor-run-1"
+    assert response.headers["x-capture-id"]
+    assert response.headers["x-artifact-count"] == "3"
+    with pytest.raises(ApiProblem) as raised:
+        endpoint(app, "/api/captures", "POST")(
+            CaptureRequest(requestId="overlap")
+        )
+    assert raised.value.code == "capture_in_progress"
+
+    body = asyncio.run(streaming_body(response))
+    parts = multipart_parts(body)
+
+    assert not node.is_pending
+    assert body.endswith(b"--capture--\r\n")
+    assert [headers["content-type"] for headers, _data in parts] == [
+        "image/png",
+        "image/jpeg",
+        "image/x-adobe-dng",
+    ]
+    assert camera.applied == [
+        {"ExposureTime": 8_000, "AnalogueGain": 1.5},
+        {"ExposureTime": 8_000},
+    ]
+    for headers, data in parts:
+        expected_digest = base64.b64encode(hashlib.sha256(data).digest()).decode()
+        assert headers["content-length"] == str(len(data))
+        assert headers["digest"] == f"sha-256={expected_digest}"
+        assert headers["x-capture-id"] == response.headers["x-capture-id"]
+
+
+def test_supervisor_capture_disconnect_releases_reservation(tmp_path: Path) -> None:
+    camera = PreviewCamera()
+    node, provider, storages = web_runtime(tmp_path, camera)
+    app = create_app(node, provider, storages, manage_lifecycle=False)
+    response = endpoint(app, "/api/captures", "POST")(
+        CaptureRequest(requestId="disconnect")
+    )
+
+    async def disconnect() -> None:
+        await response.body_iterator.__anext__()
+        await response.body_iterator.aclose()
+
+    asyncio.run(disconnect())
+
+    assert not node.is_pending
+    next_response = endpoint(app, "/api/captures", "POST")(
+        CaptureRequest(requestId="after-disconnect")
+    )
+    asyncio.run(next_response.body_iterator.aclose())
+
+
+def test_supervisor_capture_can_override_formats_per_request(tmp_path: Path) -> None:
+    class RecordingCamera(PreviewCamera):
+        def __init__(self) -> None:
+            super().__init__()
+            self.raw_requests = []
+
+        def capture(self, *, include_raw=False):
+            self.raw_requests.append(include_raw)
+            return super().capture(include_raw=include_raw)
+
+    class RecordingEncoder:
+        def __init__(self) -> None:
+            self.delegate = ImageEncoder()
+            self.options = []
+
+        def encode(self, capture, options):
+            self.options.append(options)
+            return self.delegate.encode(capture, options)
+
+    camera = RecordingCamera()
+    configuration = make_configuration(
+        tmp_path / "config.json",
+        {
+            "camera": {"type": "picamera2", "params": {}},
+            "images": {
+                "png": {"compression": 7, "embedMetadata": True},
+                "jpeg": {"quality": 90, "embedMetadata": True},
+                "dng": {"embedMetadata": True},
+            },
+        },
+    )
+    provider = FakeCameraProvider(camera)
+    storages = FakeStorageProvider()
+    encoder = RecordingEncoder()
+    node = CaptureNode(provider, configuration, storages, encoder=encoder)
+    app = create_app(node, provider, storages, manage_lifecycle=False)
+
+    response = endpoint(app, "/api/captures", "POST")(
+        CaptureRequest.model_validate(
+            {
+                "requestId": "jpeg-only",
+                "formats": {
+                    "jpeg": {"quality": 73, "embedMetadata": False},
+                },
+            }
+        )
+    )
+    parts = multipart_parts(asyncio.run(streaming_body(response)))
+
+    assert response.headers["x-artifact-count"] == "1"
+    assert [headers["content-type"] for headers, _data in parts] == ["image/jpeg"]
+    assert len(encoder.options) == 1
+    assert encoder.options[0].quality == 73
+    assert encoder.options[0].embed_metadata is False
+    assert camera.raw_requests == [False]
+    assert configuration.current.images.dng is not None
+
+
+def test_supervisor_capture_uses_one_options_snapshot_during_encoding(
+    tmp_path: Path,
+) -> None:
+    class ReconfiguringEncoder:
+        def __init__(self) -> None:
+            self.node = None
+            self.delegate = ImageEncoder()
+
+        def encode(self, capture, options):
+            assert self.node is not None
+            document = self.node.options.model_dump(mode="json")
+            document["images"]["dng"] = {"embedMetadata": True}
+            assert self.node.update_options(document).succeeded
+            return self.delegate.encode(capture, options)
+
+    camera = PreviewCamera()
+    configuration = make_configuration(
+        tmp_path / "config.json",
+        {
+            "camera": {"type": "picamera2", "params": {}},
+            "images": {
+                "jpeg": {"quality": 90, "embedMetadata": True},
+            },
+        },
+    )
+    provider = FakeCameraProvider(camera)
+    storages = FakeStorageProvider()
+    encoder = ReconfiguringEncoder()
+    node = CaptureNode(provider, configuration, storages, encoder=encoder)
+    encoder.node = node
+    app = create_app(node, provider, storages, manage_lifecycle=False)
+
+    response = endpoint(app, "/api/captures", "POST")(
+        CaptureRequest(requestId="options-snapshot")
+    )
+    body = asyncio.run(streaming_body(response))
+
+    assert response.headers["x-artifact-count"] == "1"
+    assert [headers["content-type"] for headers, _data in multipart_parts(body)] == [
+        "image/jpeg"
+    ]
+    assert node.options.images.dng is not None
+    assert camera.capture_calls == 1
+
+
+def test_supervisor_capture_reports_parameter_capture_and_encoding_failures(
+    tmp_path: Path,
+) -> None:
+    def capture_problem(camera, request, *, encoder=None) -> ApiProblem:
+        configuration = make_configuration(tmp_path / f"{request['requestId']}.json")
+        provider = FakeCameraProvider(camera)
+        storages = FakeStorageProvider()
+        node = CaptureNode(provider, configuration, storages, encoder=encoder)
+        app = create_app(node, provider, storages, manage_lifecycle=False)
+        with pytest.raises(ApiProblem) as raised:
+            endpoint(app, "/api/captures", "POST")(
+                CaptureRequest.model_validate(request)
+            )
+        assert not node.is_pending
+        return raised.value
+
+    invalid = capture_problem(
+        FakeCamera(apply_failure=ValueError("unsupported control")),
+        {"requestId": "invalid", "parameters": {"Unknown": 1}},
+    )
+    failed = capture_problem(
+        FakeCamera(capture_failures=1),
+        {"requestId": "capture-failed", "parameters": {}},
+    )
+
+    class FailingEncoder:
+        def encode(self, _capture, _options):
+            raise RuntimeError("injected encoding failure")
+
+    encoding = capture_problem(
+        FakeCamera(),
+        {"requestId": "encoding-failed", "parameters": {}},
+        encoder=FailingEncoder(),
+    )
+
+    assert (invalid.status, invalid.code) == (422, "invalid_capture_parameters")
+    assert (failed.status, failed.code) == (500, "capture_failed")
+    assert (encoding.status, encoding.code) == (500, "encoding_failed")
+
+
+def test_supervisor_capture_validation_uses_specific_problem_code(
+    tmp_path: Path,
+) -> None:
+    camera = PreviewCamera()
+    node, provider, storages = web_runtime(tmp_path, camera)
+    app = create_app(node, provider, storages, manage_lifecycle=False)
+
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/api/captures",
+            "root_path": "",
+            "scheme": "http",
+            "query_string": b"",
+            "headers": [],
+            "client": ("testclient", 50000),
+            "server": ("testserver", 80),
+        }
+    )
+    handler = app.exception_handlers[RequestValidationError]
+    response = asyncio.run(handler(request, RequestValidationError([])))
+
+    assert response.status_code == 422
+    assert json.loads(response.body)["code"] == "invalid_capture_parameters"
 
 
 def test_capture_returns_after_handoff_before_storage_completion(
@@ -457,7 +735,7 @@ def test_capture_returns_after_handoff_before_storage_completion(
 
     response = endpoint(app, "/api/capture", "POST")()
 
-    assert response["capture_id"]
+    assert response["captureId"]
     assert started.wait(0.5)
     assert node.is_pending
     with pytest.raises(ApiProblem) as raised:
@@ -517,7 +795,7 @@ def test_web_browses_storage_through_provider_contract(tmp_path: Path) -> None:
     listing = endpoint(app, "/api/storage/files")(
         target="local",
         page=1,
-        page_size=12,
+        pageSize=12,
     )
     download = endpoint(app, "/api/storage/files/{target}/{filename}")(
         target="local",
@@ -549,7 +827,7 @@ def test_web_reports_unsupported_storage_listing_as_problem(
         endpoint(app, "/api/storage/files")(
             target="write-only",
             page=1,
-            page_size=12,
+            pageSize=12,
         )
     response = problem_response(app, "/api/storage/files", raised.value)
 

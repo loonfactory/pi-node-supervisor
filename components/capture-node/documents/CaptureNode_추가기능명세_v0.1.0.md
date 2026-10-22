@@ -26,25 +26,25 @@
 | EXT-CAM-002 | 카메라 탐색·교체 | Web에서 video capture 장치, 해상도와 FPS를 선택해 실행 중 연결한다. |
 | EXT-CAM-003 | 카메라 파라미터 | V4L2 control을 탐색해 int, bool, menu 형식의 편집 UI를 제공한다. |
 | EXT-CAM-004 | 연결 상태 감시 | 카메라 분리 시 Web은 유지하고 Running/Live 상태를 실제 연결 상태로 갱신한다. |
-| EXT-SCH-001 | 스케줄 모드 | 주기, 일일 지정 시각, 자동 촬영 중지 상태를 제공한다. |
-| EXT-SCH-002 | 시간 범위 생성 | 시작 시각부터 종료 시각까지 분 간격의 일일 촬영 시각을 생성한다. |
+| EXT-SCH-001 | 매일 촬영 규칙 | 매일 한 번, 매일 시간 구간 반복, 계속 간격 규칙을 함께 제공한다. |
+| EXT-SCH-002 | 시간 구간 반복 | 시작·종료 시각과 초 단위 간격을 규칙 하나로 저장한다. |
 | EXT-SCH-003 | 적용값 표시 | Preview 하단 Schedule은 편집값이 아닌 서버에 반영된 값을 표시한다. |
 | EXT-WEB-001 | 즉시 촬영 | Web에서 스케줄과 별개로 한 번의 촬영을 요청한다. |
 | EXT-WEB-002 | 이벤트 페이지네이션 | 최근 이벤트를 제한된 메모리와 페이지 단위로 조회한다. |
+| EXT-WEB-003 | Supervisor 촬영 스트림 | 요청별 카메라 파라미터로 한 번 촬영하고 검증 가능한 multipart 이미지 묶음을 반환한다. |
 | EXT-STO-001 | 저장 파일 브라우저 | 설정된 Storage가 제공하는 파일을 조회, 미리보기, 다운로드한다. |
 | EXT-STO-002 | SFTP Storage | 검증된 SSH host와 유한 timeout을 사용해 원격 저장·조회·목록을 제공한다. |
 | EXT-STO-003 | 일 단위 저장 경로 | 파일 수 증가를 제한하도록 캡처를 UTC 날짜 디렉터리에 저장한다. |
 | EXT-STO-004 | Explicit FTPS Storage | 검증된 TLS 제어·데이터 채널로 원격 저장·조회·목록을 제공한다. |
 | EXT-IMG-001 | 이미지 정책 변경 | 실행 중 이미지 형식, 품질·압축 수준, 메타데이터 정책을 변경한다. |
 | EXT-IMG-002 | Picamera2 RAW 묶음 | 처리 영상과 센서 원본 DNG를 같은 촬영 ID로 저장한다. |
-| EXT-IMG-003 | Picamera2 DNG-only | 처리 영상 없이 센서 원본 DNG 하나만 저장한다. |
 
 ### 2.1 기존 기준선과의 차이
 
 | 영역 | 기존 문서 상태 | 추가 구현 |
 | --- | --- | --- |
 | USB 카메라 | SRS의 CAP-006에서 P4 후순위 | v0.1.0에 V4L2/FFmpeg 구현을 선반영 |
-| 촬영 스케줄 | 초 단위 주기 촬영 | Daily 지정 시각, 시간 범위 생성, 자동 촬영 중지 추가 |
+| 촬영 스케줄 | 초 단위 주기 촬영 | `captures` 배열의 매일 daily·시간 구간 interval·계속 interval 규칙 추가 |
 | 실행 중 설정 | CFG-009의 촬영 주기·파라미터 | Image policy까지 변경 범위 확대 |
 | 카메라 설정 | 구현별 `apply(params)` 계약 | control 탐색 UI, 장치·해상도·FPS 교체 추가 |
 | 상태 표시 | Web의 일반 설정·상태 확인 | 실제 연결 health, Offline 표시, 카메라 없는 Web 기동 추가 |
@@ -69,8 +69,8 @@
     "device": "/dev/video0",
     "width": 1920,
     "height": 1080,
-    "frame_rate": 24,
-    "startup_timeout_seconds": 10
+    "frameRate": 24,
+    "startupTimeoutSeconds": 10
   }
 }
 ```
@@ -97,6 +97,9 @@
   유지한다. Web 선택 목록과 적용값에는 장치명과 짧은 node 이름만 표시하고,
   전체 경로는 hover title로 제공한다.
 - CSI는 Width, Height, Preview FPS와 Preview quality를 변경할 수 있다.
+- Picamera2의 Width와 Height를 둘 다 생략하면 sensor resolution을 조회해
+  처리 이미지와 Preview main stream을 최대 센서 해상도로 구성한다.
+  하나만 생략하는 설정은 거절한다.
 - USB/UVC는 Width, Height와 FPS를 변경할 수 있다.
 - 입력값이 현재 적용값과 다를 때만 `Connect camera` 버튼이 활성화된다.
 - 연결 성공 후 버튼은 `Connected camera`로 바뀌고 비활성화된다.
@@ -104,13 +107,18 @@
 
 ### 3.3 카메라 파라미터
 
+각 Picamera2와 V4L2 `camera` resource는 자유 형식 `calibration`과
+`params` object를 가진다. Calibration은 해당 sensor와 lens 조합에 귀속되며
+CaptureNode는 내용을 검증하거나 이미지 보정에 적용하지 않고 보존한다.
+Calibration metadata나 params만 변경할 때는 실행 중인 카메라를 재연결하지 않는다.
+
 - `/api/camera/controls`는 `v4l2-ctl --list-ctrls-menus` 결과를 구조화해 반환한다.
 - Picamera2는 `horizontal_flip`, `vertical_flip` boolean parameter를 제공한다.
   변경 시 main stream Transform을 재구성하며 설정 파일에 영구 저장한다.
 - 지원 UI는 정수 slider·number, boolean checkbox, menu select다.
 - inactive control은 편집할 수 없다.
 - `Camera parameters`는 기본적으로 접혀 있으며 우측 아이콘으로 펼친다.
-- 변경한 control만 기존 `capture.params`와 병합해 `Apply changes`로 저장한다.
+- 변경한 control만 기존 `camera.params`와 병합해 `Apply changes`로 저장한다.
 - 좌우·상하 반전은 각각 `horizontal_flip`, `vertical_flip` boolean으로 제공하고
   별도의 `mirror` 별칭은 제공하지 않는다. 같은 이름의 V4L2 hardware control이
   있으면 장치에 적용하고, 없는 축만 software fallback을 사용한다.
@@ -133,12 +141,12 @@
 
 각 V4L2 촬영은 최신 프레임을 가져온 직후 전체 control 값을 조회한다.
 
-- `observed_controls`: 촬영 직후 V4L2 driver가 보고한 gain, exposure, white
+- `observedControls`: 촬영 직후 V4L2 driver가 보고한 gain, exposure, white
   balance, focus 등의 hardware 조회값. software control은 포함하지 않는다.
-- `control_snapshot_at`: control 조회 시각
-- `control_snapshot_error`: 조회 실패 원인
+- `controlSnapshotAt`: control 조회 시각
+- `controlSnapshotError`: 조회 실패 원인
 - `horizontal_flip`, `vertical_flip`: 요청되어 최종 적용된 반전 설정
-- `flip_application`: 각 반전 축의 `hardware` 또는 `software` 적용 경로
+- `flipApplication`: 각 반전 축의 `hardware` 또는 `software` 적용 경로
 
 조회는 촬영 프레임에 내장된 동기화 metadata가 아니라 촬영 직후의 장치 상태
 snapshot이다. 따라서 프레임과 수십 ms 차이가 날 수 있다. 조회 실패는 이미지
@@ -151,8 +159,8 @@ snapshot이다. 따라서 프레임과 수십 ms 차이가 날 수 있다. 조�
 ```json
 {
   "status": "running",
-  "camera_connected": false,
-  "camera_detail": "V4L2 device does not exist: /dev/video0"
+  "cameraConnected": false,
+  "cameraDetail": "V4L2 device does not exist: /dev/video0"
 }
 ```
 
@@ -166,62 +174,58 @@ snapshot이다. 따라서 프레임과 수십 ms 차이가 날 수 있다. 조�
 
 ## 4. 촬영 스케줄
 
-### 4.1 모드 계약
+### 4.1 규칙 계약
 
-| mode | interval_seconds | daily_times | 동작 |
-| --- | ---: | --- | --- |
-| `interval` | 0보다 큰 초 | 빈 목록 | 적용 시점부터 지정 주기로 자동 촬영한다. |
-| `daily` | `null` | 0개 이상의 시각 | 지정 timezone의 시각마다 매일 촬영한다. 빈 목록이면 자동 촬영 없이 대기한다. |
-| `disabled` | `null` | 빈 목록 | Preview와 수동 촬영만 유지하고 자동 촬영은 중지한다. |
+`captures`는 0개 이상의 discriminated Capture resource 배열이다.
 
-- 세 모드의 trigger 필드는 상호 배타적이다.
-- `daily_times`는 `HH:MM:SS` 형식이며 중복을 허용하지 않는다.
-- `daily_times`의 `null` 입력은 빈 목록으로 정규화한다. 이를 통해 Daily 모드를
-  먼저 선택하고 촬영 시각은 나중에 설정할 수 있다.
-- timezone은 IANA 이름으로 저장한다.
-- 현재 장비의 Web UI에서는 `Asia/Seoul`을 내부 설정으로 유지하고 편집 필드는
-  표시하지 않는다.
-
-### 4.2 주기 입력
-
-Web에서는 일, 시, 분, 초 입력을 제공한다. 서버와 설정 파일에는 합산한 초를
-`capture.interval_seconds`로 저장한다.
-
-### 4.3 시간 블록 생성
-
-Daily times 화면은 하나 이상의 시간 블록을 입력받는다. 각 블록은 다음 값을
-가진다.
-
-- `Start`: 첫 촬영 시각
-- `Every (min)`: 양의 정수 분 간격
-- `End`: 마지막 허용 시각
-
-예를 들어 `09:00`, `10`, `10:00`을 생성하면 다음 목록을 만든다.
-
-```text
-09:00:00, 09:10:00, 09:20:00, ..., 10:00:00
+```json
+{
+  "captures": [
+    { "type": "daily", "time": "12:00:00" },
+    {
+      "type": "interval",
+      "startTime": "12:00:00",
+      "endTime": "23:00:00",
+      "interval": 60
+    },
+    { "type": "interval", "interval": 60 }
+  ]
+}
 ```
 
-- 종료 시각이 간격에 정확히 포함될 때만 종료 시각도 생성한다.
-- 종료 시각은 시작 시각보다 빠를 수 없다.
-- 시간 블록 추가 버튼으로 오전·오후처럼 분리된 촬영 구간을 구성할 수 있다.
-- 여러 블록을 생성하면 결과를 시간순으로 합치며, 동일 시각이 겹치면 적용하지
-  않고 오류를 표시한다.
-- 설정 파일에는 기존과 동일하게 병합된 `daily_times` 목록을 저장한다.
-- 생성 후 개별 시각을 추가, 편집, 삭제할 수 있다.
-- 휴지통 버튼은 전체 시각 목록을 한 번에 비운다.
-- 빈 목록을 `Apply changes`하면 `disabled`로 저장한다.
+- `daily`는 `time`에 매일 한 번 촬영한다. 특정 날짜에 한 번 촬영하는
+  의미가 아니며 date 속성은 제공하지 않는다.
+- 시간 구간 `interval`은 `startTime`부터 `endTime`까지 매일 `interval`
+  초 간격으로 촬영한다. 시작은 포함하고, 간격에 정확히 맞는 종료도
+  포함한다.
+- 시간 구간이 없는 `interval`은 실행 시점부터 monotonic clock 기준으로
+  계속 반복한다.
+- `startTime`과 `endTime`은 함께 지정하고, `endTime`은 `startTime`보다
+  빠를 수 없다. 자정을 넘는 구간은 지원하지 않는다.
+- 매일 wall-clock 시각은 OS local time으로 해석하며 timezone 구성은
+  설치자 책임이다.
+- 여러 규칙이 같은 시각에 만나면 실제 촬영은 한 번으로 합친다.
+- 같은 규칙을 중복 저장할 수 없다.
+- `captures: []`는 Preview와 즉시 촬영만 유지한다.
+- 기존 단일 `capture` resource와 mode 구조는 자동 변환하지 않고 strict
+  검증에서 거절한다.
 
-### 4.4 적용값 표시
+### 4.2 Web 편집
+
+- 규칙을 추가·삭제하고 `daily` 시각, `interval` 초, 선택적 일일 시간 구간을
+  직접 편집한다.
+- 시간 구간 checkbox를 끄면 `startTime`과 `endTime`을 모두 제거해 계속
+  interval resource로 저장한다.
+- 모든 규칙을 삭제하고 `Apply changes`하면 `captures: []`로 저장한다.
+
+### 4.3 적용값 표시
 
 - Preview 하단 Schedule은 폼의 미적용 입력값이 아니라 `/api/config`의 적용값을
   표시한다.
-- Interval 예: `Every 2m`
-- 균일한 Daily 범위 예: `09:00-18:00 · Every 10m · Asia/Seoul`
-- 다중 Daily 블록 예:
-  `09:00-12:00 · Every 10m / 14:00-18:00 · Every 15m · Asia/Seoul`
-- 모든 블록의 간격이 같으면 반복을 제거해
-  `09:00-12:00 / 14:00-18:00 · Every 10m · Asia/Seoul`로 표시한다.
+- Daily 예: `Daily · 12:00`
+- 계속 Interval 예: `Every 2m`
+- 시간 구간 Interval 예: `09:00-18:00 · Every 10m`
+- 다중 규칙은 `/`로 구분한다.
 - 자동 촬영 중지 예: `Preview only`
 
 ## 5. Web 운영 기능
@@ -230,27 +234,27 @@ Daily times 화면은 하나 이상의 시간 블록을 입력받는다. 각 블
 
 - `POST /api/capture`는 스케줄과 별개로 촬영과 인코딩을 동기 실행한다.
 - 인코딩된 이미지가 백그라운드 저장 작업에 등록되면 저장 완료를 기다리지 않고
-  `capture_id`와 `captured_at`을 반환한다.
+  `captureId`와 `capturedAt`을 반환한다.
 - API 성공은 저장 완료가 아니라 촬영, 인코딩, 저장 작업 등록의 성공을 뜻한다.
 - 저장 완료나 폐기는 기존 terminal 이벤트로 비동기 반영한다.
 - 저장이 종결되기 전까지 해당 수집은 진행 중이며 다음 즉시 촬영은 `409`, 다음
   스케줄 촬영은 생략 이벤트로 처리한다.
 - 이미 수집이 진행 중이면 `409`를 반환한다.
 - 카메라가 분리된 상태에서도 `409`를 반환한다.
-- `disabled` 스케줄에서도 카메라가 연결되어 있으면 즉시 촬영을 사용할 수 있다.
+- `captures: []`에서도 카메라가 연결되어 있으면 즉시 촬영을 사용할 수 있다.
 
 ### 5.2 Recent activity
 
 - 현재 프로세스의 최근 이벤트만 메모리에 보관한다.
 - 최대 보관량은 500건이다.
-- `/api/events`는 `page`, `page_size`를 받으며 페이지 크기는 최대 50건이다.
+- `/api/events`는 `page`, `pageSize`를 받으며 페이지 크기는 최대 50건이다.
 - Web 기본 페이지 크기는 10건이다.
-- 각 행은 이벤트 종류, `capture_id` 또는 실패 원인, 발생 시각을 표시한다.
+- 각 행은 이벤트 종류, `captureId` 또는 실패 원인, 발생 시각을 표시한다.
 
 `Storage completed` 행의 의미:
 
 - 이미지가 설정된 모든 저장 대상에 정상 저장됐다.
-- 32자리 hex 문자열은 해당 촬영의 `capture_id`다.
+- 32자리 hex 문자열은 해당 촬영의 `captureId`다.
 - 표시 시각은 브라우저 현지 시각의 이벤트 발생 시각이다.
 
 ### 5.3 저장 파일 브라우저
@@ -274,6 +278,12 @@ Daily times 화면은 하나 이상의 시간 블록을 입력받는다. 각 블
 ### 5.4 Web 범위와 오류
 
 - Web은 카메라 제어와 상태 확인을 함께 제공하는 단일 사용자 운영 화면이다.
+- React entry point인 `main.jsx`는 root render와 공통 stylesheet import만 담당한다.
+  화면 조립은 `App.jsx`, HTTP 호출은 `api/`, 상태와 workflow는 `hooks/`,
+  표시 변환은 `lib/`, 운영 화면 영역은 `components/`로 분리한다.
+- 단일 화면이므로 router, context 계층과 전역 store는 추가하지 않는다.
+  Health, 설정·카메라, 이벤트, 수동 촬영, Storage browser를 독립 hook으로
+  나누고 `useCaptureNode`는 결과를 화면 model로 조합한다.
 - Web API는 이 화면을 위한 내부 인터페이스이며 외부 사용이나 독립적인 하위
   호환성을 보장하지 않는다.
 - 인증·인가와 API versioning은 제공하지 않는다.
@@ -293,30 +303,30 @@ Distributor와 Web은 원격 저장소 타입을 판별하지 않는다.
   "host": "storage.example.local",
   "port": 22,
   "username": "capture-node",
-  "remote_directory": "/captures",
-  "password_env": "CAPTURE_NODE_SFTP_PASSWORD",
-  "known_hosts": "/home/huintech/.ssh/known_hosts",
-  "connect_timeout_seconds": 10,
-  "operation_timeout_seconds": 30,
+  "remoteDirectory": "/captures",
+  "passwordEnv": "CAPTURE_NODE_SFTP_PASSWORD",
+  "knownHosts": "/home/huintech/.ssh/known_hosts",
+  "connectTimeoutSeconds": 10,
+  "operationTimeoutSeconds": 30,
   "layout": "daily"
 }
 ```
 
-- `remote_directory`는 정규화된 절대 POSIX 경로여야 하며 서버에 미리 존재해야
+- `remoteDirectory`는 정규화된 절대 POSIX 경로여야 하며 서버에 미리 존재해야
   한다.
 - 각 저장·조회·목록 작업은 독립된 SSH/SFTP 연결을 열고 작업 후 명시적으로
   닫는다.
 - connect, SSH banner, 인증, channel open과 SFTP read/write에 유한 timeout을
   적용한다.
-- 서버 host key는 `known_hosts`와 일치해야 하며 알 수 없는 host를 자동
+- 서버 host key는 `knownHosts`와 일치해야 하며 알 수 없는 host를 자동
   등록하지 않는다.
 - 업로드는 같은 원격 디렉터리의 임시 파일에 먼저 기록하고 POSIX rename을
   우선 사용한다. 서버가 확장을 지원하지 않으면 표준 SFTP rename으로 대체한다.
 - 업로드 실패 시 임시 파일 삭제를 시도하며 자동 재시도는 하지 않는다.
 - 목록과 읽기는 `yyyyMMdd` 날짜 디렉터리의 일반 파일과 기존 최상위 일반 파일을
   제공하고 symlink와 경로 이탈을 거부한다.
-- `private_key` 또는 `password_env` 중 하나 이상이 필요하다. 암호화된 개인키의
-  passphrase는 `private_key_passphrase_env`로 참조할 수 있다.
+- `privateKey` 또는 `passwordEnv` 중 하나 이상이 필요하다. 암호화된 개인키의
+  passphrase는 `privateKeyPassphraseEnv`로 참조할 수 있다.
 - JSON은 Web의 `/api/config`에서 조회되므로 password와 passphrase 원문을
   허용하지 않는다.
 - 모든 instance가 공유하는 secret은 systemd가 먼저 읽는 `.env.local`에
@@ -349,20 +359,20 @@ FTPS는 SSH 기반 SFTP와 다른 Storage type인 `ftps`로 등록한다.
   "host": "localhost",
   "port": 21,
   "username": "capture-node",
-  "remote_directory": "/captures",
-  "password_env": "CAPTURE_NODE_FTPS_PASSWORD",
-  "verify_tls": true,
-  "ca_file": "/home/huintech/.config/capture-node/ftps-ca.pem",
-  "connect_timeout_seconds": 10,
-  "operation_timeout_seconds": 30,
+  "remoteDirectory": "/captures",
+  "passwordEnv": "CAPTURE_NODE_FTPS_PASSWORD",
+  "verifyTls": true,
+  "caFile": "/home/huintech/.config/capture-node/ftps-ca.pem",
+  "connectTimeoutSeconds": 10,
+  "operationTimeoutSeconds": 30,
   "layout": "daily"
 }
 ```
 
 - port 21의 explicit FTPS만 지원하며 implicit FTPS(port 990)는 지원하지 않는다.
-- TLS 인증서는 기본적으로 OS trust store 또는 `ca_file`로 검증한다.
+- TLS 인증서는 기본적으로 OS trust store 또는 `caFile`로 검증한다.
 - 노트북 서버와 Capture Node만 연결된 물리적으로 격리된 전용 유선망에서는
-  `verify_tls: false`를 명시할 수 있다. 이때 `ca_file` 값은 보존하되 사용하지
+  `verifyTls: false`를 명시할 수 있다. 이때 `caFile` 값은 보존하되 사용하지
   않으므로 설정 하나만 바꿔 검증을 복구할 수 있다. 서버 신원 검증만 생략하며
   TLS와 `PROT P`는 유지한다. 공유 LAN과 외부망에서는 사용하지 않는다.
 - 로그인 후 `PROT P`를 적용해 목록, 업로드와 다운로드 data channel도
@@ -374,25 +384,66 @@ FTPS는 SSH 기반 SFTP와 다른 Storage type인 `ftps`로 등록한다.
 - 목록은 `MLSD`의 `type`, `size`, `modify` fact를 우선 사용한다. 서버가
   `MLSD`를 지원하지 않으면 `NLST`, `SIZE`, `MDTM` 표준 명령으로 대체하며
   서버별 `LIST` 문자열은 해석하지 않는다.
-- 비밀번호 원문은 JSON에 저장하지 않고 `password_env`가 가리키는 환경변수에서
+- 비밀번호 원문은 JSON에 저장하지 않고 `passwordEnv`가 가리키는 환경변수에서
   읽는다.
 - 일부 FTPS 서버가 data channel의 TLS `close_notify` 응답을 생략하는
   경우 종료 대기를 1초로 제한하고 FTP 완료 응답과 파일 크기로 전송을 확정한다.
 
 ### 5.8 Storage 보존 정책
 
+- File, SFTP, FTPS Storage resource는 선택적인 `maintenance` object를 직접
+  소유한다. 이 object의 `intervalSeconds`는 점검 주기, `maxAgeDays`는 해당
+  Storage 파일의 보존 기간이다.
+- `maintenance`가 없으면 해당 Storage에는 자동 삭제 정책을 적용하지 않는다.
 - 보존 기간 판단과 실행 주기는 Storage adapter가 아닌 별도
   `StorageMaintenance`와 `MaintenanceScheduler`가 소유한다.
-- Maintenance Scheduler는 촬영 Scheduler와 독립되며 시작 즉시 한 번
-  실행하고 설정 주기마다 반복한다.
-- `modified_at < now - max_age_days`를 만족하는 파일만 삭제하고 경계
+- Maintenance가 설정된 Storage마다 Scheduler를 독립적으로 생성하며 시작 즉시
+  한 번 실행하고 그 Storage의 설정 주기마다 반복한다.
+- `modifiedAt < now - maxAgeDays`를 만족하는 파일만 삭제하고 경계
   시각과 같은 파일은 유지한다.
 - 목록은 50개 페이지 단위로 오래된 항목부터 처리하며 한 파일의
   삭제 실패가 다른 파일이나 Storage 처리를 중단하지 않는다.
-- 기본 정책은 비어 있다. 운영 예제의 `local`만 7일 보존을
-  명시하고 원격 archive에는 적용하지 않는다.
+- 기본 정책은 없다. Supervisor 운영 예제에는 Storage와 보존 정책을 구성하지
+  않으며 기존 Storage profile에서만 필요에 따라 명시한다.
 - PNG와 DNG의 실제 크기는 센서와 촬영 내용에 따라 달라지므로 용량 상한을
   보장하지 않는다.
+
+### 5.9 Supervisor 촬영 스트림
+
+- `POST /api/captures`는 Supervisor가 지정한 `requestId`, 선택적인 요청별
+  `parameters`와 `formats`를 받아 PNG, JPEG, DNG 산출물을 `multipart/mixed`로
+  스트리밍한다. 최소 요청은 `{"requestId":"supervisor-run-id"}`다.
+- `parameters`를 생략하면 임시 camera control을 적용하지 않고 현재 장치 설정으로
+  촬영한다. 지정하면 현재 `camera.params`에 요청 값을 병합해 해당 센서 촬영에만
+  적용하고, 촬영 직후 설정값을 복구한다.
+- `formats`를 생략하거나 `null`로 보내면 현재 `config.json.images` 정책을
+  사용한다. 지정하면 그 object에 포함된 형식만 생성하며, 각 형식은 설정과 같은
+  `quality`, `compression`, `embedMetadata` 정책을 독립적으로 지정할 수 있다.
+  예를 들어 `{"formats":{"jpeg":{"quality":85,"embedMetadata":true}}}`는
+  기본 설정에 DNG가 있어도 JPEG만 생성한다. 요청 정책은 영속 설정을 변경하지
+  않는다.
+- 촬영 예약 직후 전체 Options를 한 번 snapshot하고, 요청별 parameter의 기준값,
+  요청별 format, DNG 요청 여부와 모든 artifact 인코딩에 같은 snapshot을 사용한다.
+  촬영 도중 `/api/config`가 변경돼도 진행 중 bundle에는 새 Image policy를 섞지
+  않는다.
+- 처리 산출물 순서는 설정 문서의 속성 순서와 무관하게 PNG, JPEG, DNG로 고정한다.
+- 응답은 `X-Request-Id`, `X-Capture-Id`, `X-Captured-At`,
+  `X-Artifact-Count`를 제공한다. 각 part는 `Content-Type`, filename을 포함한
+  `Content-Disposition`, `Content-Length`, base64 SHA-256 `Digest`,
+  `X-Capture-Id`를 제공한다.
+- multipart body는 별도 ZIP이나 전체 응답 byte sequence로 합치지 않고 header와
+  artifact bytes를 part 단위로 yield한다.
+- capture reservation은 모든 인코딩이 끝난 뒤에도 유지하며 multipart 종료
+  boundary를 보내거나 client가 응답 소비를 취소할 때 해제한다. 그 전의 다음
+  촬영 요청은 `409 capture_in_progress`로 거절한다.
+- client 연결이 끊어진 artifact를 CaptureNode가 spool하거나 재전송하지 않는다.
+  Supervisor는 부분 수신을 실패로 처리하고 필요하면 새 촬영을 요청한다.
+- 오류 코드는 `camera_unavailable`, `capture_in_progress`,
+  `invalid_capture_parameters`, `capture_failed`, `encoding_failed`로 구분한다.
+- Supervisor 운영 profile은 예약 촬영과 Storage를 구성하지 않는다. 빈
+  `captures`와 `storages`는 설정 파일에 속성 자체를 기록하지 않으며 Options
+  모델에서는 각각 빈 tuple 기본값으로 해석한다. 기존 Scheduler와 Storage
+  구현 계약은 다른 profile의 호환성을 위해 유지한다.
 
 ## 6. Image policy
 
@@ -400,13 +451,20 @@ FTPS는 SSH 기반 SFTP와 다른 Storage type인 `ftps`로 등록한다.
 
 Web의 `Apply changes`로 다음 값을 변경한다.
 
-- JPEG: `image.format: jpeg`, `image.quality: 1-100`
-- PNG: `image.format: png`, `image.compression: 0-9`
-- `image.embed_metadata`: metadata 포함 여부
-- 기본은 PNG Compression 7이며 JPEG로 변경하면 Quality 90을 사용한다.
+- JPEG: `images.jpeg.quality: 1-100`, metadata 포함 여부
+- PNG: `images.png.compression: 0-9`, metadata 포함 여부
+- DNG: `images.dng.embedMetadata`, 사용자 정의 metadata 포함 정책
+- `png`, `jpeg`, `dng` 키의 존재 여부로 해당 출력을 활성화한다.
+- 최소 한 형식이 필요하며 PNG, JPEG, DNG를 동시에 활성화할 수 있다.
+- `images`를 생략하면 PNG Compression 7과 metadata 포함을 모델 기본값으로
+  사용한다.
 
 변경은 설정 파일에 저장되며 다음 촬영부터 적용된다. 기존 저장 파일은 변경하지
 않는다.
+
+같은 촬영에서 생성된 모든 출력은 동일한 UTC timestamp와 capture ID의 stem을
+공유하며 `.png`, `.jpeg`, `.dng` 확장자로만 구분한다. 형식별 별칭이나 별도
+suffix는 제공하지 않는다.
 
 `Embed metadata`가 활성화되면 JPEG와 PNG 모두 EXIF에 촬영 시각, 카메라
 파라미터, 노출과 gain을 기록한다. PNG metadata는 `eXIf` chunk만 사용하며 PNG
@@ -415,8 +473,8 @@ text chunk는 기록하지 않는다. 비활성화하면 EXIF를 생략한다.
 표준 EXIF tag에 직접 대응하지 않는 구현별 카메라 파라미터는 `UserComment`에
 JSON으로 기록한다. 따라서 전체 파라미터를 보존할 수 있지만, 일반 이미지
 뷰어에서는 `UserComment`의 JSON이 표시되지 않을 수 있다. V4L2 촬영의
-`observed_controls`와 snapshot 시각·오류, 반전 설정과 `flip_application`도 이
-JSON에 포함한다. software 반전값은 device snapshot인 `observed_controls`에
+`observedControls`와 snapshot 시각·오류, 반전 설정과 `flipApplication`도 이
+JSON에 포함한다. software 반전값은 device snapshot인 `observedControls`에
 병합하지 않는다.
 
 ### 6.2 JPEG 표시
@@ -432,11 +490,11 @@ JSON에 포함한다. software 반전값은 device snapshot인 `observed_control
 - 범위: `0-9`
 - 값이 높을수록 압축이 강해져 저장 시간이 늘고 파일 크기가 작아질 수 있다.
 - PNG는 무손실이므로 압축 수준에 따른 픽셀 화질 변화는 없다.
-- 하단 요약 예: `PNG · Compression 7 · Metadata on · DNG RAW`
+- 하단 요약 예: `PNG · Compression 7 · Metadata on / DNG · Metadata on`
 
 ### 6.4 Picamera2 DNG RAW
 
-- `image.raw.enabled: true`와 `image.raw.format: dng`로 활성화한다.
+- `images.dng` resource가 존재하면 활성화한다.
 - Picamera2만 지원하며 V4L2 설정에 RAW를 활성화하면 설정 검증에서 거절한다.
 - 촬영 순간에 전체 센서 해상도의 가장 높은 지원 비트 깊이로 still mode를
   구성한다. 배포된 IMX708과 IMX219는 모두 10-bit이므로 12-bit로 변환하거나
@@ -447,15 +505,10 @@ JSON에 포함한다. software 반전값은 device snapshot인 `observed_control
   종결되기 전에는 다음 촬영을 수락하지 않는다.
 - DNG는 Picamera2가 기록하는 센서·노출 metadata를 포함한다. PNG/JPEG에는 기존
   EXIF와 `UserComment` metadata를 유지하고 capture ID도 포함한다.
+- `images.dng.embedMetadata`는 향후 `camera.calibration` 같은 CaptureNode 사용자 정의
+  metadata를 DNG에 주입할지 결정하는 정책이다. 현재는 Picamera2가 생성한 native
+  DNG metadata를 항상 보존하며 사용자 정의 metadata 주입은 구현하지 않는다.
 - RAW 촬영 뒤 preview configuration을 복구해 Web MJPEG를 계속 제공한다.
-
-### 6.5 Picamera2 DNG-only
-
-- `image.format: dng`로 설정하면 PNG/JPEG 인코딩 없이 센서 DNG 하나만 저장한다.
-- 정기 촬영과 즉시 촬영은 동일한 현재 이미지 정책을 사용한다.
-- Picamera2만 지원하며 V4L2 설정에서는 검증 단계에서 거절한다.
-- 카메라가 DNG artifact를 반환하지 않으면 해당 촬영은 저장 완료가 아니라
-  terminal discard로 기록한다.
 
 ## 7. API 추가·변경 목록
 
@@ -466,6 +519,7 @@ JSON에 포함한다. software 반전값은 device snapshot인 `observed_control
 | `GET` | `/api/camera/controls` | 현재 장치의 control과 범위 조회 |
 | `PUT` | `/api/camera` | 장치, 해상도, FPS를 적용하고 카메라 교체 |
 | `POST` | `/api/capture` | 즉시 촬영 |
+| `POST` | `/api/captures` | Supervisor 요청별 multipart 촬영 bundle 스트리밍 |
 | `GET` | `/api/events` | 최근 이벤트 페이지 조회 |
 | `GET` | `/api/storage/targets` | 등록된 Storage 목록 |
 | `GET` | `/api/storage/files` | 저장 파일 페이지 조회 |
@@ -489,13 +543,13 @@ Camera 1 Web port: 8001
 ```
 
 - 배포 시 기존 instance 설정과 `captures/`는 보존한다.
-- instance 설정이 없으면 검증된 Options 모델로 해당 Camera 번호의 Picamera2,
-  Preview-only 일정, PNG Compression 7, Picamera2 DNG, 로컬 Storage와 7일
-  보존 정책을 생성한다. 예제 설정
-  파일은 배포 입력으로 사용하지 않는다.
+- instance 설정이 없으면 `config.example.json`을 최초 배포 템플릿으로
+  사용한다. instance별 Camera 번호만 배포 환경에 맞게 바꾸며, V4L2는 DNG를
+  사용할 수 없어 PNG로 대체한다. 신규 설정에는 예약 촬영과 Storage를 넣지
+  않는다.
 - 기존 capture root의 파일은 Camera 0 디렉터리로 이동한다.
-- 최초 배포 시 애플리케이션·선택한 instance별 `captures/`·가상환경 경로와
-  설정을 생성한다.
+- 최초 배포는 기존 profile과 데이터 보존 호환성을 위해 instance별 `captures/`
+  경로를 유지하지만 Supervisor profile의 CaptureNode는 이 경로에 저장하지 않는다.
 - Raspberry Pi 배포 가상환경은 system site packages를 사용해 OS가 제공하는
   Picamera2와 libcamera Python binding을 사용할 수 있게 한다.
 - Web 접속 주소는 배포 네트워크에서 장비에 할당된 현재 주소를 사용하며 문서에서
@@ -504,6 +558,12 @@ Camera 1 Web port: 8001
   `--camera-count 2`를 지정하면 Camera 0/1을 함께 배포한다. 로컬 테스트와 Web
   build 후 소스를 배포하고 systemd linger 활성화, 선택한 template service
   재시작과 health 확인을 수행한다.
+- `--skip-if-current`는 마지막 성공 배포의 source ID가 로컬과 같으면
+  test, Web build, 전송, service 변경과 activation을 생략한다. source ID
+  marker는 activation 성공 후에만 갱신한다.
+- `--supervisor-managed`는 CaptureNode source와 runtime만 설치·검증하고
+  standalone camera 설정과 service를 만들거나 시작하지 않는다. 이 모드에서
+  설정 생성과 child process lifecycle은 Pi Node Supervisor가 소유한다.
 - `--camera picamera2[:N]` 또는 `--camera v4l2:/absolute/path`를 1~2회
   지정해 초기 instance 설정을 생성할 수 있다. 이 값은 해당 설정 파일이
   없을 때만 사용하며 기존 설정은 검증 후 보존한다.
@@ -538,9 +598,9 @@ Camera 1 Web port: 8001
 | --- | --- | --- |
 | USB 카메라 | `tests/test_v4l2_camera.py` | MJPEG 공유, control, discovery, 선택 도구 누락, 분리 후 stale capture 차단 |
 | 카메라 교체 | `tests/test_camera_manager.py` | 교체 직렬화, 실패 복구, 연결 상태 전달 |
-| 스케줄 | `tests/test_events_and_scheduler.py` | Daily 다음 시각, disabled 대기와 재개 |
-| 설정 | `tests/test_config.py` | 모드 검증, Image policy 런타임 저장 |
-| Web | `tests/test_web.py` | Preview, Offline 상태, 즉시 촬영, 이벤트 페이지 |
+| 스케줄 | `tests/test_events_and_scheduler.py` | Daily, 매일 interval window, 계속 interval, 빈 규칙 대기와 재개 |
+| 설정 | `tests/test_config.py` | 모드 검증, Image policy 런타임 저장, 빈 schedule·storage 영속화 생략 |
+| Web | `tests/test_web.py` | Preview, Offline 상태, 즉시 촬영, Supervisor multipart 촬영, 이벤트 페이지 |
 | 저장 조회 | `tests/test_storage_browser.py` | 페이지 조회, target·경로·symlink 경계 |
 | SFTP | `tests/test_sftp_storage.py` | 인증 secret 분리, timeout, 날짜 경로, 임시 업로드·rename, 조회·목록·symlink 경계 |
 | FTPS | `tests/test_ftps_storage.py` | 인증서 CA, `PROT P`, timeout, 날짜 경로, 임시 업로드·rename, 기존 파일 조회 |

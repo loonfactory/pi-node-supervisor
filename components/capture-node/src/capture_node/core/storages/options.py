@@ -15,11 +15,17 @@ _ENVIRONMENT_VARIABLE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 StorageLayout = Literal["flat", "daily"]
 
 
+class StorageMaintenanceOptions(StrictModel):
+    interval_seconds: float = Field(default=86400, gt=0)
+    max_age_days: int = Field(gt=0)
+
+
 class FileStorageOptions(StrictModel):
     type: Literal["file"]
     name: str = Field(min_length=1)
     directory: Path
     layout: StorageLayout = "daily"
+    maintenance: StorageMaintenanceOptions | None = None
 
 
 class SftpStorageOptions(StrictModel):
@@ -36,6 +42,7 @@ class SftpStorageOptions(StrictModel):
     connect_timeout_seconds: float = Field(default=10, gt=0)
     operation_timeout_seconds: float = Field(default=30, gt=0)
     layout: StorageLayout = "daily"
+    maintenance: StorageMaintenanceOptions | None = None
 
     @field_validator("remote_directory")
     @classmethod
@@ -81,6 +88,7 @@ class FtpsStorageOptions(StrictModel):
     connect_timeout_seconds: float = Field(default=10, gt=0)
     operation_timeout_seconds: float = Field(default=30, gt=0)
     layout: StorageLayout = "daily"
+    maintenance: StorageMaintenanceOptions | None = None
 
     @field_validator("remote_directory")
     @classmethod

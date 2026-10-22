@@ -12,7 +12,7 @@ from tempfile import NamedTemporaryFile
 from typing import Any
 
 from capture_node.core.cameras.options import CameraOptions
-from capture_node.core.options import CaptureOptions, Options
+from capture_node.core.options import Options
 
 
 class ConfigurationError(RuntimeError):
@@ -51,8 +51,13 @@ class JsonOptionsRepository:
 
     def write(self, options: Options) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        document = options.model_dump(mode="json")
+        if not options.captures:
+            document.pop("captures", None)
+        if not options.storages:
+            document.pop("storages", None)
         payload = json.dumps(
-            options.model_dump(mode="json"),
+            document,
             ensure_ascii=True,
             indent=2,
         )
@@ -97,12 +102,18 @@ class Configuration:
     def replace(
         self,
         document: Mapping[str, Any],
-        apply: Callable[[CaptureOptions], None],
+        apply: Callable[[Options], None],
     ) -> UpdateResult:
         candidate = Options.model_validate(document)
         with self._lock:
             previous = self._options
-            if candidate.camera != previous.camera:
+            if candidate.camera.model_dump(
+                mode="json",
+                exclude={"calibration", "params"},
+            ) != previous.camera.model_dump(
+                mode="json",
+                exclude={"calibration", "params"},
+            ):
                 raise UnsupportedRuntimeChange(
                     "camera configuration cannot be changed while running"
                 )
@@ -110,13 +121,9 @@ class Configuration:
                 raise UnsupportedRuntimeChange(
                     "storage targets cannot be changed while running"
                 )
-            if candidate.maintenance != previous.maintenance:
-                raise UnsupportedRuntimeChange(
-                    "maintenance policy cannot be changed while running"
-                )
             try:
                 self._repository.write(candidate)
-                apply(candidate.capture)
+                apply(candidate)
             except BaseException as exc:
                 return UpdateResult(False, previous, exc)
             self._options = candidate

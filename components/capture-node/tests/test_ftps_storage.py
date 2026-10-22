@@ -222,27 +222,27 @@ def test_ftps_options_require_an_environment_secret_and_valid_path(
         name="remote",
         host="localhost",
         username="capture-node",
-        remote_directory="/captures",
-        password_env="CAPTURE_NODE_FTPS_PASSWORD",
-        ca_file=tmp_path / "ftps-ca.pem",
+        remoteDirectory="/captures",
+        passwordEnv="CAPTURE_NODE_FTPS_PASSWORD",
+        caFile=tmp_path / "ftps-ca.pem",
     )
 
     document = options.model_dump(mode="json")
 
     assert document["port"] == 21
     assert document["layout"] == "daily"
-    assert document["verify_tls"] is True
+    assert document["verifyTls"] is True
     assert "password" not in document
     with pytest.raises(ValidationError, match="normalized absolute"):
         FtpsStorageOptions.model_validate(
-            {**document, "remote_directory": "../captures"}
+            {**document, "remoteDirectory": "../captures"}
         )
     with pytest.raises(ValidationError, match="environment variable"):
-        FtpsStorageOptions.model_validate({**document, "password_env": "bad-name"})
+        FtpsStorageOptions.model_validate({**document, "passwordEnv": "bad-name"})
     with pytest.raises(ValidationError):
         FtpsStorageOptions.model_validate({**document, "password": "secret"})
     internal_options = FtpsStorageOptions.model_validate(
-        {**document, "verify_tls": False}
+        {**document, "verifyTls": False}
     )
     assert internal_options.ca_file == tmp_path / "ftps-ca.pem"
 
@@ -253,10 +253,10 @@ def test_ftps_can_explicitly_disable_verification_for_an_isolated_network() -> N
         name="remote",
         host="192.168.50.1",
         username="capture-node",
-        remote_directory="/captures",
-        password_env="CAPTURE_NODE_FTPS_PASSWORD",
-        verify_tls=False,
-        ca_file=Path("unused-ca.pem"),
+        remoteDirectory="/captures",
+        passwordEnv="CAPTURE_NODE_FTPS_PASSWORD",
+        verifyTls=False,
+        caFile=Path("unused-ca.pem"),
     )
 
     context = ftps_module._create_tls_context(options)
@@ -322,11 +322,11 @@ def test_ftps_session_verifies_tls_and_protects_the_data_channel(
         host="localhost",
         port=21,
         username="capture-node",
-        remote_directory="/captures",
-        password_env="CAPTURE_NODE_FTPS_PASSWORD",
-        ca_file=ca_file,
-        connect_timeout_seconds=4,
-        operation_timeout_seconds=9,
+        remoteDirectory="/captures",
+        passwordEnv="CAPTURE_NODE_FTPS_PASSWORD",
+        caFile=ca_file,
+        connectTimeoutSeconds=4,
+        operationTimeoutSeconds=9,
     )
 
     result = FtpsStorage.from_options(options).save(b"capture", "one.jpg")

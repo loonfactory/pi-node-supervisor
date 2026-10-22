@@ -35,7 +35,7 @@ SRS-CAPTURENODE-001이며, 추가된 기능 계약은
 ## DEC-003 Event Envelope
 
 - 결정: 표준 `logging`의 `extra.capture_event`에 JSON 호환 dict를 싣는다. 공통
-  필드는 `schema_version`, `event_type`, `timestamp`이며 스키마 버전은 1이다.
+  필드는 `schemaVersion`, `eventType`, `timestamp`이며 스키마 버전은 1이다.
 - Host 구성: Core는 이벤트 스키마와 발생만 소유한다. Headless와 Web은 각각의
   `logging_config.py`에서 Formatter와 Handler 구성을 독립적으로 소유한다.
   초기 Console 정책이 같더라도 공통 logging configuration을 공유하지 않으며,
@@ -47,10 +47,13 @@ SRS-CAPTURENODE-001이며, 추가된 기능 계약은
 
 ## DEC-004 Image Defaults
 
+- 상태: 설정 구조는 DEC-025로 대체됐다. 형식별 quality·compression과 EXIF
+  의미는 계속 유효하다.
 - 결정: Image Options는 `JpegImageOptions`(quality 기본 90)와
   `PngImageOptions`의 discriminated union으로 분리한다. PNG compression의
   초기 기본값 9는 DEC-023에서 7로 변경했다.
-  새 설정의 기본 형식은 무손실 PNG이고 메타데이터는 기본 포함한다.
+  Options 모델에서 `images`를 생략할 때의 기본 형식은 무손실 PNG이고
+  metadata는 기본 포함한다. 최초 배포 템플릿은 DEC-030을 따른다.
 - 근거: 손실 품질과 무손실 압축 수준은 의미가 다르므로 공통 `quality`
   수치와 역변환을 공유하지 않는다.
 - Web 표현: JPEG는 `quality 1-100`, PNG는 `compression 0-9`를 각 설정
@@ -66,7 +69,7 @@ SRS-CAPTURENODE-001이며, 추가된 기능 계약은
 
 ## DEC-005 Runtime Configuration Boundary
 
-- 결정: 실행 중에는 촬영 스케줄, `capture.params`, 이미지 형식·품질·메타데이터
+- 결정: 실행 중에는 `captures`, `camera.params`, 이미지 형식·품질·메타데이터
   정책을 변경한다. 저장 대상은 파일 수정 후 재시작으로 적용한다.
 - 근거: 이미지 인코더는 각 촬영을 처리할 때 현재 정책을 읽으므로 외부 자원 교체
   없이 다음 촬영부터 원자적으로 적용할 수 있다. 전체 옵션 문서를 제출하되 저장
@@ -104,6 +107,7 @@ SRS-CAPTURENODE-001이며, 추가된 기능 계약은
 
 ## DEC-007 Capture Schedule Modes
 
+- 상태: DEC-028의 Capture rule resource 계약으로 전체 대체됐다.
 - 결정: 촬영 트리거는 `interval`, `daily`, `disabled` 상태를 제공한다. `daily`는
   IANA timezone과 하루 한 번씩 반복되는 `HH:MM:SS` 목록을 사용한다.
   `disabled`는 Preview와 수동 촬영을 유지하면서 자동 촬영 트리거만 중지한다.
@@ -224,6 +228,8 @@ SRS-CAPTURENODE-001이며, 추가된 기능 계약은
 
 ## DEC-014 Private Web Host Contract
 
+- 상태: 단일 사용자 Web 범위는 유지한다. 외부 API 소비자를 지원하지 않는 결정은
+  Supervisor 전용 촬영 계약을 도입한 DEC-032에서 부분 대체됐다.
 - 범위: Web은 카메라 제어와 상태 확인을 함께 제공하는 단일 사용자 운영 화면이며,
   서버와 같은 버전으로 배포된다. 외부 API 소비자는 지원하지 않는다.
 - API: 인증·인가와 API versioning은 도입하지 않는다. 일반 HTTP 오류만 최소
@@ -263,10 +269,10 @@ SRS-CAPTURENODE-001이며, 추가된 기능 계약은
   `config.camera1.json`, `captures/camera1`, port 8001을 사용한다. 소스와
   `.venv`만 공유한다.
 - 초기 설치: 대상 경로가 없으면 애플리케이션·선택한 instance의 촬영·가상환경
-  경로를 생성한다. instance 설정은 예제 JSON을 복사하지 않고 검증된 Options
-  모델로 Picamera2, Preview-only 일정, PNG, 로컬 Storage와 보존 정책을
-  생성한다. 이후 배포에서는 이미 생성된 운영 설정과 촬영 파일을 교체하지
-  않는다. 이미지·보존 초기값은 DEC-023을 따른다.
+  경로를 생성한다. instance 설정은 DEC-030의 `config.example.json`
+  템플릿에서 Camera 번호와 instance별 Storage 경로만 바꿔 생성한다. V4L2는 DNG 대신
+  PNG를 사용한다. 이후 배포에서는 이미 생성된 운영 설정과 촬영 파일을
+  교체하지 않는다.
 - Raspberry Pi Python: 배포 venv는 system site packages를 포함해 OS의
   Picamera2/libcamera binding을 사용한다. 플랫폼 모듈은 해당 Registration의
   생성 또는 discovery 시점에만 import한다.
@@ -282,7 +288,7 @@ SRS-CAPTURENODE-001이며, 추가된 기능 계약은
   package index 접근을 금지하고 기존 runtime 또는 `.wheelhouse`만 사용한다.
   외부 wheelhouse는 `--wheelhouse`로 전송할 수 있으며 대상과 호환되지 않거나
   불완전하면 이전 source로 rollback한다.
-- 최초 SSH: 알 수 없는 host key는 OpenSSH `accept-new`로 로컬 known_hosts에
+- 최초 SSH: 알 수 없는 host key는 OpenSSH `accept-new`로 로컬 knownHosts에
   기록하되 변경된 key는 거절한다. `--bootstrap-ssh`는 지정 public key를
   `ssh-copy-id`로 설치한 뒤 BatchMode key 인증을 다시 검증한다.
 - 부팅: 배포 시 대상 사용자의 systemd linger를 활성화해 대화형 로그인 없이
@@ -324,12 +330,12 @@ SRS-CAPTURENODE-001이며, 추가된 기능 계약은
 - 연결: 작업마다 독립된 Paramiko SSH/SFTP session을 생성하고 명시적으로
   닫는다. 공유 연결과 connection pool은 현재 동시성 요구가 없고 장애 수명주기를
   복잡하게 하므로 도입하지 않는다.
-- 신뢰: 지정한 `known_hosts`를 읽고 기본 reject policy를 명시적으로 사용한다.
+- 신뢰: 지정한 `knownHosts`를 읽고 기본 reject policy를 명시적으로 사용한다.
   알 수 없는 host를 자동 등록하는 `AutoAddPolicy`는 사용하지 않는다.
 - 저장: 동일 디렉터리 임시 파일을 완성한 뒤 OpenSSH POSIX rename을 우선하고,
   지원하지 않는 서버에서는 표준 SFTP rename을 사용한다. 자동 재시도는 기존
   단일 시도 정책에 따라 제공하지 않는다.
-- 인증: JSON에는 `password_env`와 `private_key_passphrase_env` 같은 환경변수
+- 인증: JSON에는 `passwordEnv`와 `privateKeyPassphraseEnv` 같은 환경변수
   이름만 저장한다. 원문 secret field는 strict options 검증에서 거절한다.
   Web이 전체 options를 반환하므로 JSON password는 운영 편의보다 노출 위험이
   크다.
@@ -362,20 +368,20 @@ SRS-CAPTURENODE-001이며, 추가된 기능 계약은
   Python 표준 라이브러리 `FTP_TLS`로 explicit FTPS만 구현한다. CaptureNode,
   Distributor와 Web은 구체 타입을 판별하지 않는다.
 - TLS: 기본값은 `ssl.create_default_context`로 certificate chain과 hostname을
-  검증한다. 자체 서명 인증서는 `ca_file`로 명시적으로 신뢰한다. 물리적으로
-  격리된 2-node 유선망에 한해 `verify_tls: false`를 명시할 수 있으며 이때도
+  검증한다. 자체 서명 인증서는 `caFile`로 명시적으로 신뢰한다. 물리적으로
+  격리된 2-node 유선망에 한해 `verifyTls: false`를 명시할 수 있으며 이때도
   로그인 후 `PROT P`로 data channel을 보호한다.
 - 저장·조회: 작업마다 독립 연결을 열며 같은 디렉터리 임시 업로드와 rename으로
   저장을 확정한다. rename 전에 `SIZE`로 전송 크기를 검증하고 읽기도 전후 크기를
   비교한다. 날짜 경로와 기존 평면 파일 호환은 DEC-019를 따른다.
-- 디렉터리 생성: 저장 작업은 configured `remote_directory`를 루트부터
+- 디렉터리 생성: 저장 작업은 configured `remoteDirectory`를 루트부터
   재귀적으로 확인하고 누락된 경로를 생성한다. 실제 생성에 성공한 경로만 INFO로
   기록하며 조회·목록·삭제 작업은 원격 구조를 변경하지 않는다. 날짜 디렉터리
   생성은 반복적인 정상 동작이므로 별도 INFO 로그를 남기지 않는다.
 - 목록: 구조화된 `MLSD` fact를 우선 사용한다. 운영 대상처럼 `MLSD`가 없는
   서버는 `NLST` 후 `SIZE`·`MDTM` 표준 명령으로 대체한다. 서버별 `LIST` 문자열
   해석은 추가하지 않는다.
-- 인증: JSON에는 `password_env`만 저장한다. SFTP와 마찬가지로 실제 secret은
+- 인증: JSON에는 `passwordEnv`만 저장한다. SFTP와 마찬가지로 실제 secret은
   `.env.local` 또는 instance `.env`에서 주입한다.
 - 서버 호환: 일부 FTPS 서버가 data channel의 TLS `close_notify` 응답을
   생략하거나 연결을 바로 닫을 수 있으므로 종료 대기는 1초로 제한한다. 표준
@@ -383,20 +389,22 @@ SRS-CAPTURENODE-001이며, 추가된 기능 계약은
   그대로 요구한다.
 - 서버 배포: `eng/deploy-captureftp.ps1`은 IIS 설정 명령의 종료 코드를
   검증하고 DNS SAN과 IPAddress SAN을 구분한다. 자체 서명 인증서는 Linux
-  `ca_file`에서 사용할 PEM으로 내보내며, 완료 전에 인증서 검증과 passive
+  `caFile`에서 사용할 PEM으로 내보내며, 완료 전에 인증서 검증과 passive
   업로드·목록·다운로드·내용 비교·삭제를 수행한다.
 - 범위: port 990 implicit FTPS, active mode와 자동 재시도는 제공하지 않는다.
 
 ## DEC-021 Storage Retention Maintenance
 
+- 상태: 설정 소유권과 Scheduler 구성은 DEC-027로 대체됐다. Adapter의 단일 파일
+  삭제 경계와 실패 격리 원칙은 계속 유효하다.
 - 결정: Storage adapter는 단일 파일 삭제만 수행하고 대상 선정과 주기는
   `core/maintenance` 영역의 `StorageMaintenance`, `RetentionOptions`,
   `MaintenanceScheduler`가 소유한다.
 - Scheduler: 촬영 Scheduler와 독립된 고정 지연 스레드로 시작 즉시
   실행하고 기본 86,400초마다 반복한다. 정책이 없으면 스레드를
   생성하지 않는다.
-- 정책: target별 `max_age_days`를 명시하며 Storage가 반환한 UTC
-  `modified_at`을 기준으로 경계보다 오래된 파일만 삭제한다. 기본은 빈
+- 정책: target별 `maxAgeDays`를 명시하며 Storage가 반환한 UTC
+  `modifiedAt`을 기준으로 경계보다 오래된 파일만 삭제한다. 기본은 빈
   정책이고 운영 예제의 local target 보존기간은 DEC-023을 따른다.
 - 실패: 목록·삭제 예외를 대상별로 기록하고 다른 파일·Storage 처리와
   촬영 파이프라인은 계속한다. 런타임 정책 변경은 재시작을 요구한다.
@@ -425,6 +433,8 @@ SRS-CAPTURENODE-001이며, 추가된 기능 계약은
 
 ## DEC-023 Picamera2 RAW Capture and Seven-Day Local Retention
 
+- 상태: `image.raw` 설정 위치는 DEC-025의 `images.dng`로 대체됐다. 센서 촬영,
+  저장 묶음과 보존 결정은 계속 유효하다.
 - 결정: Picamera2 운영 프로필은 PNG Compression 7과 metadata를 유지하면서
   같은 센서 요청의 DNG를 함께 저장한다. RAW 설정은 `image.raw`라는 명시적
   옵션이며 V4L2에서는 검증 단계에서 거절한다.
@@ -444,20 +454,249 @@ SRS-CAPTURENODE-001이며, 추가된 기능 계약은
 - 보존: 운영 local Storage는 7일을 유지하며 원격 Storage에는 자동 삭제 정책을
   넣지 않는다. 보존 판단은 기존 StorageMaintenance의 파일별 modified time을
   사용한다.
-- 기본값: PNG compression 기본값을 9에서 7로 변경한다. 신규 Picamera2 배포는
-  RAW를 활성화하고 local 7일 보존을 생성하지만, 기존 운영 설정은 배포 중
-  덮어쓰지 않고 Supervisor의 revision 적용 경로로 명시적으로 갱신한다.
+- 기본값: PNG compression 7 결정은 형식을 PNG로 선택할 때 유효하다.
+  최초 배포 템플릿은 DEC-030이 정하며 기존 운영 설정은 배포 중
+  덮어쓰지 않는다.
 - 기각: PNG만 저장하는 방식은 ISP 이전 Bayer data와 더 넓은 계조를 복원할 수
   없어 정량 분석 원본으로 부족하다. RAW만 저장하는 방식은 현장 확인과 일반
   도구 호환성이 떨어져 처리 영상과 RAW 병행을 채택했다.
 
-## DEC-024 DNG-only Operational Capture
+## DEC-024 System-Local Daily Schedule
 
-- 상태: DEC-023의 운영 이미지 기본값 중 PNG+DNG 병행 결정을 대체한다. 기존
-  `image.raw` 묶음 계약은 호환 목적으로 유지한다.
-- 결정: 신규 Picamera2 운영 설정은 `image.format: dng`를 사용해 센서 DNG 하나만
-  저장한다. 정기 촬영과 즉시 촬영은 같은 적용 이미지 정책을 사용한다.
-- 근거: 정량 비교의 원본은 ISP 처리 영상이 아니라 Bayer RAW여야 하며, 같은
-  촬영의 PNG를 필수 산출물로 유지할 필요가 없다.
-- 제약: V4L2는 DNG-only 정책을 거절한다. DNG 요청에서 카메라가 RAW artifact를
-  반환하지 않으면 저장 성공으로 처리하지 않고 terminal discard로 기록한다.
+- 결정: timezone을 설정, API와 Web 상태에서 제거하고 매일 wall-clock
+  Capture rule의 시각을 프로세스가 실행되는 OS local time으로 해석한다. 시스템
+  timezone의 구성과 정확성은 설치자 책임이며 CaptureNode와 배포 스크립트는
+  특정 timezone을 설정하거나 검증하지 않는다.
+- 호환성: 기존 `capture` resource와 `capture.timezone`은 자동 제거하거나 변환하지 않는다. 설정 로드,
+  API 제출과 배포 검증에서 strict options 오류로 거절하고 원본 파일을 수정하지
+  않는다.
+- UTC 경계: 촬영 파일명, 저장 날짜 layout, event timestamp, RTC와 metadata의
+  절대 시각은 기존처럼 UTC를 유지한다. OS local time은 매일 trigger의 wall
+  clock 해석에만 사용한다.
+- 근거: 배포 환경의 timezone을 설정과 중복 저장하지 않고 host를 단일
+  source-of-truth로 둔다. 장비의 현지 시각 정책은 설치 영역에 속하며 schedule
+  설정은 촬영할 wall-clock 시각만 표현한다.
+- 대체: DEC-007의 IANA timezone 영속화와 host timezone 변경 격리 결정을
+  대체한다. 스케줄 자료 구조는 DEC-028이 대체한다.
+
+## DEC-025 Extension-Keyed ImageFormat Resources
+
+- 결정: 단일 `image` discriminated resource와 중첩 `raw`를 확장자 key 기반
+  `images` object로 대체한다. 허용 key는 `png`, `jpeg`, `dng`이고 key가
+  존재하면 해당 형식을 생성한다. 최소 하나가 필요하며 여러 형식을 동시에
+  활성화할 수 있다.
+- 출력 식별: 같은 촬영의 모든 출력은 동일한 UTC timestamp와 capture ID stem을
+  사용하고 `.png`, `.jpeg`, `.dng` 확장자로만 구분한다. 별도 `type`, `format`,
+  이름이나 suffix 속성은 두지 않는다.
+- 형식별 정책: PNG는 `compression`과 `embedMetadata`, JPEG는 `quality`와
+  `embedMetadata`, DNG는 `embedMetadata`를 가진다. DNG의 field는 향후
+  `camera.calibration` 같은 CaptureNode 사용자 정의 metadata 주입을 제어한다. 현재
+  Picamera2 native DNG metadata는 항상 보존하고 사용자 정의 주입은 하지 않는다.
+- 호환성: 기존 `image`, `image.format`, `image.raw` resource를 자동 변환하지
+  않는다. 설정 로드, API 제출과 배포 검증에서 strict options 오류로 거절하고
+  원본 파일을 수정하지 않는다.
+- 근거: object key가 형식과 확장자의 단일 source-of-truth가 되어 중복 형식을
+  구조적으로 방지하고, runtime lookup과 설정 참조를 단순화한다. 현재 요구에는
+  형식당 정책이 하나뿐이므로 배열과 별도 discriminator가 불필요하다.
+- 기각: `[{"type": "png", ...}]` 배열은 같은 형식을 여러 profile로 생성할 때는
+  적합하지만 현재 계약에서는 중복 검증과 식별 이름이 추가로 필요해 채택하지
+  않았다.
+
+## DEC-026 Camera-Scoped Calibration Metadata
+
+- 결정: `calibration`은 Picamera2와 V4L2 Camera resource가 각각 소유하는 자유
+  형식 JSON object다. sensor, lens와 기하 특성이 카메라마다 다르므로
+  `camera.calibration`을 해당 장치 설정과 함께 저장한다.
+- 런타임: calibration metadata만 바뀐 설정은 카메라 장치 변경으로 취급하지
+  않고 재연결 없이 영속화한다. CaptureNode는 값을 보존할 뿐 내부 schema를
+  검증하거나 이미지 보정을 수행하지 않는다.
+- metadata: `images.dng.embedMetadata`가 활성화되면 향후 이 값을 DNG 사용자
+  정의 metadata로 기록할 수 있다. 현재 Picamera2 native DNG metadata는 그대로
+  유지하며 calibration 주입은 구현하지 않는다.
+- 근거: calibration과 적용 대상을 같은 resource에 두어 여러 camera instance의
+  보정값이 공용 상태로 섞이는 것을 방지한다.
+
+## DEC-027 Storage-Scoped Maintenance Resources
+
+- 결정: 각 File, SFTP, FTPS options가 선택적인 `maintenance` resource를 직접
+  소유한다. 이 resource는 해당 Storage의 `intervalSeconds`와
+  `maxAgeDays`만 가지며 별도 target field나 retention 배열을 두지 않는다.
+- 실행: Maintenance가 설정된 Storage마다 독립된 `MaintenanceScheduler`를 만들고
+  시작 즉시 한 번 실행한 뒤 각자의 주기로 반복한다. Storage adapter는 기존처럼
+  단일 파일 삭제만 수행하고 선정과 오류 격리는 `StorageMaintenance`가 담당한다.
+- 기본값: `maintenance`를 생략하면 해당 Storage에는 자동 삭제를 적용하지 않는다.
+  신규 운영 local Storage만 86,400초 점검과 7일 보존을 명시한다.
+- 런타임: Maintenance는 Storage resource의 일부이므로 변경하려면 설정 파일을
+  수정하고 프로세스를 재시작한다.
+- 근거: 보존 정책과 적용 Storage를 같은 resource에 두어 이름 기반 cross-reference,
+  존재 검증과 중복 target 상태를 제거하고 Storage별 서로 다른 주기를 자연스럽게
+  표현한다.
+
+## DEC-028 Daily Capture Rule Resources
+
+- 상태: wire 속성 이름과 daily type 식별자는 DEC-033이 대체한다. 나머지 반복,
+  중첩과 timezone 결정은 유지한다.
+- 결정: 단일 `capture` mode resource를 `captures` 배열로 대체한다. 각 항목은
+  `type: "daily"`와 `time`, 또는 `type: "interval"`과 양의 `interval`을
+  가진다. Interval의 `startTime`과 `endTime`은 둘 다 있거나 둘 다 없다.
+- 반복 의미: `daily`는 지정한 OS local wall-clock 시각에 매일 한 번
+  실행한다. 시간 구간 interval도 매일 반복하며 시작과, 간격에 맞는
+  종료 시각을 포함한다. 날짜를 지정하는 촬영 규칙은 제공하지 않는다.
+- 계속 interval: 시간 구간을 생략하면 실행 시점부터 monotonic clock
+  기준으로 계속 반복해 wall-clock 보정의 영향을 받지 않는다.
+- 중첩: 서로 다른 규칙이 정확히 같은 시각에 due가 되면 스케줄러는
+  하나의 capture tick으로 합친다. 동일한 규칙 자체를 중복 저장하는 것은 거절한다.
+- 빈 배열: `captures: []`는 자동 촬영 없이 Preview와 즉시 촬영만
+  유지한다. 별도 disabled mode를 두지 않는다.
+- 이름: Capture resource wire contract는 `startTime`, `endTime` camelCase를
+  사용한다. 전체 JSON naming 계약은 DEC-033을 따른다.
+- Camera parameter: 촬영 규칙과 카메라 control을 분리하기 위해 기존
+  `capture.params`의 기능은 `camera.params`로 이동한다.
+- 호환성: 기존 `capture.mode`, `intervalSeconds`, `daily_times`, `params`를
+  변환·보존·거절 전용 코드로 다루지 않는다. 현재 strict `Options`에 없는
+  속성이므로 일반 알 수 없는 속성과 동일하게 검증 실패한다.
+- 대체: DEC-007의 mode 계약과 DEC-024의 기존 Daily 자료 구조를
+  대체하며 DEC-024의 OS-local timezone 소유권 결정은 유지한다.
+
+## DEC-029 Picamera2 Maximum Resolution Default
+
+- 결정: Picamera2 `width`와 `height`를 둘 다 생략하거나 `null`로 지정하면
+  카메라가 보고한 `sensor_resolution`을 main stream 크기로 사용한다. 하나만
+  지정하는 설정은 계속 거절한다.
+- 적용 범위: 처리 이미지 촬영과 이들이 공유하는 Preview main stream에
+  적용한다. DNG raw 촬영은 기존처럼 full sensor output의 최고 bit depth
+  mode를 사용한다.
+- 탐색·배포: 새 Picamera2 장치 탐색 결과와 최초 배포 설정은 고정
+  `1920×1080`을 넣지 않고 두 속성을 `null`로 두어 이 규칙을 사용한다.
+- V4L2: frame size 목록이 pixel format과 장치마다 다르고 현재 지속 MJPEG
+  pipeline이 해상도를 명시하므로 자동 최대 선택을 적용하지 않는다.
+- 근거: Picamera2 library의 암묵적 preview 기본값 대신 hardware가 보고한
+  sensor resolution을 명시적 source-of-truth로 사용해 설정 생략의 의미를
+  예측 가능하게 만든다.
+
+## DEC-030 Example-Based Initial Deployment
+
+- 상태: 최초 배포 template의 예약 촬영과 File Storage 구성은 DEC-032로
+  대체됐다. 설정 파일이 없을 때 example을 source-of-truth로 사용하는 결정은
+  유지한다.
+- 결정: `config.example.json`을 설정 파일이 없는 instance의 최초 배포
+  템플릿으로 사용한다. 빈 root object와 개별 속성 생략은 계속 Options
+  모델 자체의 기본값을 사용하며 예제 파일과 같을 필요가 없다.
+- 템플릿 구성: Picamera2 camera 0, `width`/`height` 자동 최대 해상도,
+  00:00:00~23:59:59의 1800초 interval, metadata를 포함한 DNG,
+  `./captures`의 daily File Storage와 86,400초 점검·7일 보존을 사용한다.
+- 단일 template: 신규 배포용 일정·이미지·보존 값을 배포 코드에 별도로
+  정의하지 않고 배포된 `config.example.json`을 읽어 가져온다. Camera 번호와
+  instance별 Storage 경로만 바꾸며, V4L2는 DNG 비지원 때문에 PNG로 대체한다.
+- 검증: 배포는 템플릿을 `Options` 모델로 검증한 후 instance 설정을
+  생성한다.
+
+## DEC-031 React Frontend Responsibility Split
+
+- 결정: React entry point `main.jsx`는 `createRoot`, `StrictMode`, `App`와 stylesheet
+  import만 소유한다. 최상위 화면 조립은 `App.jsx`, HTTP boundary는
+  `api/captureNodeApi.js`, 순수 표시 변환은 `lib/presentation.js`로 분리한다.
+- Hook: `useRuntimeStatus`, `useCaptureSettings`, `useActivityFeed`, `useManualCapture`,
+  `useStorageBrowser`가 각 기능의 상태와 workflow를 소유한다.
+  `useCaptureNode`는 이 hook들을 호출하고 component에 전달할 화면 model을
+  조합하는 역할만 담당한다.
+- 컴포넌트: Preview, Settings, Events, Storage modal을 운영 화면 영역별로
+  나누고 Settings는 Camera device, Image policy, Capture schedule, Camera parameter
+  editor로 한 번 더 분해한다.
+- 참고: `temp/downcap-light-main/reactapp`의 entry point, App, API, component, area/lib
+  분리 원칙을 참고하되 CaptureNode는 단일 운영 화면이므로 router,
+  page lazy loading, context provider와 전역 store는 도입하지 않는다.
+- 근거: API polling, 설정 편집, 표시 utility와 큰 JSX tree를 하나의
+  파일에 두면 변경 영향과 재사용 경계를 파악하기 어렵다. 기능 경계를
+  파일 경계와 맞추되 현재 규모에 필요하지 않은 framework는 추가하지 않는다.
+
+## DEC-032 Supervisor-Owned Scheduling and Streamed Capture Bundle
+
+- 결정: Supervisor 운영 profile에서는 CaptureNode가 카메라 설정, 단일 촬영,
+  JPEG/PNG/DNG 인코딩과 HTTP 응답 스트리밍만 담당한다. 예약 실행, file/SFTP/FTPS
+  저장, 재시도, 저장 이력과 power-off readiness는 Supervisor가 소유한다.
+- 호환성: Scheduler, Distributor와 Storage 구현 코드는 기존 profile을 위해
+  유지한다. Supervisor profile의 설정은 `captures`와 `storages`를 생략하며,
+  Options의 빈 기본값으로 해석한다. repository는 두 값이 비어 있으면 정규화
+  저장에서도 속성을 생략한다.
+- API: `POST /api/captures`가 `requestId`와 요청별 camera parameters를 받고
+  활성 ImageFormat을 PNG, JPEG, DNG 순서의 `multipart/mixed`로 반환한다.
+  응답과 각 part는 capture ID를 제공하고 각 part는 길이와 base64 SHA-256
+  digest를 포함한다.
+- 요청별 parameter: configured `camera.params`에 요청 값을 병합해 촬영 전에
+  적용하고 센서 촬영 직후 configured 값을 복구한다. 적용 실패는 422, 촬영 또는
+  복구 실패는 capture failure로 다룬다. 요청 값은 영속 설정을 변경하지 않는다.
+- 설정 일관성: reservation 직후 immutable Options snapshot을 얻고 camera parameter
+  기준값, RAW 요청 여부와 artifact encoding 전체에 동일하게 사용한다. 동시
+  `/api/config` 변경은 다음 capture부터 적용하고 진행 중 bundle을 바꾸지 않는다.
+- 수명주기: 촬영 예약은 capture와 encoding뿐 아니라 response iterator가 정상
+  종료되거나 취소될 때까지 유지한다. 따라서 두 capture bundle이 메모리와 camera를
+  동시에 소유하지 않는다. 취소 경로의 `finally`에서 reservation을 해제한다.
+- 메모리: 현재 Camera와 ImageEncoder 계약이 bytes를 반환하므로 artifact 자체는
+  메모리에 존재한다. multipart/ZIP 전체를 추가 byte sequence로 조립하지 않고
+  part header와 기존 artifact bytes를 차례로 yield해 추가 bundle 복사를 피한다.
+- 전달 실패: CaptureNode는 spool과 재전송을 제공하지 않는다. Supervisor는 종료
+  boundary, artifact 수, filename, 길이, digest와 capture ID를 모두 검증한 뒤에만
+  로컬 수신 성공으로 기록하고, 불완전한 응답은 새 촬영 요청이 필요한 실패로
+  처리한다.
+- 기각: CaptureNode 내부의 영구 spool과 원격 upload worker는 느린 외부 저장과
+  촬영을 분리하지만 예약·재시도·종료 준비 책임을 두 프로세스에 중복시킨다.
+  전체 응답 ZIP 조립은 큰 DNG bundle의 추가 메모리 복사를 유발하므로 채택하지
+  않았다.
+
+## DEC-033 Strict camelCase JSON Contract and Daily Capture Type
+
+- 결정: CaptureNode가 소유하는 설정, HTTP request/response와 event document의
+  모든 JSON 속성 이름은 `camelCase`로 직렬화하고 검증한다. `snake_case` alias나
+  입력 변환은 제공하지 않으며 알 수 없는 속성과 동일하게 검증 실패한다.
+- 적용 경계: Pydantic resource, 수동으로 구성하는 API response, event envelope와
+  camera metadata wrapper에 동일하게 적용한다. HTTP header 이름, Python 내부
+  identifier, camera control 이름과 외부 library option 이름은 JSON 속성 계약이
+  아니므로 변경하지 않는다.
+- 사용자 정의 object: `camera.params`와 `camera.calibration` 내부 key는 연결된
+  camera 구현이 소유하므로 CaptureNode가 이름을 변환하지 않는다.
+- Daily rule: 매일 지정 시각에 실행하는 Capture resource의 식별자를
+  `type: "once"`에서 `type: "daily"`로 바꾼다. `once` 입력 호환은 제공하지
+  않는다. 실행 의미와 내부 scheduler 구현은 DEC-028의 daily 반복 계약을
+  유지한다.
+- 테스트: 단순히 속성 이름이나 문서 문자열의 존재만 확인하는 테스트는 두지
+  않는다. 유효한 camelCase document의 동작과 기존 이름을 포함한 잘못된 입력의
+  거절처럼 계약의 실제 동작을 검증한다.
+- 근거: 동일한 public naming 규칙으로 Supervisor와 Web client의 변환 분기를
+  제거하고, 호환 alias 때문에 오래된 계약이 조용히 계속 사용되는 것을 막는다.
+
+## DEC-034 Request-Scoped Capture Formats
+
+- 결정: `POST /api/captures`의 `requestId`만 필수로 두고 `parameters`와
+  `formats`는 선택 속성으로 제공한다. 두 속성은 해당 촬영에만 적용하며 영속
+  설정을 변경하지 않는다.
+- 생략 의미: `parameters`를 생략하면 임시 control 적용 없이 현재 camera 상태로
+  촬영한다. `formats`를 생략하거나 `null`로 보내면 immutable Options snapshot의
+  `images`를 사용한다.
+- Format override: `formats`가 있으면 설정의 `images`와 병합하지 않고 요청
+  object에 포함된 PNG, JPEG, DNG만 생성한다. 각 resource는 설정과 같은 quality,
+  compression과 metadata 옵션을 검증한다. 따라서 요청에서 DNG를 제외하면 raw
+  capture도 요청하지 않는다.
+- 일관성: 요청 format은 촬영 예약 시 얻은 설정 snapshot과 함께 고정한다.
+  DNG 가능 여부, camera raw 요청과 artifact encoding이 동일한 format policy를
+  사용하며 진행 중인 설정 변경의 영향을 받지 않는다.
+- 근거: Supervisor가 촬영 목적별 산출물을 선택할 수 있게 하면서도 기본 요청은
+  장치에 구성된 정책을 그대로 사용하고 CaptureNode 설정의 영속성을 유지한다.
+
+## DEC-035 Idempotent Supervisor-managed Deployment
+
+- 결정: 배포 가능한 Python/Web/package/systemd 입력으로 결정적 SHA-256 source ID를
+  만들고, 성공한 원격 activation 뒤에만
+  `~/capture-node/.deployed-source.sha256`로 게시한다.
+- 생략 조건: `--skip-if-current`에서 원격 marker와 로컬 source ID가 같을 때는
+  test, frontend build, 전송, service 변경과 activation을 모두 생략한다. marker가
+  없거나 다르면 전체 배포를 실행한다.
+- Supervisor profile: `--supervisor-managed`는 source와 runtime dependency를
+  설치·검증하지만 standalone instance 설정과 systemd service를 만들거나 시작하지
+  않는다. 설정 생성과 child process lifecycle은 Supervisor activation이 소유한다.
+- 실패 원자성: source ID는 runtime import 검증 뒤 기록하며 activation 실패 시
+  이전 source를 복구하고 기존 marker를 유지한다. 따라서 marker는 전송 시도가
+  아니라 마지막 성공 deployment를 나타낸다.
+- 근거: Supervisor와 CaptureNode를 별도 명령으로 갱신하면 동일한 package version
+  아래에서도 설정 contract가 어긋날 수 있다. source identity와 단일 orchestration
+  entry point로 이 drift를 막되 변경이 없는 반복 배포 비용은 제거한다.

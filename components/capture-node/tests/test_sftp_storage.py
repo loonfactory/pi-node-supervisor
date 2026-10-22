@@ -240,14 +240,14 @@ def test_sftp_options_reference_secrets_without_storing_them() -> None:
         name="remote",
         host="storage.local",
         username="capture-node",
-        remote_directory="/captures",
-        password_env="CAPTURE_NODE_SFTP_PASSWORD",
+        remoteDirectory="/captures",
+        passwordEnv="CAPTURE_NODE_SFTP_PASSWORD",
     )
 
     document = options.model_dump(mode="json")
 
     assert document["layout"] == "daily"
-    assert document["password_env"] == "CAPTURE_NODE_SFTP_PASSWORD"
+    assert document["passwordEnv"] == "CAPTURE_NODE_SFTP_PASSWORD"
     assert "password" not in document
     with pytest.raises(ValidationError, match="private_key or password_env"):
         SftpStorageOptions(
@@ -255,7 +255,7 @@ def test_sftp_options_reference_secrets_without_storing_them() -> None:
             name="remote",
             host="storage.local",
             username="capture-node",
-            remote_directory="/captures",
+            remoteDirectory="/captures",
         )
     with pytest.raises(ValidationError, match="normalized absolute"):
         SftpStorageOptions(
@@ -263,8 +263,8 @@ def test_sftp_options_reference_secrets_without_storing_them() -> None:
             name="remote",
             host="storage.local",
             username="capture-node",
-            remote_directory="../captures",
-            password_env="SFTP_PASSWORD",
+            remoteDirectory="../captures",
+            passwordEnv="SFTP_PASSWORD",
         )
     with pytest.raises(ValidationError):
         SftpStorageOptions.model_validate({**document, "password": "secret"})
@@ -318,11 +318,11 @@ def test_paramiko_session_uses_environment_secret_and_finite_timeouts(
         host="storage.local",
         port=2022,
         username="capture-node",
-        remote_directory="/captures",
-        password_env="CAPTURE_NODE_SFTP_PASSWORD",
-        known_hosts=known_hosts,
-        connect_timeout_seconds=4,
-        operation_timeout_seconds=9,
+        remoteDirectory="/captures",
+        passwordEnv="CAPTURE_NODE_SFTP_PASSWORD",
+        knownHosts=known_hosts,
+        connectTimeoutSeconds=4,
+        operationTimeoutSeconds=9,
     )
 
     result = SftpStorage.from_options(options).save(b"capture", "one.jpg")

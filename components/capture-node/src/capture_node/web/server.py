@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import io
 import logging
 import mimetypes
@@ -12,9 +13,17 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from pydantic import ValidationError
+from pydantic import Field, ValidationError, field_validator
+from pydantic.alias_generators import to_camel
 
-from capture_node.core import CaptureNode
+from capture_node.core import (
+    CaptureBundle,
+    CaptureFailed,
+    CaptureInProgress,
+    CaptureNode,
+    EncodingFailed,
+    InvalidCaptureParameters,
+)
 from capture_node.core.cameras import (
     Camera,
     CameraControlSource,
@@ -29,7 +38,9 @@ from capture_node.core.cameras import (
     PreviewFrame,
 )
 from capture_node.core.config import Configuration, UnsupportedRuntimeChange
+from capture_node.core.encodings.options import ImageFormatsOptions
 from capture_node.core.events import LOGGER_NAME
+from capture_node.core.models import StrictModel
 from capture_node.core.storages import ConfiguredStorageProvider, StorageProvider
 from capture_node.web.event_buffer import EventBuffer
 from capture_node.web.logging_config import configure_logging
@@ -37,6 +48,28 @@ from capture_node.web.problems import ApiProblem
 from capture_node.web.storage_browser import StorageBrowser
 
 _MEDIA_TYPES = {".dng": "image/x-adobe-dng"}
+_CAPTURE_BOUNDARY = "capture"
+_CAPTURE_STREAM_CHUNK_SIZE = 1024 * 1024
+
+
+class CaptureRequest(StrictModel):
+    """Supervisor-owned request for one streamed capture bundle."""
+
+    request_id: str = Field(min_length=1, max_length=128)
+    parameters: dict[str, Any] = Field(default_factory=dict)
+    formats: ImageFormatsOptions | None = None
+
+    @field_validator("request_id")
+    @classmethod
+    def reject_control_characters(cls, value: str) -> str:
+        if not value.isascii() or any(
+            ord(character) <= 0x20 or ord(character) == 0x7F
+            for character in value
+        ):
+            raise ValueError(
+                "request_id must contain visible ASCII characters without spaces"
+            )
+        return value
 
 
 def create_app(
@@ -99,6 +132,18 @@ def create_app(
         request: Request,
         _exc: RequestValidationError,
     ) -> JSONResponse:
+        if request.url.path == "/api/captures":
+            problem = ApiProblem(
+                422,
+                "invalid_capture_parameters",
+                "Invalid capture parameters",
+                "The capture request is invalid.",
+            )
+            return JSONResponse(
+                problem.document(request.url.path),
+                status_code=problem.status,
+                media_type="application/problem+json",
+            )
         problem = ApiProblem(
             422,
             "validation_failed",
@@ -156,9 +201,12 @@ def create_app(
         return result.options.model_dump(mode="json")
 
     @app.get("/api/events")
-    def get_events(page: int = 1, page_size: int = 10) -> dict[str, Any]:
+    def get_events(
+        page: int = 1,
+        pageSize: int = 10,
+    ) -> dict[str, Any]:
         try:
-            items, total = event_buffer.page(page, page_size)
+            items, total = event_buffer.page(page, pageSize)
         except ValueError as exc:
             raise ApiProblem(
                 422,
@@ -166,14 +214,14 @@ def create_app(
                 "Validation failed",
                 str(exc),
             ) from exc
-        pages = max(1, (total + page_size - 1) // page_size)
+        pages = max(1, (total + pageSize - 1) // pageSize)
         return {
             "items": items,
             "page": page,
-            "page_size": page_size,
+            "pageSize": pageSize,
             "total": total,
             "pages": pages,
-            "latest_capture_id": event_buffer.latest_capture_id(),
+            "latestCaptureId": event_buffer.latest_capture_id(),
         }
 
     @app.get("/api/camera/devices")
@@ -201,7 +249,7 @@ def create_app(
             controls = camera.controls()
         except CameraControlsUnavailable as exc:
             return {
-                "items": [asdict(control) for control in exc.controls],
+                "items": [_dataclass_document(control) for control in exc.controls],
                 "available": bool(exc.controls),
                 "warning": {
                     "code": exc.code,
@@ -216,7 +264,7 @@ def create_app(
                 str(exc),
             ) from exc
         return {
-            "items": [asdict(control) for control in controls],
+            "items": [_dataclass_document(control) for control in controls],
             "available": True,
             "warning": None,
         }
@@ -230,12 +278,13 @@ def create_app(
                 "Camera replacement not supported",
                 "The active host does not support camera replacement.",
             )
-        parameters = node.options.capture.params
-
         try:
             result = node.update_camera_options(
                 document,
-                lambda candidate: camera_provider.replace(candidate, parameters),
+                lambda candidate: camera_provider.replace(
+                    candidate,
+                    candidate.params,
+                ),
             )
         except ValidationError as exc:
             raise ApiProblem(
@@ -265,11 +314,11 @@ def create_app(
     def get_storage_files(
         target: str,
         page: int = 1,
-        page_size: int = 12,
+        pageSize: int = 12,
     ) -> dict[str, Any]:
         browser = StorageBrowser(storage_provider)
         try:
-            result = browser.list_files(target, page, page_size)
+            result = browser.list_files(target, page, pageSize)
         except KeyError as exc:
             raise ApiProblem(
                 404,
@@ -299,11 +348,11 @@ def create_app(
                 str(exc),
             ) from exc
         return {
-            "items": [asdict(item) for item in result.items],
+            "items": [_dataclass_document(item) for item in result.items],
             "page": page,
-            "page_size": page_size,
+            "pageSize": pageSize,
             "total": result.total,
-            "pages": max(1, (result.total + page_size - 1) // page_size),
+            "pages": max(1, (result.total + pageSize - 1) // pageSize),
         }
 
     @app.get("/api/storage/files/{target}/{filename}")
@@ -391,17 +440,77 @@ def create_app(
         assert result.capture_id is not None
         assert result.captured_at is not None
         return {
-            "capture_id": result.capture_id,
-            "captured_at": result.captured_at.isoformat(),
+            "captureId": result.capture_id,
+            "capturedAt": result.captured_at.isoformat(),
         }
+
+    @app.post("/api/captures")
+    def capture_bundle(request: CaptureRequest):
+        camera = camera_provider.camera()
+        camera_status = _camera_status(camera)
+        if not camera_status.connected:
+            raise ApiProblem(
+                409,
+                "camera_unavailable",
+                "Camera unavailable",
+                camera_status.detail or "The camera is unavailable.",
+            )
+        try:
+            bundle = node.capture_bundle(
+                request.request_id,
+                request.parameters,
+                request.formats,
+            )
+        except CaptureInProgress as exc:
+            raise ApiProblem(
+                409,
+                "capture_in_progress",
+                "Capture in progress",
+                str(exc),
+            ) from exc
+        except InvalidCaptureParameters as exc:
+            raise ApiProblem(
+                422,
+                "invalid_capture_parameters",
+                "Invalid capture parameters",
+                str(exc),
+            ) from exc
+        except CaptureFailed as exc:
+            raise ApiProblem(
+                500,
+                "capture_failed",
+                "Capture failed",
+                str(exc),
+            ) from exc
+        except EncodingFailed as exc:
+            raise ApiProblem(
+                500,
+                "encoding_failed",
+                "Encoding failed",
+                str(exc),
+            ) from exc
+        try:
+            return StreamingResponse(
+                _capture_multipart(bundle, _CAPTURE_BOUNDARY),
+                media_type=f"multipart/mixed; boundary={_CAPTURE_BOUNDARY}",
+                headers={
+                    "X-Request-Id": bundle.request_id,
+                    "X-Capture-Id": bundle.capture_id,
+                    "X-Captured-At": bundle.captured_at.isoformat(),
+                    "X-Artifact-Count": str(len(bundle.artifacts)),
+                },
+            )
+        except BaseException:
+            bundle.close()
+            raise
 
     @app.get("/api/health")
     def health() -> dict[str, Any]:
         camera_status = _camera_status(camera_provider.camera())
         return {
             "status": "running",
-            "camera_connected": camera_status.connected,
-            "camera_detail": camera_status.detail,
+            "cameraConnected": camera_status.connected,
+            "cameraDetail": camera_status.detail,
         }
 
     web_dist = static_directory or Path(__file__).with_name("static")
@@ -435,10 +544,39 @@ def _multipart_frames(frames: Iterator[PreviewFrame]) -> Iterator[bytes]:
         )
 
 
+async def _capture_multipart(
+    bundle: CaptureBundle,
+    boundary: str,
+):
+    try:
+        for artifact in bundle.artifacts:
+            digest = base64.b64encode(artifact.digest).decode("ascii")
+            yield (
+                f"--{boundary}\r\n"
+                f"Content-Type: {artifact.media_type}\r\n"
+                "Content-Disposition: attachment; "
+                f'filename="{artifact.name}"\r\n'
+                f"Content-Length: {len(artifact.data)}\r\n"
+                f"Digest: sha-256={digest}\r\n"
+                f"X-Capture-Id: {bundle.capture_id}\r\n\r\n"
+            ).encode("ascii")
+            data = memoryview(artifact.data)
+            for offset in range(0, len(data), _CAPTURE_STREAM_CHUNK_SIZE):
+                yield data[offset : offset + _CAPTURE_STREAM_CHUNK_SIZE]
+            yield b"\r\n"
+        yield f"--{boundary}--\r\n".encode("ascii")
+    finally:
+        bundle.close()
+
+
 def _camera_status(camera: Camera) -> CameraStatus:
     if isinstance(camera, CameraStatusSource):
         return camera.status()
     return CameraStatus(True)
+
+
+def _dataclass_document(value) -> dict[str, Any]:
+    return {to_camel(name): item for name, item in asdict(value).items()}
 
 
 def _http_title(status: int) -> str:

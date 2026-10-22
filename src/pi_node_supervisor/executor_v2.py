@@ -43,7 +43,10 @@ class CameraWorker:
     def execute(
         self, run: RunRecordV2, *, parameters: dict[str, Any] | None = None
     ) -> RunRecordV2:
-        self.active_work.acquire()
+        try:
+            self.active_work.acquire()
+        except Exception as exc:
+            return self._fail(run, exc)
         try:
             with self._lock:
                 return self._execute_locked(run, parameters or {})
@@ -108,16 +111,19 @@ class CameraWorker:
                 )
                 return completed
         except Exception as exc:
-            error = f"{type(exc).__name__}: {exc}"
-            failed = self.runtime.complete_run(run.run_id, status="failed", error=error)
-            self.runtime.append_event(
-                "run.failed",
-                severity="error",
-                run_id=run.run_id,
-                device_id=run.device_id,
-                payload={"error": error},
-            )
-            return failed
+            return self._fail(run, exc)
+
+    def _fail(self, run: RunRecordV2, exc: Exception) -> RunRecordV2:
+        error = f"{type(exc).__name__}: {exc}"
+        failed = self.runtime.complete_run(run.run_id, status="failed", error=error)
+        self.runtime.append_event(
+            "run.failed",
+            severity="error",
+            run_id=run.run_id,
+            device_id=run.device_id,
+            payload={"error": error},
+        )
+        return failed
 
     def _record_results(
         self, run_id: str, artifact_id: str | None, results: tuple[SaveResult, ...]
@@ -174,7 +180,10 @@ class SensorWorker:
         self.local_timezone = local_timezone
 
     async def execute(self, run: RunRecordV2) -> RunRecordV2:
-        self.active_work.acquire()
+        try:
+            self.active_work.acquire()
+        except Exception as exc:
+            return self._fail(run, exc)
         try:
             return await asyncio.to_thread(self._execute, run)
         finally:
@@ -243,16 +252,19 @@ class SensorWorker:
             )
             return completed
         except Exception as exc:
-            error = f"{type(exc).__name__}: {exc}"
-            failed = self.runtime.complete_run(run.run_id, status="failed", error=error)
-            self.runtime.append_event(
-                "run.failed",
-                severity="error",
-                run_id=run.run_id,
-                device_id=run.device_id,
-                payload={"error": error},
-            )
-            return failed
+            return self._fail(run, exc)
+
+    def _fail(self, run: RunRecordV2, exc: Exception) -> RunRecordV2:
+        error = f"{type(exc).__name__}: {exc}"
+        failed = self.runtime.complete_run(run.run_id, status="failed", error=error)
+        self.runtime.append_event(
+            "run.failed",
+            severity="error",
+            run_id=run.run_id,
+            device_id=run.device_id,
+            payload={"error": error},
+        )
+        return failed
 
 
 class ExecutionEngineV2:
@@ -320,6 +332,12 @@ class ExecutionEngineV2:
         )
         if run is None:
             raise RuntimeError("manual capture run could not be claimed")
+        self.runtime.append_event(
+            "run.started",
+            run_id=run.run_id,
+            device_id=run.device_id,
+            payload={"trigger": "manual"},
+        )
         return await asyncio.to_thread(worker.execute, run, parameters=parameters)
 
     async def collect_now(self, device_id: str) -> RunRecordV2:

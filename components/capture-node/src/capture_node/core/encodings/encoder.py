@@ -7,7 +7,7 @@ from collections.abc import Sequence
 from capture_node.core.cameras import Capture
 from capture_node.core.encodings.contracts import EncodedImage, ImageEncoding
 from capture_node.core.encodings.jpeg import JpegEncoding
-from capture_node.core.encodings.options import ImageOptions
+from capture_node.core.encodings.options import ProcessedImageOptions
 from capture_node.core.encodings.png import PngEncoding
 
 
@@ -33,7 +33,11 @@ class ImageEncoder:
                 )
             self._encodings[encoding.format] = encoding
 
-    def encode(self, capture: Capture, options: ImageOptions) -> EncodedImage:
+    def encode(
+        self,
+        capture: Capture,
+        options: ProcessedImageOptions,
+    ) -> EncodedImage:
         try:
             encoding = self._encodings[options.format]
         except KeyError as exc:

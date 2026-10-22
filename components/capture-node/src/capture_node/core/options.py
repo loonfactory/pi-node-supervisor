@@ -3,89 +3,87 @@
 from __future__ import annotations
 
 from datetime import time as Time
-from typing import Any, Literal
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from typing import Annotated, Literal
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, field_validator, model_serializer, model_validator
 
 from capture_node.core.cameras.options import CameraOptions, Picamera2Options
-from capture_node.core.encodings.options import (
-    DngImageOptions,
-    ImageOptions,
-    PngImageOptions,
-)
-from capture_node.core.maintenance import MaintenanceOptions
+from capture_node.core.encodings.options import ImageFormatsOptions, PngImageOptions
 from capture_node.core.models import StrictModel
 from capture_node.core.storages.options import StorageOptions
 
 
-class CaptureOptions(StrictModel):
-    mode: Literal["interval", "daily", "disabled"] = "interval"
-    interval_seconds: float | None = Field(default=None, gt=0)
-    daily_times: tuple[Time, ...] = ()
-    timezone: str = "Asia/Seoul"
-    params: dict[str, Any] = Field(default_factory=dict)
+class DailyCaptureOptions(StrictModel):
+    type: Literal["daily"]
+    time: Time
 
-    @field_validator("daily_times", mode="before")
+    @field_validator("time")
     @classmethod
-    def normalize_missing_daily_times(cls, value: Any) -> Any:
-        return () if value is None else value
+    def require_local_time(cls, value: Time) -> Time:
+        if value.tzinfo is not None:
+            raise ValueError("capture time must not include an offset")
+        return value
 
-    @field_validator("timezone")
+
+class IntervalCaptureOptions(StrictModel):
+    type: Literal["interval"]
+    startTime: Time | None = None
+    endTime: Time | None = None
+    interval: float = Field(gt=0)
+
+    @field_validator("startTime", "endTime")
     @classmethod
-    def validate_timezone(cls, value: str) -> str:
-        try:
-            ZoneInfo(value)
-        except ZoneInfoNotFoundError as exc:
-            raise ValueError(f"unknown timezone: {value}") from exc
+    def require_local_time(cls, value: Time | None) -> Time | None:
+        if value is not None and value.tzinfo is not None:
+            raise ValueError("capture time must not include an offset")
         return value
 
     @model_validator(mode="after")
-    def validate_schedule(self) -> CaptureOptions:
-        if len(set(self.daily_times)) != len(self.daily_times):
-            raise ValueError("daily capture times must be unique")
-        if any(value.tzinfo is not None for value in self.daily_times):
-            raise ValueError("daily capture times must not include an offset")
-        if self.mode == "interval":
-            if self.interval_seconds is None:
-                raise ValueError("interval_seconds is required in interval mode")
-            if self.daily_times:
-                raise ValueError("daily_times must be empty in interval mode")
-        elif self.mode == "daily":
-            if self.interval_seconds is not None:
-                raise ValueError("interval_seconds must be null in daily mode")
-        else:
-            if self.interval_seconds is not None:
-                raise ValueError("interval_seconds must be null in disabled mode")
-            if self.daily_times:
-                raise ValueError("daily_times must be empty in disabled mode")
+    def validate_window(self) -> IntervalCaptureOptions:
+        if (self.startTime is None) != (self.endTime is None):
+            raise ValueError("startTime and endTime must be configured together")
+        if (
+            self.startTime is not None
+            and self.endTime is not None
+            and self.endTime < self.startTime
+        ):
+            raise ValueError("endTime must not be earlier than startTime")
         return self
+
+    @model_serializer
+    def serialize_capture(self) -> dict[str, object]:
+        document: dict[str, object] = {
+            "type": self.type,
+            "interval": self.interval,
+        }
+        if self.startTime is not None:
+            assert self.endTime is not None
+            document["startTime"] = self.startTime.isoformat()
+            document["endTime"] = self.endTime.isoformat()
+        return document
+
+
+CaptureOptions = Annotated[
+    DailyCaptureOptions | IntervalCaptureOptions,
+    Field(discriminator="type"),
+]
 
 
 class Options(StrictModel):
     camera: CameraOptions = Field(default_factory=Picamera2Options)
-    capture: CaptureOptions
-    image: ImageOptions = Field(default_factory=PngImageOptions)
+    captures: tuple[CaptureOptions, ...] = ()
+    images: ImageFormatsOptions = Field(
+        default_factory=lambda: ImageFormatsOptions(png=PngImageOptions())
+    )
     storages: tuple[StorageOptions, ...] = ()
-    maintenance: MaintenanceOptions = Field(default_factory=MaintenanceOptions)
-    calibration: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_storage_targets(self) -> Options:
-        requests_dng = isinstance(self.image, DngImageOptions) or (
-            hasattr(self.image, "raw") and self.image.raw.enabled
-        )
-        if requests_dng and self.camera.type != "picamera2":
+        if len(set(self.captures)) != len(self.captures):
+            raise ValueError("capture schedules must be unique")
+        if self.images.dng is not None and self.camera.type != "picamera2":
             raise ValueError("DNG raw capture requires a picamera2 camera")
         storage_names = [storage.name for storage in self.storages]
         if len(set(storage_names)) != len(storage_names):
             raise ValueError("storage target names must be unique")
-        retention_targets = [rule.target for rule in self.maintenance.retention]
-        if len(set(retention_targets)) != len(retention_targets):
-            raise ValueError("retention targets must be unique")
-        missing = set(retention_targets).difference(storage_names)
-        if missing:
-            raise ValueError(
-                f"retention target is not configured: {sorted(missing)[0]}"
-            )
         return self

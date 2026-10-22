@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from capture_node.core.cameras import Capture
-from capture_node.core.encodings.options import ImageOptions
+from capture_node.core.encodings.options import ProcessedImageOptions
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,5 +26,9 @@ class ImageEncoding(Protocol):
     def extension(self) -> str:
         """Return the filename extension produced by this encoding."""
 
-    def encode(self, capture: Capture, options: ImageOptions) -> EncodedImage:
+    def encode(
+        self,
+        capture: Capture,
+        options: ProcessedImageOptions,
+    ) -> EncodedImage:
         """Encode one capture according to the shared image options."""

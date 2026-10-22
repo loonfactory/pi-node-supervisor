@@ -120,13 +120,13 @@ class V4L2Camera:
                 control.name: control.value for control in self._hardware_controls()
             }
             snapshot: dict[str, Any] = {
-                "control_snapshot_at": snapshot_at.isoformat(),
-                "observed_controls": observed_controls,
+                "controlSnapshotAt": snapshot_at.isoformat(),
+                "observedControls": observed_controls,
             }
         except Exception as exc:
             snapshot = {
-                "control_snapshot_at": snapshot_at.isoformat(),
-                "control_snapshot_error": str(exc) or type(exc).__name__,
+                "controlSnapshotAt": snapshot_at.isoformat(),
+                "controlSnapshotError": str(exc) or type(exc).__name__,
             }
         with Image.open(BytesIO(data)) as decoded:
             image = decoded.convert("RGB")
@@ -146,8 +146,8 @@ class V4L2Camera:
                 "device": str(self._device),
                 "width": self._width,
                 "height": self._height,
-                "frame_rate": self._frame_rate,
-                "flip_application": flip_application,
+                "frameRate": self._frame_rate,
+                "flipApplication": flip_application,
                 **configured_parameters,
                 **snapshot,
             },

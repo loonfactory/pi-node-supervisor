@@ -62,7 +62,7 @@ class Picamera2Camera:
         self._sensor_resolution = tuple(self._camera.sensor_resolution)
         self._sensor_modes = tuple(dict(mode) for mode in self._camera.sensor_modes)
         self._transform_type = Transform
-        self._size = size
+        self._size = size or self._sensor_resolution
         self._horizontal_flip = False
         self._vertical_flip = False
         self._preview_period = 1 / preview_fps
@@ -270,11 +270,7 @@ def discover_picamera2_devices() -> tuple[CameraDevice, ...]:
             CameraDevice(
                 identifier=f"picamera2:{camera_num}",
                 name=model,
-                options=Picamera2Options(
-                    camera_num=camera_num,
-                    width=1920,
-                    height=1080,
-                ),
+                options=Picamera2Options(cameraNum=camera_num),
             )
         )
     return tuple(devices)

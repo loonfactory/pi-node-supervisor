@@ -183,7 +183,7 @@ def test_camera_registry_combines_discovery_from_every_registration() -> None:
     csi = CameraDevice(
         identifier="picamera2:1",
         name="imx219",
-        options=Picamera2Options(camera_num=1),
+        options=Picamera2Options(cameraNum=1),
     )
     usb = CameraDevice(
         identifier="v4l2:/dev/video4",
@@ -277,8 +277,8 @@ def test_configured_storage_provider_builds_sftp_without_connecting() -> None:
                 name="archive",
                 host="storage.local",
                 username="capture-node",
-                remote_directory="/captures",
-                password_env="CAPTURE_NODE_SFTP_PASSWORD",
+                remoteDirectory="/captures",
+                passwordEnv="CAPTURE_NODE_SFTP_PASSWORD",
             ),
         )
     )

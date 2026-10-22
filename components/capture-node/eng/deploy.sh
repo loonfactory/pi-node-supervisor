@@ -11,6 +11,8 @@ CAMERA_COUNT_EXPLICIT=0
 CAMERA_SPECS=()
 SKIP_TESTS=0
 SKIP_LINGER=0
+SKIP_IF_CURRENT=0
+SUPERVISOR_MANAGED=0
 DRY_RUN=0
 BOOTSTRAP_SSH=0
 SSH_PUBLIC_KEY="${HOME}/.ssh/id_ed25519.pub"
@@ -41,6 +43,11 @@ Options:
   --cache-wheels      Cache runtime wheels remotely during an online deployment.
   --skip-tests        Skip the local pytest run.
   --skip-linger       Skip systemd linger setup when provisioned separately.
+  --skip-if-current   Skip build and deployment when the source ID already
+                      matches the successfully deployed source.
+  --supervisor-managed
+                      Install only the shared runtime. Do not configure or
+                      start standalone camera services.
   --dry-run           Build locally and print the deployment plan only.
   -h, --help          Show this help.
 
@@ -108,6 +115,12 @@ while (($#)); do
         --skip-linger)
             SKIP_LINGER=1
             ;;
+        --skip-if-current)
+            SKIP_IF_CURRENT=1
+            ;;
+        --supervisor-managed)
+            SUPERVISOR_MANAGED=1
+            ;;
         --dry-run)
             DRY_RUN=1
             ;;
@@ -154,7 +167,7 @@ INSTANCE_PORTS=("${SUPPORTED_INSTANCE_PORTS[@]:0:CAMERA_COUNT}")
     exit 2
 }
 [[ "$TARGET" != *:* ]] || fail "target must be user@host without a remote path"
-for command in npm rsync ssh; do
+for command in npm rsync sha256sum ssh tar; do
     command -v "$command" >/dev/null || fail "required command is missing: $command"
 done
 if ((BOOTSTRAP_SSH == 1)); then
@@ -174,6 +187,58 @@ fi
 
 cd "$ROOT_DIR"
 
+SOURCE_ID=$(
+    tar \
+        --sort=name \
+        --mtime='UTC 1970-01-01' \
+        --owner=0 \
+        --group=0 \
+        --numeric-owner \
+        --exclude='__pycache__' \
+        --exclude='web/frontend/node_modules' \
+        -cf - \
+        src/capture_node pyproject.toml systemd \
+        | sha256sum \
+        | cut -d ' ' -f 1
+)
+
+SSH_OPTIONS=(
+    -o BatchMode=yes
+    -o ConnectTimeout=10
+    -o StrictHostKeyChecking=accept-new
+)
+RSYNC_SSH="ssh -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new"
+
+if ((DRY_RUN == 0)); then
+    printf '==> Checking SSH access\n'
+fi
+if ((DRY_RUN == 0)) && ! ssh "${SSH_OPTIONS[@]}" "$TARGET" true; then
+    if ((BOOTSTRAP_SSH == 0)); then
+        fail "SSH key authentication failed; rerun with --bootstrap-ssh for first setup"
+    fi
+    [[ -t 0 ]] \
+        || fail "--bootstrap-ssh requires an interactive terminal for the remote password"
+    printf '==> Installing SSH public key (the remote password may be requested)\n'
+    ssh-copy-id \
+        -o StrictHostKeyChecking=accept-new \
+        -i "$SSH_PUBLIC_KEY" \
+        "$TARGET"
+    ssh "${SSH_OPTIONS[@]}" "$TARGET" true \
+        || fail "SSH key authentication still fails after bootstrap"
+fi
+
+if ((DRY_RUN == 0 && SKIP_IF_CURRENT == 1)); then
+    DEPLOYED_SOURCE_ID=$(
+        ssh "${SSH_OPTIONS[@]}" "$TARGET" \
+            "cat '$REMOTE_APP_DIR/.deployed-source.sha256' 2>/dev/null || true"
+    )
+    if [[ "$DEPLOYED_SOURCE_ID" == "$SOURCE_ID" ]]; then
+        printf '==> CaptureNode is already current; skipping deployment (%s)\n' \
+            "$SOURCE_ID"
+        exit 0
+    fi
+fi
+
 if ((SKIP_TESTS == 0)); then
     [[ -x .venv/bin/pytest ]] || fail "local .venv/bin/pytest is missing"
     printf '==> Running tests\n'
@@ -191,12 +256,17 @@ npm --prefix src/capture_node/web/frontend run build
 if ((DRY_RUN == 1)); then
     printf '==> Dry run complete\n'
     printf 'Target: %s:~/%s\n' "$TARGET" "$REMOTE_APP_DIR"
-    for index in "${!INSTANCE_NAMES[@]}"; do
-        printf 'Instance: %s | port %s | initial camera %s\n' \
-            "${INSTANCE_NAMES[$index]}" \
-            "${INSTANCE_PORTS[$index]}" \
-            "${CAMERA_SPECS[$index]}"
-    done
+    printf 'Source ID: %s\n' "$SOURCE_ID"
+    if ((SUPERVISOR_MANAGED == 1)); then
+        printf 'Lifecycle: supervisor-managed runtime\n'
+    else
+        for index in "${!INSTANCE_NAMES[@]}"; do
+            printf 'Instance: %s | port %s | initial camera %s\n' \
+                "${INSTANCE_NAMES[$index]}" \
+                "${INSTANCE_PORTS[$index]}" \
+                "${CAMERA_SPECS[$index]}"
+        done
+    fi
     if ((OFFLINE == 1)); then
         printf 'Packages: offline (installed runtime or wheelhouse only)\n'
     elif ((CACHE_WHEELS == 1)); then
@@ -205,29 +275,6 @@ if ((DRY_RUN == 1)); then
         printf 'Packages: online fallback allowed\n'
     fi
     exit 0
-fi
-
-SSH_OPTIONS=(
-    -o BatchMode=yes
-    -o ConnectTimeout=10
-    -o StrictHostKeyChecking=accept-new
-)
-RSYNC_SSH="ssh -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new"
-
-printf '==> Checking SSH access\n'
-if ! ssh "${SSH_OPTIONS[@]}" "$TARGET" true; then
-    if ((BOOTSTRAP_SSH == 0)); then
-        fail "SSH key authentication failed; rerun with --bootstrap-ssh for first setup"
-    fi
-    [[ -t 0 ]] \
-        || fail "--bootstrap-ssh requires an interactive terminal for the remote password"
-    printf '==> Installing SSH public key (the remote password may be requested)\n'
-    ssh-copy-id \
-        -o StrictHostKeyChecking=accept-new \
-        -i "$SSH_PUBLIC_KEY" \
-        "$TARGET"
-    ssh "${SSH_OPTIONS[@]}" "$TARGET" true \
-        || fail "SSH key authentication still fails after bootstrap"
 fi
 
 printf '==> Checking remote deployment\n'
@@ -329,13 +376,17 @@ ssh "${SSH_OPTIONS[@]}" "$TARGET" \
         "$CAMERA_COUNT" \
         "$OFFLINE" \
         "$CACHE_WHEELS" \
+        "$SUPERVISOR_MANAGED" \
+        "$SOURCE_ID" \
         "${CAMERA_SPECS[@]}" <<'REMOTE_SCRIPT'
 set -Eeuo pipefail
 
 camera_count="$1"
 offline="$2"
 cache_wheels="$3"
-shift 3
+supervisor_managed="$4"
+source_id="$5"
+shift 5
 camera_specs=("$@")
 app_dir="$HOME/capture-node"
 previous_dir="$app_dir/.deploy-previous"
@@ -366,10 +417,12 @@ rollback() {
     status=$?
     trap - ERR
     printf 'Remote activation failed; restoring previous source.\n' >&2
-    for instance in "${all_instances[@]}"; do
-        systemctl --user stop "capture-node-web@${instance}.service" \
-            >/dev/null 2>&1 || true
-    done
+    if ((supervisor_managed == 0)); then
+        for instance in "${all_instances[@]}"; do
+            systemctl --user stop "capture-node-web@${instance}.service" \
+                >/dev/null 2>&1 || true
+        done
+    fi
     rm -rf "$failed_dir"
     if [[ -d "$app_dir/src/capture_node" ]]; then
         mv "$app_dir/src/capture_node" "$failed_dir"
@@ -377,17 +430,19 @@ rollback() {
     if [[ -d "$previous_dir" ]]; then
         mv "$previous_dir" "$app_dir/src/capture_node"
     fi
-    for instance in "${previously_enabled_instances[@]}"; do
-        systemctl --user enable "capture-node-web@${instance}.service" \
-            >/dev/null 2>&1 || true
-        systemctl --user restart "capture-node-web@${instance}.service" \
-            >/dev/null 2>&1 || true
-    done
-    if ((legacy_was_enabled == 1)); then
-        systemctl --user enable capture-node-web.service >/dev/null 2>&1 || true
-    fi
-    if ((legacy_was_active == 1)); then
-        systemctl --user restart capture-node-web.service >/dev/null 2>&1 || true
+    if ((supervisor_managed == 0)); then
+        for instance in "${previously_enabled_instances[@]}"; do
+            systemctl --user enable "capture-node-web@${instance}.service" \
+                >/dev/null 2>&1 || true
+            systemctl --user restart "capture-node-web@${instance}.service" \
+                >/dev/null 2>&1 || true
+        done
+        if ((legacy_was_enabled == 1)); then
+            systemctl --user enable capture-node-web.service >/dev/null 2>&1 || true
+        fi
+        if ((legacy_was_active == 1)); then
+            systemctl --user restart capture-node-web.service >/dev/null 2>&1 || true
+        fi
     fi
     exit "$status"
 }
@@ -448,6 +503,22 @@ fi
     'from capture_node.web.server import main; assert callable(main)'
 [[ -s src/capture_node/web/static/index.html ]]
 
+write_source_id() {
+    source_id_temporary=".deployed-source.sha256.tmp"
+    printf '%s\n' "$source_id" >"$source_id_temporary"
+    chmod 0644 "$source_id_temporary"
+    mv -f "$source_id_temporary" .deployed-source.sha256
+}
+
+if ((supervisor_managed == 1)); then
+    write_source_id
+    trap - ERR
+    rm -rf "$failed_dir"
+    printf 'CaptureNode runtime is ready for Supervisor ownership (%s).\n' \
+        "$source_id"
+    exit 0
+fi
+
 printf 'Preparing %s camera runtime configuration(s).\n' "$camera_count"
 .venv/bin/python - "$camera_count" "${camera_specs[@]}" <<'PY'
 from __future__ import annotations
@@ -458,13 +529,9 @@ import sys
 from pathlib import Path
 
 from capture_node.core.cameras.options import Picamera2Options, V4L2CameraOptions
-from capture_node.core.encodings.options import DngImageOptions
-from capture_node.core.maintenance.options import (
-    MaintenanceOptions,
-    RetentionOptions,
-)
-from capture_node.core.options import CaptureOptions, Options
-from capture_node.core.storages.options import FileStorageOptions
+from capture_node.core.config import Configuration
+from capture_node.core.encodings.options import PngImageOptions
+from capture_node.core.options import Options
 
 camera_count = int(sys.argv[1])
 camera_specs = sys.argv[2:]
@@ -473,13 +540,9 @@ app_dir = Path.home() / "capture-node"
 
 def camera_options(spec: str, instance_index: int):
     if spec == "picamera2":
-        return Picamera2Options(camera_num=instance_index, width=1920, height=1080)
+        return Picamera2Options(cameraNum=instance_index)
     if spec.startswith("picamera2:"):
-        return Picamera2Options(
-            camera_num=int(spec.partition(":")[2]),
-            width=1920,
-            height=1080,
-        )
+        return Picamera2Options(cameraNum=int(spec.partition(":")[2]))
     if spec.startswith("v4l2:"):
         return V4L2CameraOptions(
             device=Path(spec.partition(":")[2]),
@@ -491,28 +554,25 @@ def camera_options(spec: str, instance_index: int):
 
 def write_configuration(path: Path, camera_num: int, spec: str) -> None:
     if path.exists():
-        Options.model_validate_json(path.read_text(encoding="utf-8"))
+        Configuration.load(path)
         print(f"Preserved configuration: {path.name}")
         return
-    options = Options(
-        camera=camera_options(spec, camera_num),
-        capture=CaptureOptions(mode="disabled"),
-        image=DngImageOptions(),
-        storages=(
-            FileStorageOptions(
-                type="file",
-                name="local",
-                directory=Path(f"captures/camera{camera_num}"),
-                layout="daily",
-            ),
-        ),
-        maintenance=MaintenanceOptions(
-            retention=(RetentionOptions(target="local", max_age_days=7),),
-        ),
-    )
+    defaults = Configuration.load(app_dir / "config.example.json").current
+    document = defaults.model_dump(mode="json")
+    document["camera"] = camera_options(spec, camera_num).model_dump(mode="json")
+    if spec.startswith("v4l2:"):
+        document["images"] = {
+            "png": PngImageOptions().model_dump(mode="json"),
+        }
+    options = Options.model_validate(document)
+    persisted = options.model_dump(mode="json")
+    if not options.captures:
+        persisted.pop("captures", None)
+    if not options.storages:
+        persisted.pop("storages", None)
     temporary = path.with_suffix(f"{path.suffix}.tmp")
     temporary.write_text(
-        json.dumps(options.model_dump(mode="json"), ensure_ascii=True, indent=2)
+        json.dumps(persisted, ensure_ascii=True, indent=2)
         + "\n",
         encoding="utf-8",
     )
@@ -629,6 +689,7 @@ done
 
 rm -f "$legacy_unit"
 systemctl --user daemon-reload
+write_source_id
 trap - ERR
 rm -rf "$failed_dir"
 REMOTE_SCRIPT

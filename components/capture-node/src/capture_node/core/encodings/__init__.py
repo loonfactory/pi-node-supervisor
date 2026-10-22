@@ -5,22 +5,22 @@ from capture_node.core.encodings.encoder import ImageEncoder
 from capture_node.core.encodings.jpeg import JpegEncoding
 from capture_node.core.encodings.options import (
     DngImageOptions,
-    ImageOptions,
+    ImageFormatsOptions,
     JpegImageOptions,
     PngImageOptions,
-    RawImageOptions,
+    ProcessedImageOptions,
 )
 from capture_node.core.encodings.png import PngEncoding
 
 __all__ = [
     "EncodedImage",
     "DngImageOptions",
+    "ImageFormatsOptions",
     "ImageEncoder",
     "ImageEncoding",
-    "ImageOptions",
     "JpegImageOptions",
     "JpegEncoding",
     "PngEncoding",
     "PngImageOptions",
-    "RawImageOptions",
+    "ProcessedImageOptions",
 ]
