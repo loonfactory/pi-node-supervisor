@@ -31,6 +31,9 @@ dev = [
 [project.scripts]
 pi-node-supervisor = "pi_node_supervisor.cli:main"
 
+[tool.hatch.build]
+artifacts = ["src/pi_node_supervisor/web/static/**"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/pi_node_supervisor"]
 

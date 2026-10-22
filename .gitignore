@@ -262,3 +262,6 @@ node_modules/
 # Local worktrees
 /pi-node-supervisor-worktrees/
 /capture-node-worktrees/
+
+# Supervisor frontend output (generated before packaging)
+/src/pi_node_supervisor/web/static/
