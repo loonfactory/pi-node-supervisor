@@ -13,6 +13,7 @@ from capture_node.core.cameras.contracts import (
     CameraStatusSource,
     Capture,
     FrameSource,
+    PreviewFormat,
     PreviewFrame,
     RawCapture,
 )
@@ -46,6 +47,7 @@ __all__ = [
     "ConfiguredCameraProvider",
     "FrameSource",
     "Picamera2Options",
+    "PreviewFormat",
     "PreviewFrame",
     "RawCapture",
     "V4L2CameraOptions",

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import subprocess
 import sys
+from io import BytesIO
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -11,6 +13,7 @@ from capture_node.core.cameras.picamera2 import (
     Picamera2Camera,
     discover_picamera2_devices,
 )
+from capture_node.core.cameras.options import CameraSynchronizationOptions
 
 
 class FakeRequest:
@@ -112,6 +115,59 @@ class FakePicamera:
         ]
 
 
+def test_synchronized_raw_and_image_use_one_live_request_without_mode_switch(monkeypatch):
+    class SyncRequest(FakeRequest):
+        def get_metadata(self):
+            return {"SensorTimestamp": 210, "SyncReady": True}
+
+        def acquire(self):
+            pass
+
+    class SyncPicamera(FakePicamera):
+        def create_video_configuration(self, **kwargs):
+            return kwargs
+
+        def start(self):
+            self.stopped = threading.Event()
+
+            def feed():
+                while not self.stopped.wait(0.001):
+                    self.post_callback(SyncRequest(self.calls))
+
+            self.thread = threading.Thread(target=feed)
+            self.thread.start()
+
+        def stop(self):
+            self.stopped.set()
+            self.thread.join(timeout=1)
+
+        def switch_mode_capture_request_and_stop(self, configuration):
+            pytest.fail("synchronized capture must keep the sensor streaming")
+
+    SyncPicamera.instances.clear()
+    monkeypatch.setitem(sys.modules, "picamera2", SimpleNamespace(Picamera2=SyncPicamera))
+    monkeypatch.setitem(sys.modules, "libcamera", SimpleNamespace(
+        Transform=FakeTransform,
+        controls=SimpleNamespace(rpi=SimpleNamespace(SyncModeEnum=SimpleNamespace(Server=1, Client=2))),
+    ))
+    monkeypatch.setattr("capture_node.core.cameras.picamera2.time.clock_gettime_ns", lambda _: 100)
+    monkeypatch.setattr("capture_node.core.cameras.picamera2.Image.fromarray", lambda _: Image.new("RGB", (8, 6)))
+    camera = Picamera2Camera(synchronization=CameraSynchronizationOptions(role="client"))
+    try:
+        capture = camera.capture_at(200, include_raw=True)
+        assert capture.raw.data == b"test-dng"
+        assert capture.parameters == {"SensorTimestamp": 210, "SyncReady": True}
+        implementation = SyncPicamera.instances[0]
+        assert implementation.configured["controls"] == {"FrameRate": 5, "SyncMode": 2}
+        assert implementation.configured["sensor"]["output_size"] == (4608, 2592)
+        with pytest.raises(ValueError, match="timing controls"):
+            camera.apply({"FrameRate": 10})
+        with pytest.raises(ValueError, match="future"):
+            camera.capture_at(50)
+    finally:
+        camera.close()
+
+
 @pytest.mark.covers("CAP-003", "IF-CAP-001", "IF-CAP-004", "WEB-003")
 def test_x4_picamera_still_and_preview_share_the_main_source(
     monkeypatch,
@@ -154,7 +210,10 @@ def test_x4_picamera_still_and_preview_share_the_main_source(
     assert implementation.applied_controls == {"ExposureTime": 5_000}
     assert implementation.calls == [("still", "main"), ("preview", "main")]
     assert still.image.size == (8, 6)
-    assert preview.media_type == "image/jpeg"
+    assert preview.media_type == "image/png"
+    with Image.open(BytesIO(preview.data)) as decoded:
+        assert decoded.size == (8, 6)
+        assert decoded.tobytes() == still.image.tobytes()
     assert [(control.name, control.value) for control in controls] == [
         ("horizontal_flip", True),
         ("vertical_flip", True),

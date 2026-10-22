@@ -6,6 +6,7 @@ import hashlib
 import json
 import logging
 import threading
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -23,6 +24,7 @@ from capture_node.core.cameras import (
     V4L2CameraOptions,
 )
 from capture_node.core.cameras.unavailable import UnavailableCamera
+from capture_node.core.cameras.manager import CameraManager
 from capture_node.core.encodings import ImageEncoder
 from capture_node.core.events import EventEmitter, EventType, LOGGER_NAME
 from capture_node.core.storages import (
@@ -142,11 +144,11 @@ def test_e1_preview_stream_returns_fake_frame(tmp_path: Path) -> None:
         storages,
         manage_lifecycle=False,
     )
-    response = endpoint(app, "/api/preview")()
+    response = endpoint(app, "/api/preview")(accept=None)
     first = next(_multipart_frames(camera.frames()))
 
     assert response.media_type == "multipart/x-mixed-replace; boundary=frame"
-    assert b"Content-Type: image/jpeg" in first
+    assert b"Content-Type: image/png" in first
     assert first.startswith(b"--frame")
 
 
@@ -164,7 +166,7 @@ def test_x3_camera_without_stream_reports_preview_unavailable(
     )
 
     with pytest.raises(ApiProblem) as raised:
-        endpoint(app, "/api/preview")()
+        endpoint(app, "/api/preview")(accept=None)
     assert raised.value.status == 501
 
 
@@ -247,7 +249,7 @@ def test_web_reports_disconnected_camera_and_rejects_capture(
         "cameraDetail": "V4L2 device does not exist: /dev/video0",
     }
     with pytest.raises(ApiProblem) as preview_error:
-        endpoint(app, "/api/preview")()
+        endpoint(app, "/api/preview")(accept=None)
     assert preview_error.value.status == 503
     with pytest.raises(ApiProblem) as capture_error:
         endpoint(app, "/api/capture", "POST")()
@@ -358,6 +360,7 @@ def test_web_returns_all_registered_camera_devices(tmp_path: Path) -> None:
                 "previewQuality": 75,
                 "calibration": {},
                 "params": {},
+                "synchronization": None,
             },
         },
         {
@@ -433,7 +436,7 @@ def test_e4_preview_consumption_does_not_mutate_core_pipeline(
 
     result = node.collect_once()
 
-    assert frame.media_type == "image/jpeg"
+    assert frame.media_type == "image/png"
     assert result.accepted
 
 
@@ -752,7 +755,7 @@ def test_api_errors_use_problem_details(tmp_path: Path) -> None:
     app = create_app(node, provider, storages, manage_lifecycle=False)
 
     with pytest.raises(ApiProblem) as raised:
-        endpoint(app, "/api/preview")()
+        endpoint(app, "/api/preview")(accept=None)
     response = problem_response(app, "/api/preview", raised.value)
 
     assert response.status_code == 501
@@ -856,3 +859,96 @@ def test_web_lifespan_drains_accepted_storage_before_exit(
     assert not node.is_accepting_work
     assert not node.is_pending
     assert len(storage.calls) == 1
+
+
+def test_timed_capture_flows_through_manager_and_returns_sensor_timestamp(tmp_path):
+    class TimedFakeCamera(FakeCamera):
+        def capture_at(self, target_ns, *, include_raw=False):
+            assert target_ns == 100
+            captured = self.capture(include_raw=include_raw)
+            return replace(captured, parameters={"SensorTimestamp": 110, "SyncReady": True})
+
+    configuration = make_configuration(tmp_path / "config.json", {
+        "camera": {"type": "picamera2", "synchronization": {"role": "client"}},
+        "images": {"dng": {}},
+    })
+    provider = FakeCameraProvider(CameraManager(TimedFakeCamera()))
+    storages = FakeStorageProvider()
+    node = CaptureNode(provider, configuration, storages)
+    app = create_app(node, provider, storages, manage_lifecycle=False)
+    response = endpoint(app, "/api/captures", "POST")(
+        CaptureRequest(requestId="timed", captureAtNs=100)
+    )
+    assert response.headers["x-sensor-timestamp-ns"] == "110"
+    assert response.headers["x-sync-ready"] == "1"
+    from io import BytesIO
+    from PIL import Image
+    parts = multipart_parts(asyncio.run(streaming_body(response)))
+    with Image.open(BytesIO(parts[0][1])) as raw:
+        parameters = json.loads(raw.tag_v2[270])
+    assert parameters["requestId"] == "timed"
+    assert parameters["SensorTimestamp"] == 110
+    assert parameters["SyncReady"] is True
+    assert not node.is_pending
+
+
+def test_timed_capture_rejects_camera_without_synchronization(tmp_path):
+    node, provider, storages = web_runtime(tmp_path, FakeCamera())
+    app = create_app(node, provider, storages, manage_lifecycle=False)
+    with pytest.raises(ApiProblem) as raised:
+        endpoint(app, "/api/captures", "POST")(
+            CaptureRequest(requestId="timed", captureAtNs=100)
+        )
+    assert raised.value.status == 422
+    assert not node.is_pending
+
+
+@pytest.mark.parametrize(("query", "accept", "status", "media_type"), [
+    ("", "*/*", 200, "image/png"),
+    ("", "image/jpeg", 200, "image/jpeg"),
+    ("?format=png", "image/jpeg", 200, "image/png"),
+    ("?format=jpeg", "image/png", 200, "image/jpeg"),
+    ("?format=webp", "*/*", 422, None),
+    ("", "image/webp", 406, None),
+    ("", "image/png;q=invalid", 400, None),
+])
+def test_preview_http_format_negotiation(tmp_path, query, accept, status, media_type):
+    import httpx
+    from io import BytesIO
+    from PIL import Image
+
+    class FinitePreviewCamera(PreviewCamera):
+        def frames(self, **kwargs):
+            yield next(super().frames(**kwargs))
+
+    node, provider, storages = web_runtime(tmp_path, FinitePreviewCamera())
+    app = create_app(node, provider, storages, manage_lifecycle=False)
+
+    async def exercise():
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://capture.test"
+        ) as client:
+            return await client.get("/api/preview" + query, headers={"Accept": accept})
+
+    response = asyncio.run(exercise())
+    assert response.status_code == status
+    if status != 200:
+        return
+    assert response.headers["vary"] == "Accept"
+    header, payload = response.content.split(b"\r\n\r\n", 1)
+    assert f"Content-Type: {media_type}".encode() in header
+    length = int(header.split(b"Content-Length: ")[1].split(b"\r\n")[0])
+    with Image.open(BytesIO(payload[:length])) as decoded:
+        assert decoded.format == ("PNG" if media_type == "image/png" else "JPEG")
+        assert decoded.size == (8, 6)
+
+
+def test_large_preview_is_chunked_without_changing_multipart_payload():
+    from capture_node.core.cameras import PreviewFrame
+
+    data = b"x" * (17 * 1024 * 1024)
+    chunks = list(_multipart_frames(iter([PreviewFrame(data, "image/png")])))
+    assert max(map(len, chunks)) <= 1024 * 1024
+    headers, payload = b"".join(chunks).split(b"\r\n\r\n", 1)
+    assert f"Content-Length: {len(data)}".encode() in headers
+    assert payload == data + b"\r\n"

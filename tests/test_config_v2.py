@@ -99,6 +99,30 @@ def test_resolver_builds_complete_device_runtime_configuration() -> None:
     assert result.resolved.sensors["soil"].driver.port == "/dev/ttyAMA0"
 
 
+def test_camera_pair_always_has_one_timing_server_and_a_shared_frame_rate():
+    result = resolve_configuration(configuration())
+    assert result.capture_node_configs["noir"]["camera"]["synchronization"] == {
+        "role": "server", "frameRate": 5,
+    }
+    assert result.capture_node_configs["rgb"]["camera"]["synchronization"] == {
+        "role": "client", "frameRate": 5,
+    }
+
+
+@pytest.mark.parametrize("change", ["schedule", "cameraNum", "type", "params"])
+def test_synchronization_rejects_incompatible_camera_pair(change):
+    document = configuration()
+    device = document["cameras"]["devices"]["noir"]
+    if change == "schedule":
+        device["schedule"] = "allDay"
+    else:
+        device["captureNode"]["camera"][change] = {
+            "cameraNum": 0, "type": "v4l2", "params": {"FrameRate": 30}
+        }[change]
+    with pytest.raises(ValueError):
+        resolve_configuration(document)
+
+
 def test_generated_capture_node_document_excludes_supervisor_owned_sections() -> None:
     document = configuration()
     document["cameras"]["devices"]["rgb"]["captureNode"].update(
@@ -153,4 +177,29 @@ def test_resolver_rejects_duplicate_sensor_bus_address() -> None:
     }
 
     with pytest.raises(ValueError, match="duplicate sensor unitId"):
+        resolve_configuration(document)
+
+
+def test_calibration_is_owned_by_each_camera():
+    document = configuration()
+    for device_id, k1 in (("rgb", 0.1), ("noir", 0.2)):
+        document["cameras"]["devices"][device_id]["captureNode"]["camera"]["calibration"] = {
+            "distortion_coefficients": {"k1": k1, "k2": 0, "p1": 0, "p2": 0, "k3": 0}
+        }
+    result = resolve_configuration(document)
+    rgb = result.capture_node_configs["rgb"]["camera"]["calibration"]
+    noir = result.capture_node_configs["noir"]["camera"]["calibration"]
+    assert rgb["distortion_coefficients"]["k1"] == 0.1
+    assert noir["distortion_coefficients"]["k1"] == 0.2
+    rgb["distortion_coefficients"]["k1"] = 9
+    assert noir["distortion_coefficients"]["k1"] == 0.2
+    assert document["cameras"]["devices"]["rgb"]["captureNode"]["camera"]["calibration"]["distortion_coefficients"]["k1"] == 0.1
+
+
+def test_calibration_cannot_be_shared_through_camera_defaults():
+    document = configuration()
+    document["cameras"]["defaults"]["captureNode"]["camera"] = {
+        "calibration": {"distortion_coefficients": {"k1": 0.1}}
+    }
+    with pytest.raises(ValueError, match="calibration must be configured per device"):
         resolve_configuration(document)

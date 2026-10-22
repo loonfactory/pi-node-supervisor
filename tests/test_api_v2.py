@@ -102,7 +102,7 @@ def test_camera_preview_token_cookie_auth_and_stream_relay(tmp_path, monkeypatch
         async def wait_closed(self):
             pass
 
-    async def open_stream(endpoint):
+    async def open_stream(endpoint, *, format=None, accept=None):
         assert endpoint == "http://127.0.0.1:8001"
         reader = asyncio.StreamReader()
         reader.feed_data(payload)
@@ -169,3 +169,54 @@ def test_camera_preview_token_cookie_auth_and_stream_relay(tmp_path, monkeypatch
             assert direct.content == payload
 
     asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("path", [
+    "/api/camera/cam1", "/api/nodes/cam1/preview", "/api/nodes/cam1/preview/stream",
+])
+@pytest.mark.parametrize("status", [200, 400, 406, 422])
+def test_preview_routes_forward_negotiation_and_rejections(tmp_path, monkeypatch, path, status):
+    from types import SimpleNamespace
+    from pi_node_supervisor import preview_api
+    from pi_node_supervisor.preview_stream import PreviewRequestRejected
+
+    payload = b"--frame\r\nContent-Type: image/png\r\nContent-Length: 3\r\n\r\npng\r\n"
+
+    class Writer:
+        def close(self):
+            pass
+
+        async def wait_closed(self):
+            pass
+
+    async def open_stream(endpoint, *, format, accept):
+        assert endpoint == "http://127.0.0.1:8001"
+        assert format == "png"
+        assert accept == "image/jpeg"
+        if status != 200:
+            raise PreviewRequestRejected(status)
+        reader = asyncio.StreamReader()
+        reader.feed_data(payload)
+        reader.feed_eof()
+        return reader, Writer(), "multipart/x-mixed-replace; boundary=frame", False
+
+    monkeypatch.setattr(preview_api, "open_preview_stream", open_stream)
+    controller = SimpleNamespace(
+        process_manager=SimpleNamespace(endpoints={"cam1": "http://127.0.0.1:8001"})
+    )
+    app = create_app_v2(None, controller, api_token="secret", manage_runtime=False,
+                        static_directory=tmp_path / "missing")
+
+    async def exercise():
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://supervisor.test"
+        ) as client:
+            return await client.get(path + "?format=png", headers={
+                "Authorization": "Bearer secret", "Accept": "image/jpeg",
+            })
+
+    response = asyncio.run(exercise())
+    assert response.status_code == status
+    if status == 200:
+        assert response.content == payload
+        assert response.headers["vary"] == "Accept"

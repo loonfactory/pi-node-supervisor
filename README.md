@@ -154,8 +154,13 @@ cd src/pi_node_supervisor/web/frontend && npm run build
 ### Camera preview
 
 The camera page uses a fixed `<img src="/api/camera/{device_id}">` URL.
-Supervisor relays the internal CaptureNode MJPEG stream directly; the browser
-displays frames without per-frame Blob URLs or JavaScript decoding.
+Supervisor relays the internal CaptureNode multipart image stream directly; the
+browser displays frames without per-frame Blob URLs or JavaScript decoding.
+Frames default to lossless PNG. Use `?format=png` or `?format=jpeg` to choose
+explicitly, or omit `format` and negotiate using `Accept: image/png` /
+`Accept: image/jpeg` (quality weights supported; PNG wins ties).
+PNG preserves the processed camera pixels, not sensor RAW; JPEG retains the
+configured `previewQuality`. See [preview format options](CONFIGURATION.md#프리뷰-형식-선택).
 External clients can access the same `/api/camera/{device_id}` endpoint directly
 with the existing `Authorization: Bearer <token>` header; no preview session is
 needed. An explicit Authorization header takes precedence over the preview cookie.

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
 from email.message import Message
 from io import BytesIO
 from pathlib import Path
@@ -75,3 +76,31 @@ def test_invalid_bundle_is_removed_from_staging(tmp_path: Path) -> None:
         client.capture("run-001")
 
     assert list(tmp_path.iterdir()) == []
+
+
+def test_capture_target_and_sensor_timing_cross_http_boundary(tmp_path):
+    upstream = response([("image.dng", "image/x-adobe-dng", b"raw")])
+    upstream.headers["X-Sensor-Timestamp-Ns"] = "12345678901234567"
+    upstream.headers["X-Sync-Ready"] = "1"
+    requests = []
+
+    def open_response(request, **kwargs):
+        requests.append(json.loads(request.data))
+        return upstream
+
+    client = CaptureNodeBundleClient("http://localhost:8000", tmp_path, opener=open_response)
+    with client.capture("run-001", capture_at_ns=12345678901234000) as bundle:
+        assert bundle.sensor_timestamp_ns == 12345678901234567
+        assert bundle.sync_ready is True
+    assert requests == [{"requestId": "run-001", "captureAtNs": 12345678901234000}]
+
+
+@pytest.mark.parametrize("timestamp,ready", [("bad", "1"), ("-1", "1"), ("1", "true")])
+def test_invalid_sensor_timing_rejected_before_staging(tmp_path, timestamp, ready):
+    upstream = response([("image.dng", "image/x-adobe-dng", b"raw")])
+    upstream.headers["X-Sensor-Timestamp-Ns"] = timestamp
+    upstream.headers["X-Sync-Ready"] = ready
+    client = CaptureNodeBundleClient("http://localhost", tmp_path, opener=lambda *a, **k: upstream)
+    with pytest.raises(CaptureBundleError, match="timing headers"):
+        client.capture("run-001")
+    assert not list(tmp_path.iterdir())

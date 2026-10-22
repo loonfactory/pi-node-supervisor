@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
+from enum import Enum
 from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
 from PIL import Image
@@ -53,6 +54,13 @@ class PreviewFrame:
 
     data: bytes
     media_type: str = "image/jpeg"
+
+
+class PreviewFormat(str, Enum):
+    """Supported encodings for browser preview frames."""
+
+    PNG = "png"
+    JPEG = "jpeg"
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,6 +118,14 @@ class CameraProvider(Protocol):
 
 
 @runtime_checkable
+class TimedCamera(Protocol):
+    """Optional capture using this host's sensor clock (CLOCK_BOOTTIME, ns)."""
+
+    def capture_at(self, target_ns: int, *, include_raw: bool = False) -> Capture:
+        """Select the first synchronized sensor frame at or after the target."""
+
+
+@runtime_checkable
 class CameraDiscoveryProvider(Protocol):
     """Optional camera-device discovery capability."""
 
@@ -133,7 +149,9 @@ class CameraReplacementProvider(Protocol):
 class FrameSource(Protocol):
     """Optional preview capability, separate from still capture."""
 
-    def frames(self) -> Iterator[PreviewFrame]:
+    def frames(
+        self, *, format: PreviewFormat = PreviewFormat.PNG
+    ) -> Iterator[PreviewFrame]:
         """Yield frames from the same source used for still capture."""
 
 

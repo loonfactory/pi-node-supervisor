@@ -14,7 +14,9 @@ from capture_node.core.cameras.contracts import (
     CameraStatusSource,
     Capture,
     FrameSource,
+    PreviewFormat,
     PreviewFrame,
+    TimedCamera,
 )
 
 
@@ -37,6 +39,13 @@ class CameraManager:
             self._ensure_open()
             self._camera.apply(parameters)
 
+    def capture_at(self, target_ns: int, *, include_raw: bool = False) -> Capture:
+        with self._lock:
+            self._ensure_open()
+            if not isinstance(self._camera, TimedCamera):
+                raise ValueError("camera does not support captureAtNs")
+            return self._camera.capture_at(target_ns, include_raw=include_raw)
+
     def controls(self) -> Sequence[CameraControl]:
         with self._lock:
             self._ensure_open()
@@ -52,7 +61,9 @@ class CameraManager:
                 return self._camera.status()
             return CameraStatus(True)
 
-    def frames(self) -> Iterator[PreviewFrame]:
+    def frames(
+        self, *, format: PreviewFormat = PreviewFormat.PNG
+    ) -> Iterator[PreviewFrame]:
         generation = -1
         frames: Iterator[PreviewFrame] | None = None
         while True:
@@ -64,7 +75,7 @@ class CameraManager:
                             "the active camera does not provide preview frames"
                         )
                     generation = self._generation
-                    frames = self._camera.frames()
+                    frames = self._camera.frames(format=format)
             assert frames is not None
             try:
                 frame = next(frames)

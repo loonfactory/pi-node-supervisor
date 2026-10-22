@@ -126,7 +126,9 @@ def test_png_jpeg_and_dng_are_distributed_as_one_capture_bundle(
         for name, extension in zip(names, (".png", ".jpeg", ".dng"), strict=True)
     }
     assert len(stems) == 1
-    assert storage.calls[2][0] == b"fake-dng"
+    with Image.open(BytesIO(storage.calls[2][0])) as raw:
+        assert raw.size == (24, 16)
+        assert json.loads(raw.tag_v2[270])["captureId"] == result.capture_id
     png_parameters = json.loads(
         Image.open(BytesIO(storage.calls[0][0])).getexif()[37510][8:]
     )
@@ -157,7 +159,9 @@ def test_dng_only_capture_distributes_only_the_camera_raw_artifact(
     assert result.error is None
     assert len(storage.calls) == 1
     data, name = storage.calls[0]
-    assert data == b"fake-dng"
+    with Image.open(BytesIO(data)) as raw:
+        assert raw.size == (24, 16)
+        assert json.loads(raw.tag_v2[270])["captureId"] == result.capture_id
     assert name.endswith(".dng")
     completed = next(
         item for item in emitted if item["eventType"] == EventType.TERMINAL_COMPLETED

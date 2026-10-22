@@ -1,9 +1,17 @@
 """CaptureNode HTTP stream transport, independent of API authentication."""
 
 import asyncio
-from urllib.parse import urlsplit
+from urllib.parse import urlencode, urlsplit
 
 IDLE_TIMEOUT_SECONDS = 30
+
+
+class PreviewRequestRejected(OSError):
+    """A preview format request rejected by CaptureNode before streaming."""
+
+    def __init__(self, status_code: int) -> None:
+        self.status_code = status_code
+        super().__init__("CaptureNode rejected the preview format or Accept header")
 
 
 async def stream_body(reader, writer, chunked):
@@ -23,7 +31,19 @@ async def stream_body(reader, writer, chunked):
 
 async def open_preview_stream(
     endpoint: str,
+    *,
+    format: str | None = None,
+    accept: str | None = None,
 ) -> tuple[asyncio.StreamReader, asyncio.StreamWriter, str, bool]:
+    accept = accept if accept is not None else "*/*"
+    if any(
+        (ord(character) < 32 and character != "\t") or ord(character) > 126
+        for character in accept
+    ):
+        raise PreviewRequestRejected(400)
+    path = "/api/preview"
+    if format is not None:
+        path += "?" + urlencode({"format": format})
     parsed = urlsplit(endpoint)
     if parsed.scheme != "http" or not parsed.hostname or parsed.path not in {"", "/"}:
         raise ValueError("CaptureNode preview endpoint must be a plain HTTP origin")
@@ -34,9 +54,9 @@ async def open_preview_stream(
     try:
         writer.write(
             (
-                "GET /api/preview HTTP/1.1\r\n"
+                f"GET {path} HTTP/1.1\r\n"
                 f"Host: {parsed.hostname}:{port}\r\n"
-                "Accept: multipart/x-mixed-replace\r\n"
+                f"Accept: {accept}\r\n"
                 "Connection: close\r\n\r\n"
             ).encode("ascii")
         )
@@ -53,6 +73,9 @@ async def open_preview_stream(
 def parse_preview_headers(header: bytes) -> tuple[str, bool]:
     lines = header[:-4].split(b"\r\n")
     if not lines or not lines[0].startswith(b"HTTP/1.1 200 "):
+        status_parts = lines[0].split() if lines else []
+        if len(status_parts) >= 2 and status_parts[1] in {b"400", b"406", b"422"}:
+            raise PreviewRequestRejected(int(status_parts[1]))
         status = (
             lines[0].decode("ascii", errors="replace") if lines else "empty response"
         )
@@ -65,7 +88,7 @@ def parse_preview_headers(header: bytes) -> tuple[str, bool]:
             headers[header_name] = value.strip().decode("ascii", errors="replace")
     media_type = headers.get("content-type", "multipart/x-mixed-replace")
     if not media_type.lower().startswith("multipart/x-mixed-replace"):
-        raise OSError("CaptureNode preview response is not an MJPEG stream")
+        raise OSError("CaptureNode preview response is not a multipart image stream")
     chunked = "chunked" in headers.get("transfer-encoding", "").lower()
     return media_type, chunked
 

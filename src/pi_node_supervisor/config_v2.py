@@ -175,9 +175,17 @@ class CameraDeviceSource(SourceModel):
     storages: tuple[StorageReferenceSource, ...] | None = None
 
 
+class CameraSynchronizationSource(SourceModel):
+    server: DeviceId | None = None
+    frame_rate: float = Field(5, gt=0, le=30)
+    lead_seconds: float = Field(2, ge=0.5, le=10)
+    max_skew_milliseconds: float = Field(10, gt=0, le=1000)
+
+
 class CameraSectionSource(SourceModel):
     defaults: CameraDefaultsSource = Field(default_factory=CameraDefaultsSource)
     devices: dict[DeviceId, CameraDeviceSource] = Field(default_factory=dict)
+    synchronization: CameraSynchronizationSource = Field(default_factory=CameraSynchronizationSource)
 
 
 class SensorDriverSource(SourceModel):
@@ -290,6 +298,7 @@ class ResolvedConfiguration(RuntimeModel):
     sensors: dict[str, ResolvedSensor]
     power: ResolvedPower
     warnings: tuple[str, ...] = ()
+    synchronization: CameraSynchronizationSource | None = None
 
 
 class Resolution(RuntimeModel):
@@ -315,6 +324,13 @@ def resolve_configuration(document: dict[str, Any]) -> Resolution:
     camera_defaults = source.cameras.defaults.model_dump(
         mode="json", by_alias=True, exclude_none=True
     )
+    if camera_defaults.get("captureNode", {}).get("camera", {}).get("calibration"):
+        raise ValueError("camera calibration must be configured per device, not in defaults")
+    synchronization = None
+    if len(source.cameras.devices) >= 2:
+        synchronization = source.cameras.synchronization.model_copy(update={
+            "server": source.cameras.synchronization.server or min(source.cameras.devices)
+        })
     for device_id, device in source.cameras.devices.items():
         device_document = device.model_dump(mode="json", by_alias=True, exclude_none=True)
         merged = _deep_merge(camera_defaults, device_document)
@@ -325,6 +341,17 @@ def resolve_configuration(document: dict[str, Any]) -> Resolution:
             device_id, storage_references, source, referenced_storages
         )
         capture_node = copy.deepcopy(merged.get("captureNode", {}))
+        if synchronization is not None:
+            camera = capture_node.setdefault("camera", {})
+            if camera.get("type", "picamera2") != "picamera2":
+                raise ValueError("camera synchronization requires picamera2 devices")
+            reserved = {"FrameRate", "FrameDurationLimits", "SyncMode", "SyncFrames"}
+            if reserved.intersection(camera.get("params", {})) or camera.get("synchronization"):
+                raise ValueError("camera timing must be configured through cameras.synchronization")
+            camera["synchronization"] = {
+                "role": "server" if device_id == synchronization.server else "client",
+                "frameRate": synchronization.frame_rate,
+            }
         generated_document = {
             key: value
             for key, value in capture_node.items()
@@ -338,6 +365,16 @@ def resolve_configuration(document: dict[str, Any]) -> Resolution:
             storages=resolved_storages,
         )
         generated[device_id] = generated_document
+
+    if synchronization is not None:
+        if synchronization.server not in cameras:
+            raise ValueError("camera synchronization requires at least two cameras and a valid server")
+        schedules = [camera.schedule for camera in cameras.values()]
+        if any(schedule != schedules[0] for schedule in schedules):
+            raise ValueError("synchronized cameras must use the same schedule")
+        numbers = [camera.capture_node["camera"].get("cameraNum", 0) for camera in cameras.values()]
+        if len(set(numbers)) != len(numbers):
+            raise ValueError("synchronized cameras must use distinct cameraNum values")
 
     sensors: dict[str, ResolvedSensor] = {}
     sensor_defaults = source.sensors.defaults.model_dump(
@@ -389,6 +426,7 @@ def resolve_configuration(document: dict[str, Any]) -> Resolution:
             windows=source.power.windows,
         ),
         warnings=warnings,
+        synchronization=synchronization,
     )
     return Resolution(source=source, resolved=resolved, capture_node_configs=generated)
 

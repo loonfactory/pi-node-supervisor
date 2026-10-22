@@ -41,12 +41,16 @@ class StagedCaptureBundle:
         captured_at: datetime,
         directory: Path,
         artifacts: tuple[StagedArtifact, ...],
+        sensor_timestamp_ns: int | None = None,
+        sync_ready: bool | None = None,
     ) -> None:
         self.request_id = request_id
         self.capture_id = capture_id
         self.captured_at = captured_at
         self.directory = directory
         self.artifacts = artifacts
+        self.sensor_timestamp_ns = sensor_timestamp_ns
+        self.sync_ready = sync_ready
         self._closed = False
 
     def close(self) -> None:
@@ -100,8 +104,11 @@ class CaptureNodeBundleClient:
         *,
         parameters: dict[str, Any] | None = None,
         formats: dict[str, Any] | None = None,
+        capture_at_ns: int | None = None,
     ) -> StagedCaptureBundle:
         document: dict[str, Any] = {"requestId": request_id}
+        if capture_at_ns is not None:
+            document["captureAtNs"] = capture_at_ns
         if parameters:
             document["parameters"] = parameters
         if formats is not None:
@@ -146,6 +153,16 @@ class CaptureNodeBundleClient:
         if captured_at.tzinfo is None or expected_count < 1:
             raise CaptureBundleError("CaptureNode response has invalid bundle metadata")
         boundary = _multipart_boundary(headers.get("Content-Type", ""))
+        timestamp_value = headers.get("X-Sensor-Timestamp-Ns")
+        ready_value = headers.get("X-Sync-Ready")
+        try:
+            timestamp = int(timestamp_value) if timestamp_value is not None else None
+            if timestamp is not None and timestamp <= 0:
+                raise ValueError("invalid sensor timestamp")
+            if ready_value not in (None, "0", "1"):
+                raise ValueError("invalid sync readiness")
+        except ValueError as exc:
+            raise CaptureBundleError("invalid capture timing headers") from exc
         directory = Path(
             tempfile.mkdtemp(prefix=f"capture-{request_id}-", dir=self._staging_directory())
         )
@@ -161,6 +178,8 @@ class CaptureNodeBundleClient:
                 captured_at=captured_at,
                 directory=directory,
                 artifacts=tuple(artifacts),
+                sensor_timestamp_ns=timestamp,
+                sync_ready=None if ready_value is None else ready_value == "1",
             )
         except BaseException:
             shutil.rmtree(directory, ignore_errors=True)

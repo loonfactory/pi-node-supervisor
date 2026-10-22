@@ -8,16 +8,19 @@ import uuid
 from hashlib import sha256
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
 from capture_node.core.cameras import CameraOptions, CameraProvider, Capture
+from capture_node.core.cameras.contracts import TimedCamera
 from capture_node.core.config import (
     Configuration,
     UpdateResult,
 )
+from capture_node.core.capture_metadata import with_capture_metadata
 from capture_node.core.encodings import ImageEncoder
+from capture_node.core.encodings.dng import encode_dng
 from capture_node.core.encodings.options import ImageFormatsOptions
 from capture_node.core.events import EventEmitter, EventType, cause_payload
 from capture_node.core.maintenance import (
@@ -102,11 +105,15 @@ class CaptureBundle:
         captured_at: datetime,
         artifacts: tuple[CaptureArtifact, ...],
         release: Callable[[], None],
+        sensor_timestamp_ns: int | None = None,
+        sync_ready: bool | None = None,
     ) -> None:
         self.request_id = request_id
         self.capture_id = capture_id
         self.captured_at = captured_at
         self.artifacts = artifacts
+        self.sensor_timestamp_ns = sensor_timestamp_ns
+        self.sync_ready = sync_ready
         self._release = release
         self._closed = False
         self._close_lock = threading.Lock()
@@ -243,6 +250,8 @@ class CaptureNode:
         request_id: str,
         parameters: dict[str, Any],
         image_formats: ImageFormatsOptions | None = None,
+        *,
+        capture_at_ns: int | None = None,
     ) -> CaptureBundle:
         """Capture and encode one bundle held until the response stream closes."""
 
@@ -264,19 +273,16 @@ class CaptureNode:
                 parameters,
                 options,
                 include_raw=requested_formats.dng is not None,
+                capture_at_ns=capture_at_ns,
             )
             self._emitter.emit(
                 EventType.CAPTURE_SUCCEEDED,
                 capture_id=capture_id,
                 request_id=request_id,
             )
-            captured = replace(
-                captured,
-                parameters={
-                    **captured.parameters,
-                    "captureId": capture_id,
-                    "requestId": request_id,
-                },
+            captured = with_capture_metadata(
+                captured, options.camera, capture_id=capture_id,
+                request_id=request_id, overrides=parameters,
             )
             try:
                 artifacts = self._capture_artifacts(
@@ -302,6 +308,8 @@ class CaptureNode:
                 captured.captured_at,
                 artifacts,
                 self._release_collection,
+                sensor_timestamp_ns=captured.parameters.get("SensorTimestamp"),
+                sync_ready=captured.parameters.get("SyncReady"),
             )
         except BaseException:
             self._release_collection()
@@ -357,7 +365,8 @@ class CaptureNode:
         capture_id = uuid.uuid4().hex
         captured = None
         handed_off = False
-        image_formats = self.options.images
+        capture_options = self.options
+        image_formats = capture_options.images
         try:
             try:
                 captured = self._camera_provider.camera().capture(
@@ -376,9 +385,8 @@ class CaptureNode:
                 capture_id=capture_id,
             )
             try:
-                captured = replace(
-                    captured,
-                    parameters={**captured.parameters, "captureId": capture_id},
+                captured = with_capture_metadata(
+                    captured, capture_options.camera, capture_id=capture_id,
                 )
                 artifacts: list[DistributionArtifact] = []
                 for options in image_formats.processed:
@@ -400,7 +408,7 @@ class CaptureNode:
                         )
                     artifacts.append(
                         DistributionArtifact(
-                            captured.raw.data,
+                            encode_dng(captured, image_formats.dng),
                             self._capture_name(
                                 captured.captured_at,
                                 capture_id,
@@ -457,8 +465,15 @@ class CaptureNode:
         options: Options,
         *,
         include_raw: bool,
+        capture_at_ns: int | None = None,
     ) -> Capture:
         camera = self._camera_provider.camera()
+        if capture_at_ns is not None and not isinstance(camera, TimedCamera):
+            raise InvalidCaptureParameters("camera does not support captureAtNs")
+        if capture_at_ns is not None and (
+            options.camera.type != "picamera2" or options.camera.synchronization is None
+        ):
+            raise InvalidCaptureParameters("captureAtNs requires camera synchronization")
         configured = dict(options.camera.params)
         requested = {**configured, **parameters}
         if parameters:
@@ -475,6 +490,8 @@ class CaptureNode:
                     str(exc) or type(exc).__name__
                 ) from exc
         try:
+            if capture_at_ns is not None:
+                return camera.capture_at(capture_at_ns, include_raw=include_raw)
             return camera.capture(include_raw=include_raw)
         except BaseException as exc:
             self._emitter.emit(
@@ -522,12 +539,13 @@ class CaptureNode:
                 capture_id,
                 captured.raw.extension,
             )
+            data = encode_dng(captured, image_formats.dng)
             artifacts.append(
                 CaptureArtifact(
                     name,
                     captured.raw.media_type,
-                    captured.raw.data,
-                    sha256(captured.raw.data).digest(),
+                    data,
+                    sha256(data).digest(),
                 )
             )
         return tuple(artifacts)

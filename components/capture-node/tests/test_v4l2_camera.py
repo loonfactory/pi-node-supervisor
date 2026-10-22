@@ -9,7 +9,9 @@ from PIL import Image
 
 from capture_node.core.cameras import CameraControlsUnavailable
 import capture_node.core.cameras.v4l2 as v4l2_module
+from capture_node.core.cameras.contracts import PreviewFormat
 from capture_node.core.cameras.v4l2 import V4L2Camera, extract_jpeg_frames
+from capture_node.core.cameras.contracts import PreviewFormat
 from capture_node.core.cameras.v4l2 import (
     discover_v4l2_devices,
     parse_v4l2_controls,
@@ -116,7 +118,12 @@ def test_v4l2_camera_shares_mjpeg_source_and_applies_controls(
     camera.apply({"brightness": 140, "white_balance_automatic": False})
 
     captured = camera.capture()
-    preview = next(camera.frames())
+    preview = next(camera.frames(format=PreviewFormat.JPEG))
+    png_preview = next(camera.frames())
+    with Image.open(BytesIO(png_preview.data)) as png, Image.open(BytesIO(source)) as original:
+        assert png.format == "PNG"
+        assert png.size == original.size
+        assert png.tobytes() == original.tobytes()
     camera.close()
 
     command = process_calls[0][0]
@@ -167,7 +174,7 @@ def test_v4l2_flip_prefers_hardware_per_axis_and_uses_software_fallback(
     camera.apply({"horizontal_flip": True, "vertical_flip": True})
     controls = {control.name: control for control in camera.controls()}
     captured = camera.capture()
-    preview = next(camera.frames())
+    preview = next(camera.frames(format=PreviewFormat.JPEG))
     camera.close()
 
     set_commands = [

@@ -45,11 +45,13 @@ from capture_node.core.storages import ConfiguredStorageProvider, StorageProvide
 from capture_node.web.event_buffer import EventBuffer
 from capture_node.web.logging_config import configure_logging
 from capture_node.web.problems import ApiProblem
+from capture_node.web.preview_negotiation import negotiate_preview
 from capture_node.web.storage_browser import StorageBrowser
 
 _MEDIA_TYPES = {".dng": "image/x-adobe-dng"}
 _CAPTURE_BOUNDARY = "capture"
 _CAPTURE_STREAM_CHUNK_SIZE = 1024 * 1024
+_PREVIEW_STREAM_CHUNK_SIZE = 1024 * 1024
 
 
 class CaptureRequest(StrictModel):
@@ -58,6 +60,7 @@ class CaptureRequest(StrictModel):
     request_id: str = Field(min_length=1, max_length=128)
     parameters: dict[str, Any] = Field(default_factory=dict)
     formats: ImageFormatsOptions | None = None
+    capture_at_ns: int | None = Field(default=None, gt=0, strict=True)
 
     @field_validator("request_id")
     @classmethod
@@ -83,7 +86,7 @@ def create_app(
     """Create the Web host without coupling Core to FastAPI."""
 
     try:
-        from fastapi import FastAPI, Request
+        from fastapi import FastAPI, Header, Request
         from fastapi.exceptions import RequestValidationError
         from fastapi.responses import (
             FileResponse,
@@ -389,7 +392,12 @@ def create_app(
         return Response(data, media_type=media_type)
 
     @app.get("/api/preview")
-    def preview():
+    def preview(
+        format: str | None = None, accept: list[str] | None = Header(default=None)
+    ):
+        preview_format = negotiate_preview(
+            format, ", ".join(accept) if accept is not None else None
+        )
         camera = camera_provider.camera()
         camera_status = _camera_status(camera)
         if not camera_status.connected:
@@ -407,8 +415,9 @@ def create_app(
                 "The configured camera does not provide preview frames.",
             )
         return StreamingResponse(
-            _multipart_frames(camera.frames()),
+            _multipart_frames(camera.frames(format=preview_format)),
             media_type="multipart/x-mixed-replace; boundary=frame",
+            headers={"Cache-Control": "no-store", "Vary": "Accept"},
         )
 
     @app.post("/api/capture")
@@ -460,6 +469,7 @@ def create_app(
                 request.request_id,
                 request.parameters,
                 request.formats,
+                capture_at_ns=request.capture_at_ns,
             )
         except CaptureInProgress as exc:
             raise ApiProblem(
@@ -498,6 +508,10 @@ def create_app(
                     "X-Capture-Id": bundle.capture_id,
                     "X-Captured-At": bundle.captured_at.isoformat(),
                     "X-Artifact-Count": str(len(bundle.artifacts)),
+                    **({"X-Sensor-Timestamp-Ns": str(bundle.sensor_timestamp_ns)}
+                       if bundle.sensor_timestamp_ns is not None else {}),
+                    **({"X-Sync-Ready": "1" if bundle.sync_ready else "0"}
+                       if bundle.sync_ready is not None else {}),
                 },
             )
         except BaseException:
@@ -539,9 +553,10 @@ def _multipart_frames(frames: Iterator[PreviewFrame]) -> Iterator[bytes]:
             b"--frame\r\n"
             + f"Content-Type: {frame.media_type}\r\n".encode("ascii")
             + f"Content-Length: {len(frame.data)}\r\n\r\n".encode("ascii")
-            + frame.data
-            + b"\r\n"
         )
+        for offset in range(0, len(frame.data), _PREVIEW_STREAM_CHUNK_SIZE):
+            yield frame.data[offset : offset + _PREVIEW_STREAM_CHUNK_SIZE]
+        yield b"\r\n"
 
 
 async def _capture_multipart(

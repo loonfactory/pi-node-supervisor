@@ -255,6 +255,8 @@ CMakeUserPresets.json
 node_modules/
 
 # Local environment overrides (keep example templates)
+/config/devices/
+
 .env.*
 !.env.example
 !.env.*.example

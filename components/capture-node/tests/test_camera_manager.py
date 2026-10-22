@@ -41,7 +41,7 @@ class BroadcastCamera(ManagedCamera):
         self._waiting = 0
         self._sequence = 0
 
-    def frames(self):
+    def frames(self, *, format=None):
         sequence = 0
         with self._condition:
             self._waiting += 1
@@ -116,3 +116,23 @@ def test_camera_manager_does_not_serialize_preview_consumers() -> None:
         consumer.join(timeout=1)
         assert not consumer.is_alive()
     assert received == [b"1", b"1"]
+
+
+def test_preview_formats_remain_independent_across_camera_replacement():
+    from capture_node.core.cameras import PreviewFormat
+    from capture_node.core.cameras.preview_encoding import encode_preview
+
+    class EncodedCamera(ManagedCamera):
+        def frames(self, *, format=PreviewFormat.PNG):
+            while True:
+                yield encode_preview(Image.new("RGB", (2, 2), "red"), format)
+
+    manager = CameraManager(EncodedCamera("first"))
+    png_frames = manager.frames()
+    jpeg_frames = manager.frames(format=PreviewFormat.JPEG)
+    assert next(png_frames).media_type == "image/png"
+    assert next(jpeg_frames).media_type == "image/jpeg"
+    manager.replace(lambda: EncodedCamera("second"), lambda: EncodedCamera("rollback"))
+    assert next(png_frames).media_type == "image/png"
+    assert next(jpeg_frames).media_type == "image/jpeg"
+    manager.close()

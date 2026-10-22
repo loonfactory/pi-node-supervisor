@@ -9,6 +9,7 @@ from pathlib import PurePosixPath
 from typing import Any, Protocol
 
 from .capture_v2 import CaptureNodeBundleClient
+from .camera_synchronization import assess_synchronization, capture_target_ns
 from .config_v2 import ResolvedCamera, ResolvedConfiguration, ResolvedSensor
 from .runtime_v2 import ActiveWork, RunRecordV2, RuntimeStoreV2
 from .schedule_v2 import Occurrence, ScheduleEngine
@@ -41,7 +42,8 @@ class CameraWorker:
         self._lock = threading.Lock()
 
     def execute(
-        self, run: RunRecordV2, *, parameters: dict[str, Any] | None = None
+        self, run: RunRecordV2, *, parameters: dict[str, Any] | None = None,
+        capture_at_ns: int | None = None,
     ) -> RunRecordV2:
         try:
             self.active_work.acquire()
@@ -49,16 +51,23 @@ class CameraWorker:
             return self._fail(run, exc)
         try:
             with self._lock:
-                return self._execute_locked(run, parameters or {})
+                return self._execute_locked(run, parameters or {}, capture_at_ns)
         finally:
             self.active_work.release()
 
     def _execute_locked(
-        self, run: RunRecordV2, parameters: dict[str, Any]
+        self, run: RunRecordV2, parameters: dict[str, Any], capture_at_ns: int | None
     ) -> RunRecordV2:
         try:
             self.client.health()
-            with self.client.capture(run.run_id, parameters=parameters) as bundle:
+            timing = {"capture_at_ns": capture_at_ns} if capture_at_ns is not None else {}
+            with self.client.capture(run.run_id, parameters=parameters, **timing) as bundle:
+                if capture_at_ns is not None and (
+                    bundle.sync_ready is not True
+                    or bundle.sensor_timestamp_ns is None
+                    or bundle.sensor_timestamp_ns < capture_at_ns
+                ):
+                    raise ValueError("CaptureNode did not return the requested synchronized frame")
                 succeeded = 0
                 attempted = 0
                 artifacts = []
@@ -96,6 +105,9 @@ class CameraWorker:
                     "artifacts": artifacts,
                     "storageSucceeded": succeeded,
                     "storageAttempted": attempted,
+                    "sensorTimestampNs": bundle.sensor_timestamp_ns,
+                    "syncReady": bundle.sync_ready,
+                    "captureAtNs": capture_at_ns,
                 }
                 completed = self.runtime.complete_run(
                     run.run_id,
@@ -296,6 +308,7 @@ class ExecutionEngineV2:
                 evaluation_time - tolerance, evaluation_time
             )
             tasks: list[asyncio.Task[RunRecordV2]] = []
+            targets: dict[datetime, int] = {}
             for occurrence in occurrences:
                 run = self.runtime.claim_run(
                     revision_id=self.revision_id,
@@ -311,17 +324,57 @@ class ExecutionEngineV2:
                     device_id=run.device_id,
                     payload={"scheduledAt": occurrence.scheduled_at.isoformat()},
                 )
-                tasks.append(self._task_for(occurrence, run))
+                target = None
+                if occurrence.device_kind == "camera" and self.configuration.synchronization:
+                    target = targets.setdefault(
+                        occurrence.scheduled_at,
+                        capture_target_ns(self.configuration.synchronization.lead_seconds),
+                    )
+                tasks.append(self._task_for(occurrence, run, target))
             if not tasks:
                 return ()
             results = await asyncio.gather(*tasks, return_exceptions=True)
             for result in results:
                 if isinstance(result, BaseException):
                     raise result
+            for scheduled_at, target in targets.items():
+                self._record_synchronization(
+                    tuple(run for run in results if run.device_kind == "camera" and run.scheduled_at == scheduled_at),
+                    target,
+                )
             return tuple(results)
 
+    async def capture_all(self) -> tuple[RunRecordV2, ...]:
+        synchronization = self.configuration.synchronization
+        target = capture_target_ns(synchronization.lead_seconds) if synchronization else None
+        results = await asyncio.gather(*(
+            self.capture_now(device_id, capture_at_ns=target)
+            for device_id in sorted(self.camera_workers)
+        ), return_exceptions=True)
+        for result in results:
+            if isinstance(result, BaseException):
+                raise result
+        runs = tuple(results)
+        if target is not None:
+            self._record_synchronization(runs, target)
+        return runs
+
+    def _record_synchronization(self, runs: tuple[RunRecordV2, ...], target: int) -> None:
+        synchronization = self.configuration.synchronization
+        assert synchronization is not None
+        assessment = assess_synchronization(
+            runs, target_ns=target, device_ids=set(self.configuration.cameras),
+            max_skew_milliseconds=synchronization.max_skew_milliseconds,
+        )
+        self.runtime.append_event(
+            "camera.synchronization",
+            severity="info" if assessment["status"] == "aligned" else "warning",
+            payload=assessment,
+        )
+
     async def capture_now(
-        self, device_id: str, parameters: dict[str, Any] | None = None
+        self, device_id: str, parameters: dict[str, Any] | None = None,
+        *, capture_at_ns: int | None = None,
     ) -> RunRecordV2:
         worker = self.camera_workers.get(device_id)
         if worker is None:
@@ -342,7 +395,8 @@ class ExecutionEngineV2:
             device_id=run.device_id,
             payload={"trigger": "manual"},
         )
-        return await asyncio.to_thread(worker.execute, run, parameters=parameters)
+        timing = {"capture_at_ns": capture_at_ns} if capture_at_ns is not None else {}
+        return await asyncio.to_thread(worker.execute, run, parameters=parameters, **timing)
 
     async def collect_now(self, device_id: str) -> RunRecordV2:
         worker = self.sensor_workers.get(device_id)
@@ -367,7 +421,7 @@ class ExecutionEngineV2:
         return await worker.execute(run)
 
     def _task_for(
-        self, occurrence: Occurrence, run: RunRecordV2
+        self, occurrence: Occurrence, run: RunRecordV2, capture_at_ns: int | None = None
     ) -> asyncio.Task[RunRecordV2]:
         if occurrence.device_kind == "camera":
             worker = self.camera_workers.get(occurrence.device_id)
@@ -375,7 +429,8 @@ class ExecutionEngineV2:
                 return asyncio.create_task(
                     asyncio.to_thread(self._missing_worker, run)
                 )
-            return asyncio.create_task(asyncio.to_thread(worker.execute, run))
+            timing = {"capture_at_ns": capture_at_ns} if capture_at_ns is not None else {}
+            return asyncio.create_task(asyncio.to_thread(worker.execute, run, **timing))
         worker = self.sensor_workers.get(occurrence.device_id)
         if worker is None:
             return asyncio.create_task(asyncio.to_thread(self._missing_worker, run))

@@ -114,8 +114,17 @@ class CaptureNodeProcessManagerV2:
             self.write_configs()
             self._stop.clear()
             try:
-                for spec in self.specs.values():
+                ordered = sorted(self.specs.values(), key=lambda spec: (
+                    self.camera_configs[spec.device_id].get("camera", {})
+                    .get("synchronization", {}).get("role") == "server"
+                ))
+                for spec in ordered:
                     self._start_process(spec)
+                    if (
+                        self.camera_configs[spec.device_id].get("camera", {})
+                        .get("synchronization", {}).get("role") == "client"
+                    ):
+                        self._wait_ready(spec)
                 for spec in self.specs.values():
                     self._wait_ready(spec)
             except BaseException:

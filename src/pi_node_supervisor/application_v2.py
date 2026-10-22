@@ -197,11 +197,7 @@ class RuntimeControllerV2:
         async def capture() -> tuple[RunRecordV2, ...]:
             if self.engine is None or not self.engine.camera_workers:
                 raise ValueError("no cameras are active")
-            tasks = [
-                asyncio.create_task(self.engine.capture_now(device_id))
-                for device_id in sorted(self.engine.camera_workers)
-            ]
-            return await self._finish_all(tasks)
+            return await self.engine.capture_all()
 
         return await self._manual_operation(capture)
 

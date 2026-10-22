@@ -700,3 +700,68 @@ SRS-CAPTURENODE-001이며, 추가된 기능 계약은
 - 근거: Supervisor와 CaptureNode를 별도 명령으로 갱신하면 동일한 package version
   아래에서도 설정 contract가 어긋날 수 있다. source identity와 단일 orchestration
   entry point로 이 drift를 막되 변경이 없는 반복 배포 비용은 제거한다.
+
+## DEC-036 Continuous Software Synchronization and Timed Capture
+
+- 결정: Picamera2 `camera.synchronization`은 server/client 역할과 공통 frameRate를
+  받아 libcamera SyncMode를 설정한다. Supervisor의 다중 카메라는 항상 이 설정을
+  생성한다. standalone 단일 카메라는 기존 설정을 유지한다.
+- DNG: 동기화 중에는 전체 센서 RAW와 main을 계속 구동하며 같은 CompletedRequest에서
+  둘을 읽는다. 모드 전환 촬영은 프레임 위상과 SyncReady를 리셋하므로 사용하지 않는다.
+  메모리 사용량을 줄이기 위해 버퍼는 3개이고 프레임 캐시는 사용하지 않는다.
+- 경계: Core는 optional TimedCamera capability로 목표 시각 촬영을 요청한다.
+  Picamera2 callback은 SyncReady와 SensorTimestamp를 만족하는 요청 하나만 acquire하고,
+  대기자에게 소유권을 넘긴다. callback에서 인코딩하거나 블록하지 않는다. timeout과
+  close 뒤의 늦은 프레임은 참조를 보유하지 않는다.
+- 계약: `POST /api/captures`의 선택 `captureAtNs`는 같은 호스트 CLOCK_BOOTTIME ns다.
+  목표는 미래 30초 이내여야 하며 첫 프레임이 목표에서 한 주기 이상 늦으면 실패한다.
+  sensor timestamp와 SyncReady는 응답 헤더로 전달한다. `capturedAt`은 기존 의미를
+  유지하므로 스테레오 시간 차이 계산에 사용하지 않는다.
+- 기각: HTTP 요청을 동시에 보내는 것만으로는 센서 노출 시점이 같아지지 않는다.
+  무한 capture_sync_request 대기는 준비 실패나 분리 시 종료를 막고, 요청 timeout 후
+  완료된 요청의 참조 회수가 어려워 callback의 명시적 소유권 전달을 선택했다.
+- 제약: SyncReady는 초기 준비 신호이며 지속적인 정확도 보증이 아니다. Supervisor가
+  실제 타임스탬프 차이와 누락을 별도로 기록한다. 혼합 센서, 노출 시간, rolling shutter
+  차이와 다른 호스트의 시계는 이 기능만으로 해결하지 않는다.
+
+
+## DEC-037 Lossless Preview Default and Per-Request Negotiation
+
+- 결정: 기본 프리뷰 인코딩을 PNG로 변경하고, 요청별 format 또는 Accept로 JPEG를
+  선택하게 한다. 같은 카메라의 서로 다른 뷰어가 독립적으로 선택할 수 있으므로
+  카메라 전역 params를 변경하거나 재시작하지 않는다.
+- 경계: Web이 협상하고 FrameSource의 PreviewFormat을 Manager와 어댑터에 전달한다.
+  공통 인코더는 픽셀과 선택된 형식만 받는다. Supervisor는 요청과 응답을 전달하며
+  인코딩이나 협상 정책을 복제하지 않는다.
+- 기각: Supervisor에서 JPEG를 PNG로 재인코딩하면 손실을 복구할 수 없고 추가 CPU만
+  사용한다. Picamera2의 main 픽셀에서 직접 인코딩한다. V4L2는 기존 MJPEG 입력의
+  제약을 명시한다. PNG는 센서 RAW를 의미하지 않는다.
+- 비용: PNG 압축 레벨 1은 무손실을 유지하면서 CPU 비용을 줄이지만 JPEG보다 큰
+  데이터와 낮은 실효 FPS가 가능하다. 프레임은 최대 1 MiB 조각으로 전달해 기존
+  프록시의 단일 HTTP chunk 상한을 넘지 않도록 한다.
+- 기존 JPEG-only 설명은 이 결정으로 대체한다. 브라우저의 고정 img URL,
+  multipart 컨테이너, 인증과 previewQuality의 JPEG 의미는 유지한다.
+
+
+## DEC-038 Compact Calibration in Capture Artifacts
+
+- 결정: Core가 촬영 시점 옵션 snapshot에서 보정값과 요청 설정을 추출한다. 보정
+  객체는 화이트리스트로 투영해 출처/오차/샘플 기록을 저장 이미지에 복제하지 않는다.
+  배열을 깊은 복사하여 이후 설정 변경이 과거 촬영 메타데이터에 영향을 주지 않는다.
+- 모델: 각 카메라 설정에 K/D와 공통 장치 좌표계에서 해당 카메라로 가는 R/T를 직접
+  둔다. 파일에는 보정 수치와 해상도만 복사하며 카메라 식별자/모델/변환 설명은
+  반복하지 않는다. 왜곡 계수는 k1/k2/p1/p2/k3 이름 객체다. OpenCV pinhole과
+  X_camera = R @ X_rig + T_mm 규칙은 저장 계약으로 고정한다. baseline/center도
+  파생값이라 중복 저장하지 않는다. 촬영 묶음/경로에서 카메라 대응을 유지해야 한다.
+- 설정: Supervisor defaults에 보정을 두면 모든 카메라에 잘못 상속될 수 있어 거부한다.
+  사용자 요청으로 공용 config.json에는 NoIR/RGB 실측값을 사용 예시로 제공하되,
+  다른 장치에서는 교체해야 함을 명시한다. 실제 장치 프로필은 Git에서 제외해 별도로 보관한다.
+- 경계: camera adapter는 원본 센서 메타데이터/RAW를 제공한다. Core가 설정 정보를
+  결합하고 encoding 계층이 파일 표현을 담당한다. 관측 controls와 설정 controls는
+  별도로 남긴다. 이 기능은 보정 적용/삼각측량 기능이 아니다.
+- DNG: 기본 산출물이 DNG이므로 JPEG/PNG에만 넣거나 별도 JSON 파일에 의존하지 않는다.
+  기존 RAW 바이트를 디코딩/재인코딩하지 않고 classic TIFF의 IFD0을 append해
+  ImageDescription JSON을 추가한다. 기존 strip/tile/SubIFD offsets와 pixel bytes는
+  바꾸지 않는다. 메타데이터 비활성화는 기존 DNG 반환이며 필수 DNG 태그 제거가 아니다.
+- 제약: 이 경로는 현재 Picamera2/PiDNG classic TIFF 산출물 대상이다. BigTIFF나 잘못된
+  원본을 조용히 통과시키지 않는다. 새 RAW writer 도입 시 독립 reader로 검증해야 한다.

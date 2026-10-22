@@ -53,10 +53,16 @@ export default function CamerasPage() {
     try {
       const result = await api("/api/captures/manual", { method: "POST" });
       const failed = result.items.filter((item) => item.status !== "succeeded");
+      const timestamps = result.items.map((item) => item.result?.sensorTimestampNs);
+      const timing = result.items.length > 1 && result.items.every(
+        (item) => item.result?.syncReady === true && Number.isFinite(item.result?.sensorTimestampNs),
+      )
+        ? ` 센서 시각 차이 ${((Math.max(...timestamps) - Math.min(...timestamps)) / 1e6).toFixed(2)} ms.`
+        : "";
       notify(
         failed.length
           ? `${result.items.length - failed.length}대 촬영 완료, ${failed.length}대 실패`
-          : `모든 카메라 ${result.items.length}대의 촬영과 저장이 완료되었습니다.`,
+          : `모든 카메라 ${result.items.length}대의 촬영과 저장이 완료되었습니다.${timing}`,
         Boolean(failed.length),
       );
     } catch (error) {

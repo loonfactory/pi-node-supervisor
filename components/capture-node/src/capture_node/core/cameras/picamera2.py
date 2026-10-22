@@ -16,10 +16,13 @@ from capture_node.core.cameras.contracts import (
     CameraDevice,
     CameraStatus,
     Capture,
+    PreviewFormat,
     PreviewFrame,
     RawCapture,
 )
-from capture_node.core.cameras.options import Picamera2Options
+from capture_node.core.cameras.options import CameraSynchronizationOptions, Picamera2Options
+from capture_node.core.cameras.preview_encoding import encode_preview
+from capture_node.core.cameras.synchronized_frames import SynchronizedFrames
 
 _HORIZONTAL_FLIP = "horizontal_flip"
 _VERTICAL_FLIP = "vertical_flip"
@@ -35,6 +38,7 @@ class Picamera2Camera:
             size=options.size,
             preview_fps=options.preview_fps,
             preview_quality=options.preview_quality,
+            synchronization=options.synchronization,
         )
 
     def __init__(
@@ -44,6 +48,7 @@ class Picamera2Camera:
         size: tuple[int, int] | None = None,
         preview_fps: float = 10,
         preview_quality: int = 75,
+        synchronization: CameraSynchronizationOptions | None = None,
     ) -> None:
         if camera_num < 0 or preview_fps <= 0:
             raise ValueError(
@@ -69,10 +74,20 @@ class Picamera2Camera:
         self._preview_quality = preview_quality
         self._lock = threading.Lock()
         self._closed = threading.Event()
-        self._camera.configure(self._configuration(False, False))
-        self._camera.start()
+        self._synchronization = synchronization
+        self._synchronized_frames = SynchronizedFrames() if synchronization else None
+        try:
+            if self._synchronized_frames is not None:
+                self._camera.post_callback = self._synchronized_frames.observe
+            self._camera.configure(self._configuration(False, False))
+            self._camera.start()
+        except BaseException:
+            self._camera.close()
+            raise
 
     def capture(self, *, include_raw: bool = False) -> Capture:
+        if self._synchronization is not None:
+            return self._capture_synchronized(0, include_raw=include_raw)
         if include_raw:
             return self._capture_with_raw()
         with self._lock:
@@ -87,6 +102,38 @@ class Picamera2Camera:
             datetime.now(UTC),
             dict(metadata),
         )
+
+    def capture_at(self, target_ns: int, *, include_raw: bool = False) -> Capture:
+        if self._synchronization is None:
+            raise ValueError("captureAtNs requires camera synchronization")
+        now = time.clock_gettime_ns(time.CLOCK_BOOTTIME)
+        if not now < target_ns < now + self._synchronization.timeout_seconds * 1e9:
+            raise ValueError("captureAtNs must be in the future and within the capture timeout")
+        return self._capture_synchronized(target_ns, include_raw=include_raw)
+
+    def _capture_synchronized(self, target_ns: int, *, include_raw: bool) -> Capture:
+        assert self._synchronization is not None
+        assert self._synchronized_frames is not None
+        with self._lock:
+            request = self._synchronized_frames.capture(
+                target_ns, self._synchronization.timeout_seconds
+            )
+            try:
+                metadata = dict(request.get_metadata())
+                timestamp = metadata.get("SensorTimestamp")
+                if not isinstance(timestamp, int) or timestamp <= 0:
+                    raise RuntimeError("synchronized frame has no SensorTimestamp")
+                if target_ns and timestamp - target_ns > 1e9 / self._synchronization.frame_rate:
+                    raise TimeoutError("synchronized capture missed its target frame window")
+                array = request.make_array("main")
+                raw = None
+                if include_raw:
+                    output = BytesIO()
+                    request.save_dng(output, "raw")
+                    raw = RawCapture(output.getvalue())
+            finally:
+                request.release()
+        return Capture(Image.fromarray(array), datetime.now(UTC), metadata, raw)
 
     def _capture_with_raw(self) -> Capture:
         with self._lock:
@@ -119,6 +166,10 @@ class Picamera2Camera:
 
     def apply(self, parameters: Mapping[str, Any]) -> None:
         controls = dict(parameters)
+        if self._synchronization is not None:
+            reserved = {"FrameRate", "FrameDurationLimits", "SyncMode", "SyncFrames"}
+            if reserved.intersection(controls):
+                raise ValueError("synchronization owns frame timing controls")
         horizontal_flip = self._flip_value(
             controls.pop(_HORIZONTAL_FLIP, self._horizontal_flip),
             _HORIZONTAL_FLIP,
@@ -155,18 +206,16 @@ class Picamera2Camera:
                 ),
             )
 
-    def frames(self) -> Iterator[PreviewFrame]:
+    def frames(
+        self, *, format: PreviewFormat = PreviewFormat.PNG
+    ) -> Iterator[PreviewFrame]:
         while not self._closed.is_set():
             started_at = time.monotonic()
             with self._lock:
                 array = self._camera.capture_array("main")
-            output = BytesIO()
-            Image.fromarray(array).save(
-                output,
-                format="JPEG",
-                quality=self._preview_quality,
+            yield encode_preview(
+                Image.fromarray(array), format, jpeg_quality=self._preview_quality
             )
-            yield PreviewFrame(output.getvalue())
             elapsed = time.monotonic() - started_at
             self._closed.wait(max(0, self._preview_period - elapsed))
 
@@ -179,6 +228,8 @@ class Picamera2Camera:
         if self._closed.is_set():
             return
         self._closed.set()
+        if self._synchronized_frames is not None:
+            self._synchronized_frames.close()
         with self._lock:
             self._camera.stop()
             self._camera.close()
@@ -188,6 +239,23 @@ class Picamera2Camera:
         main: dict[str, Any] = {"format": "BGR888"}
         if self._size is not None:
             main["size"] = self._size
+        if self._synchronization is not None:
+            from libcamera import controls
+
+            role = self._synchronization.role
+            mode = (
+                controls.rpi.SyncModeEnum.Server
+                if role == "server" else controls.rpi.SyncModeEnum.Client
+            )
+            return self._camera.create_video_configuration(
+                main=main,
+                raw={},
+                sensor=self._sensor_configuration(),
+                buffer_count=3,
+                queue=False,
+                controls={"FrameRate": self._synchronization.frame_rate, "SyncMode": mode},
+                transform=self._transform_type(hflip=horizontal_flip, vflip=vertical_flip),
+            )
         return self._camera.create_preview_configuration(
             main=main,
             transform=self._transform_type(
@@ -200,6 +268,17 @@ class Picamera2Camera:
         main: dict[str, Any] = {"format": "BGR888"}
         if self._size is not None:
             main["size"] = self._size
+        return self._camera.create_still_configuration(
+            main=main,
+            raw={},
+            sensor=self._sensor_configuration(),
+            transform=self._transform_type(
+                hflip=self._horizontal_flip,
+                vflip=self._vertical_flip,
+            ),
+        )
+
+    def _sensor_configuration(self) -> dict[str, Any]:
         sensor: dict[str, Any] = {
             "output_size": self._sensor_resolution,
         }
@@ -211,15 +290,7 @@ class Picamera2Camera:
         ]
         if matching_depths:
             sensor["bit_depth"] = max(matching_depths)
-        return self._camera.create_still_configuration(
-            main=main,
-            raw={},
-            sensor=sensor,
-            transform=self._transform_type(
-                hflip=self._horizontal_flip,
-                vflip=self._vertical_flip,
-            ),
-        )
+        return sensor
 
     def _restore_preview(self, configuration, *, stop_first: bool = False) -> None:
         if stop_first:

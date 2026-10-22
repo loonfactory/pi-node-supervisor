@@ -12,11 +12,19 @@ from typing import Any
 import pytest
 from PIL import Image
 
-from capture_node.core.cameras import Capture, PreviewFrame, RawCapture
+from capture_node.core.cameras import Capture, PreviewFormat, PreviewFrame, RawCapture
 from capture_node.core.config import Configuration, JsonOptionsRepository
 from capture_node.core.options import Options
 from capture_node.core.events import EVENT_ATTRIBUTE, EventEmitter
 from capture_node.core.storages import SaveResult
+
+
+def fake_dng() -> bytes:
+    output = BytesIO()
+    Image.new("RGB", (24, 16), (20, 110, 180)).save(
+        output, format="TIFF", tiffinfo={50706: bytes((1, 4, 0, 0)), 270: "camera-native-description"}
+    )
+    return output.getvalue()
 
 
 class FakeCamera:
@@ -44,7 +52,7 @@ class FakeCamera:
             Image.new("RGB", (24, 16), (20, 110, 180)),
             datetime.now(UTC),
             {"ExposureTime": 12_000, "AnalogueGain": 1.5, "Frame": self.capture_calls},
-            RawCapture(b"fake-dng") if include_raw else None,
+            RawCapture(fake_dng()) if include_raw else None,
         )
 
     def apply(self, parameters: Mapping[str, Any]) -> None:
@@ -56,11 +64,11 @@ class FakeCamera:
 
 
 class PreviewCamera(FakeCamera):
-    def frames(self) -> Iterator[PreviewFrame]:
+    def frames(self, *, format: PreviewFormat = PreviewFormat.PNG) -> Iterator[PreviewFrame]:
         output = BytesIO()
-        Image.new("RGB", (8, 6), (220, 30, 40)).save(output, "JPEG")
+        Image.new("RGB", (8, 6), (220, 30, 40)).save(output, format.value.upper())
         while True:
-            yield PreviewFrame(output.getvalue())
+            yield PreviewFrame(output.getvalue(), f"image/{format.value}")
 
 
 class FakeCameraProvider:

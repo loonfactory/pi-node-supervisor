@@ -619,3 +619,55 @@ Camera 1 Web port: 8001
 - 정지된 동일 인스턴스는 다시 시작하지 않으며, 서비스 재시작은 새 Core
   인스턴스를 구성한다.
 - RTC, 시스템 전원 차단 및 Power Manager 정책은 이 기능 범위에 포함하지 않는다.
+
+## 11. 소프트웨어 카메라 동기화
+
+- Picamera2 `camera.synchronization`은 `role`(server/client), `frameRate`(기본 5),
+  `timeoutSeconds`(기본 30)를 받는다. libcamera의 SyncMode 지원이 필요하다.
+- 동기화 모드에서는 프리뷰와 DNG 모두 연속 전체 해상도 스트림에서 획득한다.
+  DNG 촬영을 위한 센서 모드 전환은 수행하지 않는다.
+- `POST /api/captures`는 선택 `captureAtNs`를 받는다. 같은 호스트의 부팅 시계 ns로,
+  SyncReady가 참이면서 SensorTimestamp가 목표 이상인 첫 프레임을 선택한다.
+  목표에서 한 프레임 주기를 초과하거나 준비되지 않은 채 timeout이 지나면 실패한다.
+- 동기화 미설정 카메라의 시각 지정 촬영, 잘못된 목표 시각과 타이밍 control 덮어쓰기를
+  거절한다. 기존 요청에서는 captureAtNs를 생략할 수 있다.
+- 응답은 가능한 경우 `X-Sensor-Timestamp-Ns`, `X-Sync-Ready`(0/1)를 제공한다.
+  sensor timestamp는 원본 요청 메타데이터이며 HTTP 완료 시각이나 JPEG 인코딩 시각이 아니다.
+- `tests/test_synchronized_frames.py`, `tests/test_camera_adapters.py`, `tests/test_web.py`에서
+  준비·타임스탬프 선택, timeout·종료 참조 해제, 연속 RAW와 HTTP 계약을 검증한다.
+
+
+## 12. PNG 기본 프리뷰와 형식 협상
+
+- `GET /api/preview`는 기본 PNG 프레임을 multipart 스트림으로 반환한다.
+- `?format=png|jpeg`가 우선하며 생략 시 `Accept`의 PNG/JPEG, 와일드카드와
+  q 값을 이용해 선택한다. 동일 우선순위는 PNG를 선택한다. 컨테이너만 요청한
+  `Accept: multipart/x-mixed-replace`도 기본 PNG를 사용한다.
+- 잘못된 format은 422, 수용 불가 Accept는 406, 잘못된 q 값은 400이다.
+  응답에는 `Vary: Accept`, `Cache-Control: no-store`를 포함한다.
+- Picamera2는 main 픽셀을 바로 PNG로 압축하며 크기·초점·동기화 설정을 변경하지 않는다.
+  JPEG 요청에만 previewQuality를 적용한다. PNG는 압축 레벨 1을 사용한다.
+- V4L2 JPEG는 기존 입력 바이트를 전달하고 PNG는 MJPEG를 디코딩한 픽셀을 보존한다.
+  입력에서 이미 발생한 손실이나 ISP 처리를 되돌리지는 않는다.
+- 대형 PNG도 전송 가능하도록 각 multipart 프레임을 최대 1 MiB의 HTTP body 조각으로
+  나눠 전달한다. 프레임의 Content-Length는 이미지 전체 바이트 수다.
+- 인코딩 픽셀 보존, Accept 선택·거부, API 응답, 큰 프레임 분할을 테스트한다.
+
+
+## 13. 촬영 보정 메타데이터
+
+- camera.calibration의 기하 보정값만 촬영의 calibration 객체에 복사한다.
+  허용 필드는 image_width/height, camera_matrix, distortion_coefficients, R, T_mm이다.
+  왜곡 계수는 k1/k2/p1/p2/k3 이름 객체다. 기존 배열 입력도 이름 객체로 변환한다.
+  모델은 OpenCV pinhole 5계수, 변환은 X_camera = R @ X_rig + T_mm로 고정한다.
+  각 카메라에 별도로 설정하므로 식별자와 모델/순서/변환 설명은 반복 저장하지 않는다.
+  오차·샘플·출처·검증 기록도 제외한다.
+- captureSettings는 main 이미지의 실제 크기, 설정된 반전과 촬영 요청까지 병합한
+  configuredControls를 포함한다. 관측된 LensPosition과 sensor timestamp는 기존
+  위치에 남겨 요청값과 구분한다. 촬영 설정 snapshot을 사용한다.
+- 수동·예약 저장과 Supervisor 촬영 bundle 모두 적용한다. JPEG/PNG UserComment와
+  DNG ImageDescription에 JSON으로 내장하며 별도 메타데이터 파일은 만들지 않는다.
+- DNG는 classic TIFF IFD0만 새 위치에 작성한다. 원본 픽셀, SubIFD, 다른 태그와
+  값의 오프셋은 보존한다. 지원하지 않는 헤더/손상된 IFD는 명시적으로 실패한다.
+- embedMetadata=false이면 PNG/JPEG 사용자 메타데이터를 쓰지 않고 DNG는 카메라
+  원본 그대로 전달한다. 이미지의 왜곡·좌표·픽셀을 자동 보정하지 않는다.

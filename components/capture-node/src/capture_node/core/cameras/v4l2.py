@@ -22,9 +22,11 @@ from capture_node.core.cameras.contracts import (
     CameraDevice,
     CameraStatus,
     Capture,
+    PreviewFormat,
     PreviewFrame,
 )
 from capture_node.core.cameras.options import V4L2CameraOptions
+from capture_node.core.cameras.preview_encoding import encode_preview
 from capture_node.core.cameras.v4l2_stream import (
     FFmpegMjpegStream,
     extract_jpeg_frames,
@@ -153,11 +155,17 @@ class V4L2Camera:
             },
         )
 
-    def frames(self) -> Iterator[PreviewFrame]:
+    def frames(
+        self, *, format: PreviewFormat = PreviewFormat.PNG
+    ) -> Iterator[PreviewFrame]:
         sequence = -1
         while True:
             data, sequence = self._stream.frame_after(sequence)
-            yield PreviewFrame(data)
+            if format == PreviewFormat.JPEG:
+                yield PreviewFrame(data, "image/jpeg")
+            else:
+                with Image.open(BytesIO(data)) as image:
+                    yield encode_preview(image, format)
 
     def apply(self, parameters: Mapping[str, Any]) -> None:
         if not parameters:
