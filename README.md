@@ -156,6 +156,9 @@ cd src/pi_node_supervisor/web/frontend && npm run build
 The camera page uses a fixed `<img src="/api/camera/{device_id}">` URL.
 Supervisor relays the internal CaptureNode MJPEG stream directly; the browser
 displays frames without per-frame Blob URLs or JavaScript decoding.
+External clients can access the same `/api/camera/{device_id}` endpoint directly
+with the existing `Authorization: Bearer <token>` header; no preview session is
+needed. An explicit Authorization header takes precedence over the preview cookie.
 `POST /api/camera-session` requires the existing Bearer token and issues an
 eight-hour HttpOnly, SameSite=Strict cookie scoped to `/api/camera/` (Secure on
 HTTPS). This cookie authorizes preview reads only; other APIs retain Bearer

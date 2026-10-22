@@ -85,7 +85,7 @@ def test_v2_config_workflow_and_removed_sync_routes(tmp_path: Path) -> None:
     assert removed.status_code == 404
 
 
-def test_camera_preview_cookie_auth_and_stream_relay(tmp_path, monkeypatch):
+def test_camera_preview_token_cookie_auth_and_stream_relay(tmp_path, monkeypatch):
     from types import SimpleNamespace
     from pi_node_supervisor import api_auth, preview_api
 
@@ -125,6 +125,16 @@ def test_camera_preview_cookie_auth_and_stream_relay(tmp_path, monkeypatch):
             transport=httpx.ASGITransport(app=app), base_url="https://supervisor.test"
         ) as client:
             assert (await client.get("/api/camera/cam1")).status_code == 401
+            assert (await client.get(
+                "/api/camera/cam1", headers={"Authorization": "Bearer wrong"}
+            )).status_code == 401
+            direct = await client.get(
+                "/api/camera/cam1", headers={"Authorization": "Bearer secret"}
+            )
+            assert direct.status_code == 200
+            assert direct.content == payload
+            assert closed == [True]
+            closed.clear()
             assert (await client.post("/api/camera-session")).status_code == 401
             session = await client.post(
                 "/api/camera-session", headers={"Authorization": "Bearer secret"}
@@ -140,6 +150,10 @@ def test_camera_preview_cookie_auth_and_stream_relay(tmp_path, monkeypatch):
             assert response.headers["content-type"] == "multipart/x-mixed-replace; boundary=frame"
             assert response.headers["cache-control"] == "no-store"
             assert closed == [True]
+            # A valid cookie must not mask invalid explicit credentials.
+            assert (await client.get(
+                "/api/camera/cam1", headers={"Authorization": "Bearer wrong"}
+            )).status_code == 401
             assert (await client.get("/api/camera/missing")).status_code == 404
             assert (await client.get("/api/dashboard")).status_code == 401
             assert (await client.get(
@@ -147,5 +161,11 @@ def test_camera_preview_cookie_auth_and_stream_relay(tmp_path, monkeypatch):
             )).status_code == 401
             monkeypatch.setattr(api_auth.time, "time", lambda: now + 8 * 60 * 60 + 1)
             assert (await client.get("/api/camera/cam1")).status_code == 401
+            # Token clients remain independent of browser session expiration.
+            direct = await client.get(
+                "/api/camera/cam1", headers={"Authorization": "Bearer secret"}
+            )
+            assert direct.status_code == 200
+            assert direct.content == payload
 
     asyncio.run(exercise())

@@ -28,6 +28,11 @@ class ApiAuthentication:
         ).hexdigest()
 
     async def preview(self, request: Request) -> None:
+        # Explicit API credentials take precedence over a browser preview cookie.
+        authorization = request.headers.get("authorization")
+        if authorization is not None:
+            await self.bearer(authorization)
+            return
         value = request.cookies.get(self.cookie_name, "")
         expiry, _, signature = value.partition(".")
         if (
