@@ -123,8 +123,7 @@ if [[ "$install_power_manager" == true ]]; then
   fi
   "$script_dir/install-power-manager.sh" "${power_install_arguments[@]}"
 fi
-frontend="$project_root/src/pi_node_supervisor/web/frontend"
-(cd "$frontend" && npm run build)
+"$script_dir/build-frontend.sh"
 
 build_dir=$(mktemp -d /tmp/pi-node-supervisor-build.XXXXXX)
 remote_stage=''

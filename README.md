@@ -41,6 +41,7 @@ a particular capture request supplies `formats`.
 Install the relevant extras and set a non-empty API token:
 
 ```bash
+scripts/build-frontend.sh
 python3 -m venv .venv
 .venv/bin/python -m pip install -e '.[web,sensor,remote]'
 export PI_NODE_SUPERVISOR_API_TOKEN='replace-me'
@@ -161,3 +162,10 @@ HTTPS). This cookie authorizes preview reads only; other APIs retain Bearer
 authentication. Reconnecting renews the preview cookie. The existing
 `/api/nodes/{device_id}/preview` and `/preview/stream` routes remain available
 with Bearer authentication.
+
+Frontend dependencies and assets are built by `scripts/build-frontend.sh`
+(Node.js and npm required). Deployment runs the same script before packaging.
+Python package builds reject missing frontend assets; they do not run npm
+implicitly. Runtime configuration changes wait for active operations to finish
+and block new work until activation or rollback is complete. Preview transport
+closes upstream connections after 30 seconds without data.

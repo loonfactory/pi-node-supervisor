@@ -7,7 +7,8 @@ import { useSupervisor } from "../SupervisorContext.jsx";
 import { friendlyError } from "../utils.js";
 
 function CameraCard({ node }) {
-  const stream = useCameraStream(node.id, true);
+  const { authenticationVersion } = useSupervisor();
+  const stream = useCameraStream(node.id, true, authenticationVersion);
   return (
     <article className="camera-card">
       <div className="panel-title">
@@ -23,6 +24,7 @@ function CameraCard({ node }) {
             key={stream.generation}
             src={stream.src}
             onError={stream.onError}
+            onLoad={stream.onLoad}
             alt={`${node.id} 카메라 프리뷰`}
           />
         ) : (

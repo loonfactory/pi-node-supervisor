@@ -16,6 +16,7 @@ export function SupervisorProvider({ children }) {
   const [view, setView] = useState("dashboard");
   const [connection, setConnection] = useState("checking");
   const [tokenOpen, setTokenOpen] = useState(false);
+  const [authenticationVersion, setAuthenticationVersion] = useState(0);
   const [toast, setToast] = useState(null);
   const [dashboard, setDashboard] = useState(null);
   const [runs, setRuns] = useState([]);
@@ -107,13 +108,7 @@ export function SupervisorProvider({ children }) {
       setConnection("failed");
       notify(friendlyError(error), true);
     }
-  }, [
-    data.limit,
-    data.offset,
-    events.limit,
-    events.offset,
-    notify,
-  ]);
+  }, [data.limit, data.offset, events.limit, events.offset, notify]);
 
   useEffect(() => {
     const unauthorized = () => setTokenOpen(true);
@@ -127,6 +122,7 @@ export function SupervisorProvider({ children }) {
     (value) => {
       sessionStorage.setItem("supervisor-token", value);
       setTokenOpen(false);
+      setAuthenticationVersion((value) => value + 1);
       refresh();
     },
     [refresh],
@@ -138,6 +134,7 @@ export function SupervisorProvider({ children }) {
       setView,
       connection,
       tokenOpen,
+      authenticationVersion,
       setTokenOpen,
       toast,
       notify,
@@ -156,6 +153,7 @@ export function SupervisorProvider({ children }) {
       view,
       connection,
       tokenOpen,
+      authenticationVersion,
       toast,
       notify,
       dashboard,

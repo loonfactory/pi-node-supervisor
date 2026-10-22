@@ -314,7 +314,11 @@ class ExecutionEngineV2:
                 tasks.append(self._task_for(occurrence, run))
             if not tasks:
                 return ()
-            return tuple(await asyncio.gather(*tasks))
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            for result in results:
+                if isinstance(result, BaseException):
+                    raise result
+            return tuple(results)
 
     async def capture_now(
         self, device_id: str, parameters: dict[str, Any] | None = None

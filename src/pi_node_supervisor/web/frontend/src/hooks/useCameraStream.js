@@ -3,57 +3,75 @@ import { useCallback, useEffect, useState } from "react";
 import { api } from "../api-client.js";
 import { friendlyError } from "../utils.js";
 
-export function useCameraStream(nodeId, enabled) {
-  const [state, setState] = useState({
-    src: null,
-    status: "대기 중",
-    error: null,
-  });
+const STATUS = {
+  idle: "대기 중",
+  connecting: "실시간 스트림 연결 중…",
+  streaming: "실시간 스트림 연결됨",
+  retrying: "연결 재시도 중…",
+  unauthorized: "인증이 필요합니다.",
+};
+
+export function useCameraStream(nodeId, enabled, authenticationVersion) {
+  const [state, setState] = useState({ src: null, phase: "idle", error: null });
   const [generation, setGeneration] = useState(0);
   const reconnect = useCallback(() => setGeneration((value) => value + 1), []);
 
   useEffect(() => {
-    if (!enabled || !nodeId) return undefined;
+    if (!enabled || !nodeId) {
+      setState({ src: null, phase: "idle", error: null });
+      return undefined;
+    }
     let active = true;
-    let retryTimer;
-    setState({ src: null, status: "실시간 스트림 연결 중…", error: null });
-    api("/api/camera-session", { method: "POST" })
+    const controller = new AbortController();
+    setState({ src: null, phase: "connecting", error: null });
+    api("/api/camera-session", { method: "POST", signal: controller.signal })
       .then(() => {
         if (active)
           setState({
             src: `/api/camera/${encodeURIComponent(nodeId)}`,
-            status: "실시간 스트림 연결됨",
+            phase: "connecting",
             error: null,
           });
       })
       .catch((error) => {
-        if (!active) return;
-        setState({
-          src: null,
-          status: "연결 실패",
-          error: friendlyError(error),
-        });
-        if (error.status !== 401) retryTimer = setTimeout(reconnect, 1500);
+        if (active)
+          setState({
+            src: null,
+            phase: error.status === 401 ? "unauthorized" : "retrying",
+            error: friendlyError(error),
+          });
       });
     return () => {
       active = false;
-      clearTimeout(retryTimer);
+      controller.abort();
     };
-  }, [enabled, generation, nodeId, reconnect]);
+  }, [enabled, generation, nodeId, authenticationVersion]);
 
   const onError = useCallback(() => {
     setState({
       src: null,
-      status: "연결 재시도 중…",
+      phase: "retrying",
       error: "프리뷰 연결이 끊겼습니다.",
     });
   }, []);
+  const onLoad = useCallback(() => {
+    setState((current) =>
+      current.src ? { ...current, phase: "streaming" } : current,
+    );
+  }, []);
 
   useEffect(() => {
-    if (!state.error || state.status !== "연결 재시도 중…") return undefined;
+    if (!enabled || state.phase !== "retrying") return undefined;
     const timer = setTimeout(reconnect, 1500);
     return () => clearTimeout(timer);
-  }, [state.error, state.status, reconnect]);
+  }, [enabled, state.phase, reconnect]);
 
-  return { ...state, generation, reconnect, onError };
+  return {
+    ...state,
+    status: STATUS[state.phase],
+    generation,
+    reconnect,
+    onError,
+    onLoad,
+  };
 }

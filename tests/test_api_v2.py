@@ -9,18 +9,15 @@ import pytest
 pytest.importorskip("fastapi")
 httpx = pytest.importorskip("httpx")
 
-from pi_node_supervisor.api_v2 import (
-    _chunked_body,
-    _parse_preview_headers,
-    create_app_v2,
-)
+from pi_node_supervisor.api_v2 import create_app_v2
+from pi_node_supervisor.preview_stream import chunked_body, parse_preview_headers
 from pi_node_supervisor.application_v2 import RuntimeControllerV2
 from pi_node_supervisor.revision_v2 import RevisionStoreV2
 from pi_node_supervisor.service_v2 import SupervisorServiceV2
 
 
 def test_preview_proxy_decodes_upstream_chunked_stream() -> None:
-    media_type, chunked = _parse_preview_headers(
+    media_type, chunked = parse_preview_headers(
         b"HTTP/1.1 200 OK\r\n"
         b"content-type: multipart/x-mixed-replace; boundary=frame\r\n"
         b"Transfer-Encoding: chunked\r\n"
@@ -36,7 +33,7 @@ def test_preview_proxy_relays_chunk_body_without_http_framing() -> None:
         reader = asyncio.StreamReader()
         reader.feed_data(b"4\r\npart\r\n4\r\n-two\r\n0\r\n\r\n")
         reader.feed_eof()
-        return b"".join([chunk async for chunk in _chunked_body(reader)])
+        return b"".join([chunk async for chunk in chunked_body(reader)])
 
     assert asyncio.run(relay()) == b"part-two"
 
@@ -90,7 +87,7 @@ def test_v2_config_workflow_and_removed_sync_routes(tmp_path: Path) -> None:
 
 def test_camera_preview_cookie_auth_and_stream_relay(tmp_path, monkeypatch):
     from types import SimpleNamespace
-    from pi_node_supervisor import api_v2
+    from pi_node_supervisor import api_auth, preview_api
 
     payload = (
         b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: 4\r\n\r\n"
@@ -112,9 +109,9 @@ def test_camera_preview_cookie_auth_and_stream_relay(tmp_path, monkeypatch):
         reader.feed_eof()
         return reader, Writer(), "multipart/x-mixed-replace; boundary=frame", False
 
-    monkeypatch.setattr(api_v2, "_open_preview_stream", open_stream)
+    monkeypatch.setattr(preview_api, "open_preview_stream", open_stream)
     now = 1_800_000_000
-    monkeypatch.setattr(api_v2.time, "time", lambda: now)
+    monkeypatch.setattr(api_auth.time, "time", lambda: now)
     controller = SimpleNamespace(
         process_manager=SimpleNamespace(endpoints={"cam1": "http://127.0.0.1:8001"})
     )
@@ -148,7 +145,7 @@ def test_camera_preview_cookie_auth_and_stream_relay(tmp_path, monkeypatch):
             assert (await client.get(
                 "/api/camera/cam1", headers={"Cookie": "supervisor-preview=invalid"}
             )).status_code == 401
-            monkeypatch.setattr(api_v2.time, "time", lambda: now + 8 * 60 * 60 + 1)
+            monkeypatch.setattr(api_auth.time, "time", lambda: now + 8 * 60 * 60 + 1)
             assert (await client.get("/api/camera/cam1")).status_code == 401
 
     asyncio.run(exercise())

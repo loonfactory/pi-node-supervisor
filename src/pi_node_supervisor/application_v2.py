@@ -6,10 +6,12 @@ import asyncio
 import shutil
 import threading
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime, tzinfo
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, TypeVar
 
+from .errors import ApplyError
+from .runtime_lifecycle import RuntimeLifecycle
 from .capture_v2 import CaptureNodeBundleClient
 from .executor_v2 import CameraWorker, ExecutionEngineV2, SensorWorker
 from .power_v2 import PowerManagerCli, PowerPlanV2, RuntimePowerCoordinator
@@ -46,6 +48,7 @@ class RuntimeControllerV2:
         self.power_manager_hold_path = power_manager_hold_path
         self.runtime = RuntimeStoreV2(service.store.database_path)
         self.active_work = ActiveWork()
+        self._lifecycle = RuntimeLifecycle()
         self.process_manager: CaptureNodeProcessManagerV2 | None = None
         self.engine: ExecutionEngineV2 | None = None
         self.power: RuntimePowerCoordinator | None = None
@@ -136,67 +139,118 @@ class RuntimeControllerV2:
             self.process_manager = None
         self.engine = None
 
-    def reload(self) -> None:
+    def _reload(self) -> None:
         self.stop()
         self.active_work = ActiveWork()
         self.start()
 
-    async def tick(self, now: datetime | None = None) -> tuple[RunRecordV2, ...]:
-        if self.engine is None:
-            return ()
-        result = await self.engine.tick(now)
-        if self.power is not None:
-            await asyncio.to_thread(self.power.refresh, now or datetime.now(UTC))
+    async def reload(self) -> None:
+        await self._lifecycle.run(
+            lambda: asyncio.to_thread(self._reload), exclusive=True
+        )
+
+    async def shutdown(self) -> None:
+        await self._lifecycle.run(
+            lambda: asyncio.to_thread(self.stop), exclusive=True
+        )
+
+    async def apply_revision(self, document=None, *, restart=True):
+        async def apply():
+            return await asyncio.to_thread(self._apply_revision, document, restart)
+
+        return await self._lifecycle.run(apply, exclusive=True)
+
+    def _apply_revision(self, document, restart):
+        previous = self.service.active_resolution()
+        result = (
+            self.service.apply_document(document)
+            if document is not None else self.service.apply_draft()
+        )
+        if restart:
+            try:
+                self._reload()
+            except Exception as exc:
+                detail = f"runtime reload failed: {type(exc).__name__}: {exc}"
+                self.service.store.rollback_activation(
+                    previous[0] if previous else None, result["id"],
+                    active_configuration_path=self.service.active_configuration_path,
+                    generated_capture_directory=self.service.generated_capture_directory,
+                    power_configuration_path=self.service.power_configuration_path,
+                    error=detail,
+                )
+                self._reload()
+                raise ApplyError(detail) from exc
         return result
 
-    async def capture_all(self) -> tuple[RunRecordV2, ...]:
-        if self.engine is None or not self.engine.camera_workers:
-            raise ValueError("no cameras are active")
+    async def tick(self, now: datetime | None = None) -> tuple[RunRecordV2, ...]:
+        async def execute():
+            if self.engine is None:
+                return ()
+            result = await self.engine.tick(now)
+            if self.power is not None:
+                await asyncio.to_thread(self.power.refresh, now or datetime.now(UTC))
+            return result
 
+        return await self._lifecycle.run(execute)
+
+    async def capture_all(self) -> tuple[RunRecordV2, ...]:
         async def capture() -> tuple[RunRecordV2, ...]:
+            if self.engine is None or not self.engine.camera_workers:
+                raise ValueError("no cameras are active")
             tasks = [
                 asyncio.create_task(self.engine.capture_now(device_id))
                 for device_id in sorted(self.engine.camera_workers)
             ]
-            return tuple(await asyncio.gather(*tasks))
+            return await self._finish_all(tasks)
 
         return await self._manual_operation(capture)
 
     async def capture_one(
         self, device_id: str, parameters: dict[str, Any] | None = None
     ) -> RunRecordV2:
-        if self.engine is None:
-            raise ValueError("runtime is not active")
-
         async def capture() -> RunRecordV2:
+            if self.engine is None:
+                raise ValueError("runtime is not active")
             return await self.engine.capture_now(device_id, parameters)
 
         return await self._manual_operation(capture)
 
     async def collect_all_sensors(self) -> tuple[RunRecordV2, ...]:
-        if self.engine is None or not self.engine.sensor_workers:
-            raise ValueError("no sensors are active")
-
         async def collect() -> tuple[RunRecordV2, ...]:
+            if self.engine is None or not self.engine.sensor_workers:
+                raise ValueError("no sensors are active")
             tasks = [
                 asyncio.create_task(self.engine.collect_now(device_id))
                 for device_id in sorted(self.engine.sensor_workers)
             ]
-            return tuple(await asyncio.gather(*tasks))
+            return await self._finish_all(tasks)
 
         return await self._manual_operation(collect)
+
+    @staticmethod
+    async def _finish_all(tasks) -> tuple[RunRecordV2, ...]:
+        # Keep the lifecycle reservation until every device has finished, even
+        # when one task raises before the others complete.
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for result in results:
+            if isinstance(result, BaseException):
+                raise result
+        return tuple(results)
 
     async def _manual_operation(
         self, operation: Callable[[], Awaitable[_T]]
     ) -> _T:
-        power = self.power
-        if power is None:
-            return await operation()
-        await asyncio.to_thread(power.begin_manual_override)
-        try:
-            return await operation()
-        finally:
-            await asyncio.to_thread(power.end_manual_override, datetime.now(UTC))
+        async def execute():
+            power = self.power
+            if power is None:
+                return await operation()
+            await asyncio.to_thread(power.begin_manual_override)
+            try:
+                return await operation()
+            finally:
+                await asyncio.to_thread(power.end_manual_override, datetime.now(UTC))
+
+        return await self._lifecycle.run(execute)
 
     def node_documents(self) -> list[dict[str, Any]]:
         active = self.service.active_resolution()

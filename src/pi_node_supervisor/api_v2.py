@@ -3,21 +3,20 @@
 from __future__ import annotations
 
 import asyncio
-import hmac
 import json
-import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
 
-from fastapi import Body, Depends, FastAPI, Header, HTTPException, Request, Response
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi import Body, Depends, FastAPI, HTTPException
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
+from .api_auth import ApiAuthentication
+from .preview_api import create_preview_router
 from .application_v2 import RuntimeControllerV2
-from .errors import ApplyError, ManualOperationUnavailable, SupervisorError
+from .errors import ManualOperationUnavailable, SupervisorError
 from .service_v2 import SupervisorServiceV2
 
 
@@ -69,51 +68,13 @@ def create_app_v2(
             if worker_task is not None:
                 await worker_task
             if manage_runtime:
-                await asyncio.to_thread(controller.stop)
+                await controller.shutdown()
 
     app = FastAPI(title="Pi Node Supervisor", version="2", lifespan=lifespan)
 
-    async def authenticated(authorization: str | None = Header(None)) -> None:
-        expected = f"Bearer {api_token}"
-        if authorization is None or not hmac.compare_digest(authorization, expected):
-            raise HTTPException(status_code=401, detail="authentication required")
-
-    preview_cookie = "supervisor-preview"
-    preview_session_seconds = 8 * 60 * 60
-
-    def preview_signature(expiry: str) -> str:
-        return hmac.new(
-            api_token.encode(), f"preview:{expiry}".encode(), "sha256"
-        ).hexdigest()
-
-    async def preview_authenticated(request: Request) -> None:
-        value = request.cookies.get(preview_cookie, "")
-        expiry, _, signature = value.partition(".")
-        if (
-            not expiry.isascii()
-            or not expiry.isdigit()
-            or len(expiry) > 12
-            or not signature.isascii()
-            or not hmac.compare_digest(signature, preview_signature(expiry))
-            or int(expiry) <= time.time()
-        ):
-            raise HTTPException(status_code=401, detail="preview authentication required")
-
-    @app.post("/api/camera-session", dependencies=[Depends(authenticated)])
-    async def camera_session(request: Request) -> Response:
-        expiry = str(int(time.time()) + preview_session_seconds)
-        response = Response(status_code=204)
-        response.set_cookie(
-            preview_cookie,
-            f"{expiry}.{preview_signature(expiry)}",
-            max_age=preview_session_seconds,
-            path="/api/camera/",
-            httponly=True,
-            secure=request.url.scheme == "https",
-            samesite="strict",
-        )
-        response.headers["Cache-Control"] = "no-store"
-        return response
+    authentication = ApiAuthentication(api_token)
+    authenticated = authentication.bearer
+    app.include_router(create_preview_router(controller, authentication))
 
     @app.exception_handler(SupervisorError)
     async def supervisor_error(_request, exc: SupervisorError):
@@ -167,29 +128,7 @@ def create_app_v2(
     async def apply_revision(
         document: dict[str, Any] | None = Body(None),
     ) -> dict[str, Any]:
-        previous = service.active_resolution()
-        result = (
-            service.apply_document(document)
-            if document is not None
-            else service.apply_draft()
-        )
-        if manage_runtime:
-            try:
-                await asyncio.to_thread(controller.reload)
-            except Exception as exc:
-                detail = f"runtime reload failed: {type(exc).__name__}: {exc}"
-                await asyncio.to_thread(
-                    service.store.rollback_activation,
-                    previous[0] if previous else None,
-                    result["id"],
-                    active_configuration_path=service.active_configuration_path,
-                    generated_capture_directory=service.generated_capture_directory,
-                    power_configuration_path=service.power_configuration_path,
-                    error=detail,
-                )
-                await asyncio.to_thread(controller.reload)
-                raise ApplyError(detail) from exc
-        return result
+        return await controller.apply_revision(document, restart=manage_runtime)
 
     @app.get("/api/revisions", dependencies=[Depends(authenticated)])
     async def revisions() -> dict[str, Any]:
@@ -266,57 +205,6 @@ def create_app_v2(
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="camera does not exist") from exc
 
-    def camera_endpoint(device_id: str) -> str:
-        if controller.process_manager is None:
-            raise HTTPException(status_code=503, detail="CaptureNode is not running")
-        endpoint = controller.process_manager.endpoints.get(device_id)
-        if endpoint is None:
-            raise HTTPException(status_code=404, detail="camera does not exist")
-        return endpoint
-
-    async def preview_response(device_id: str) -> StreamingResponse:
-        endpoint = camera_endpoint(device_id)
-        try:
-            reader, writer, media_type, chunked = await _open_preview_stream(endpoint)
-        except (TimeoutError, OSError, ValueError) as exc:
-            raise HTTPException(status_code=502, detail=f"preview stream failed: {exc}") from exc
-
-        async def chunks():
-            try:
-                if chunked:
-                    async for chunk in _chunked_body(reader):
-                        yield chunk
-                else:
-                    while chunk := await reader.read(64 * 1024):
-                        yield chunk
-            finally:
-                writer.close()
-                await writer.wait_closed()
-
-        return StreamingResponse(
-            chunks(),
-            media_type=media_type,
-            headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
-        )
-
-    @app.get("/api/camera/{device_id}", dependencies=[Depends(preview_authenticated)])
-    async def camera_preview(device_id: str) -> StreamingResponse:
-        return await preview_response(device_id)
-
-    @app.get(
-        "/api/nodes/{device_id}/preview",
-        dependencies=[Depends(authenticated)],
-    )
-    async def node_preview(device_id: str) -> StreamingResponse:
-        return await preview_response(device_id)
-
-    @app.get(
-        "/api/nodes/{device_id}/preview/stream",
-        dependencies=[Depends(authenticated)],
-    )
-    async def node_preview_stream(device_id: str) -> StreamingResponse:
-        return await preview_response(device_id)
-
     @app.post("/api/captures/manual", dependencies=[Depends(authenticated)])
     async def manual_capture(
         request: ManualCaptureRequest | None = Body(None),
@@ -366,77 +254,3 @@ def _document(value: Any) -> Any:
 def _camel(value: str) -> str:
     head, *tail = value.split("_")
     return head + "".join(item[:1].upper() + item[1:] for item in tail)
-
-
-async def _open_preview_stream(
-    endpoint: str,
-) -> tuple[asyncio.StreamReader, asyncio.StreamWriter, str, bool]:
-    parsed = urlsplit(endpoint)
-    if parsed.scheme != "http" or not parsed.hostname or parsed.path not in {"", "/"}:
-        raise ValueError("CaptureNode preview endpoint must be a plain HTTP origin")
-    port = parsed.port or 80
-    reader, writer = await asyncio.wait_for(
-        asyncio.open_connection(parsed.hostname, port), timeout=15
-    )
-    try:
-        writer.write(
-            (
-                "GET /api/preview HTTP/1.1\r\n"
-                f"Host: {parsed.hostname}:{port}\r\n"
-                "Accept: multipart/x-mixed-replace\r\n"
-                "Connection: close\r\n\r\n"
-            ).encode("ascii")
-        )
-        await writer.drain()
-        header = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), timeout=15)
-        media_type, chunked = _parse_preview_headers(header)
-        return reader, writer, media_type, chunked
-    except BaseException:
-        writer.close()
-        await writer.wait_closed()
-        raise
-
-
-def _parse_preview_headers(header: bytes) -> tuple[str, bool]:
-    lines = header[:-4].split(b"\r\n")
-    if not lines or not lines[0].startswith(b"HTTP/1.1 200 "):
-        status = lines[0].decode("ascii", errors="replace") if lines else "empty response"
-        raise OSError(f"CaptureNode preview returned {status}")
-    headers: dict[str, str] = {}
-    for line in lines[1:]:
-        name, separator, value = line.partition(b":")
-        if separator:
-            header_name = name.strip().decode("ascii", errors="ignore").lower()
-            headers[header_name] = value.strip().decode("ascii", errors="replace")
-    media_type = headers.get("content-type", "multipart/x-mixed-replace")
-    if not media_type.lower().startswith("multipart/x-mixed-replace"):
-        raise OSError("CaptureNode preview response is not an MJPEG stream")
-    chunked = "chunked" in headers.get("transfer-encoding", "").lower()
-    return media_type, chunked
-
-
-async def _chunked_body(reader: asyncio.StreamReader):
-    while True:
-        line = await reader.readline()
-        if not line:
-            raise OSError("CaptureNode preview ended before a chunk header")
-        try:
-            size = int(line.split(b";", 1)[0].strip(), 16)
-        except ValueError as exc:
-            raise OSError("CaptureNode preview has an invalid chunk header") from exc
-        if size < 0 or size > 16 * 1024 * 1024:
-            raise OSError("CaptureNode preview chunk is out of range")
-        if size == 0:
-            while trailer := await reader.readline():
-                if trailer == b"\r\n":
-                    return
-            return
-        remaining = size
-        while remaining:
-            data = await reader.read(min(64 * 1024, remaining))
-            if not data:
-                raise OSError("CaptureNode preview ended inside a chunk")
-            remaining -= len(data)
-            yield data
-        if await reader.readexactly(2) != b"\r\n":
-            raise OSError("CaptureNode preview chunk is missing its trailing CRLF")
