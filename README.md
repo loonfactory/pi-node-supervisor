@@ -149,3 +149,15 @@ camera storage APIs do not exist in v2.
 PYTHONPATH=src PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -p no:cacheprovider
 cd src/pi_node_supervisor/web/frontend && npm run build
 ```
+
+### Camera preview
+
+The camera page uses a fixed `<img src="/api/camera/{device_id}">` URL.
+Supervisor relays the internal CaptureNode MJPEG stream directly; the browser
+displays frames without per-frame Blob URLs or JavaScript decoding.
+`POST /api/camera-session` requires the existing Bearer token and issues an
+eight-hour HttpOnly, SameSite=Strict cookie scoped to `/api/camera/` (Secure on
+HTTPS). This cookie authorizes preview reads only; other APIs retain Bearer
+authentication. Reconnecting renews the preview cookie. The existing
+`/api/nodes/{device_id}/preview` and `/preview/stream` routes remain available
+with Bearer authentication.

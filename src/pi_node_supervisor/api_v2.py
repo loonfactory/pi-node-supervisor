@@ -5,12 +5,13 @@ from __future__ import annotations
 import asyncio
 import hmac
 import json
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
-from fastapi import Body, Depends, FastAPI, Header, HTTPException
+from fastapi import Body, Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
@@ -76,6 +77,43 @@ def create_app_v2(
         expected = f"Bearer {api_token}"
         if authorization is None or not hmac.compare_digest(authorization, expected):
             raise HTTPException(status_code=401, detail="authentication required")
+
+    preview_cookie = "supervisor-preview"
+    preview_session_seconds = 8 * 60 * 60
+
+    def preview_signature(expiry: str) -> str:
+        return hmac.new(
+            api_token.encode(), f"preview:{expiry}".encode(), "sha256"
+        ).hexdigest()
+
+    async def preview_authenticated(request: Request) -> None:
+        value = request.cookies.get(preview_cookie, "")
+        expiry, _, signature = value.partition(".")
+        if (
+            not expiry.isascii()
+            or not expiry.isdigit()
+            or len(expiry) > 12
+            or not signature.isascii()
+            or not hmac.compare_digest(signature, preview_signature(expiry))
+            or int(expiry) <= time.time()
+        ):
+            raise HTTPException(status_code=401, detail="preview authentication required")
+
+    @app.post("/api/camera-session", dependencies=[Depends(authenticated)])
+    async def camera_session(request: Request) -> Response:
+        expiry = str(int(time.time()) + preview_session_seconds)
+        response = Response(status_code=204)
+        response.set_cookie(
+            preview_cookie,
+            f"{expiry}.{preview_signature(expiry)}",
+            max_age=preview_session_seconds,
+            path="/api/camera/",
+            httponly=True,
+            secure=request.url.scheme == "https",
+            samesite="strict",
+        )
+        response.headers["Cache-Control"] = "no-store"
+        return response
 
     @app.exception_handler(SupervisorError)
     async def supervisor_error(_request, exc: SupervisorError):
@@ -258,7 +296,12 @@ def create_app_v2(
         return StreamingResponse(
             chunks(),
             media_type=media_type,
+            headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
         )
+
+    @app.get("/api/camera/{device_id}", dependencies=[Depends(preview_authenticated)])
+    async def camera_preview(device_id: str) -> StreamingResponse:
+        return await preview_response(device_id)
 
     @app.get(
         "/api/nodes/{device_id}/preview",

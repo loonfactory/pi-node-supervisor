@@ -6,9 +6,8 @@ import { useCameraStream } from "../hooks/useCameraStream.js";
 import { useSupervisor } from "../SupervisorContext.jsx";
 import { friendlyError } from "../utils.js";
 
-function CameraCard({ node, generation }) {
+function CameraCard({ node }) {
   const stream = useCameraStream(node.id, true);
-  void generation;
   return (
     <article className="camera-card">
       <div className="panel-title">
@@ -20,7 +19,12 @@ function CameraCard({ node, generation }) {
       </div>
       <div className="camera-frame">
         {stream.src ? (
-          <img src={stream.src} alt={`${node.id} 카메라 프리뷰`} />
+          <img
+            key={stream.generation}
+            src={stream.src}
+            onError={stream.onError}
+            alt={`${node.id} 카메라 프리뷰`}
+          />
         ) : (
           <div className="camera-placeholder">
             {stream.error || "프레임을 불러오는 중입니다."}
@@ -85,11 +89,7 @@ export default function CamerasPage() {
       <div className="camera-grid">
         {cameras.length ? (
           cameras.map((node) => (
-            <CameraCard
-              key={`${node.id}-${generation}`}
-              node={node}
-              generation={generation}
-            />
+            <CameraCard key={`${node.id}-${generation}`} node={node} />
           ))
         ) : (
           <Empty>등록된 카메라가 없습니다.</Empty>

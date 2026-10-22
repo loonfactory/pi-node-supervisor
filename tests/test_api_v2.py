@@ -86,3 +86,69 @@ def test_v2_config_workflow_and_removed_sync_routes(tmp_path: Path) -> None:
     assert applied.status_code == 200
     assert active.json()["schemaVersion"] == 2
     assert removed.status_code == 404
+
+
+def test_camera_preview_cookie_auth_and_stream_relay(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from pi_node_supervisor import api_v2
+
+    payload = (
+        b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: 4\r\n\r\n"
+        b"jpeg\r\n--frame--\r\n"
+    )
+    closed = []
+
+    class Writer:
+        def close(self):
+            closed.append(True)
+
+        async def wait_closed(self):
+            pass
+
+    async def open_stream(endpoint):
+        assert endpoint == "http://127.0.0.1:8001"
+        reader = asyncio.StreamReader()
+        reader.feed_data(payload)
+        reader.feed_eof()
+        return reader, Writer(), "multipart/x-mixed-replace; boundary=frame", False
+
+    monkeypatch.setattr(api_v2, "_open_preview_stream", open_stream)
+    now = 1_800_000_000
+    monkeypatch.setattr(api_v2.time, "time", lambda: now)
+    controller = SimpleNamespace(
+        process_manager=SimpleNamespace(endpoints={"cam1": "http://127.0.0.1:8001"})
+    )
+    app = create_app_v2(
+        None, controller, api_token="secret", manage_runtime=False,
+        static_directory=tmp_path / "missing",
+    )
+
+    async def exercise():
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="https://supervisor.test"
+        ) as client:
+            assert (await client.get("/api/camera/cam1")).status_code == 401
+            assert (await client.post("/api/camera-session")).status_code == 401
+            session = await client.post(
+                "/api/camera-session", headers={"Authorization": "Bearer secret"}
+            )
+            assert session.status_code == 204
+            cookie = session.headers["set-cookie"]
+            for attribute in ("HttpOnly", "Secure", "SameSite=strict", "Path=/api/camera/"):
+                assert attribute in cookie
+            assert "secret" not in cookie
+            response = await client.get("/api/camera/cam1")
+            assert response.status_code == 200
+            assert response.content == payload
+            assert response.headers["content-type"] == "multipart/x-mixed-replace; boundary=frame"
+            assert response.headers["cache-control"] == "no-store"
+            assert closed == [True]
+            assert (await client.get("/api/camera/missing")).status_code == 404
+            assert (await client.get("/api/dashboard")).status_code == 401
+            assert (await client.get(
+                "/api/camera/cam1", headers={"Cookie": "supervisor-preview=invalid"}
+            )).status_code == 401
+            monkeypatch.setattr(api_v2.time, "time", lambda: now + 8 * 60 * 60 + 1)
+            assert (await client.get("/api/camera/cam1")).status_code == 401
+
+    asyncio.run(exercise())
